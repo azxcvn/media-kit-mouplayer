@@ -15,6 +15,10 @@ migrate_working_dir/
 # Agent teams related
 .agent-teams/
 
+# Android signing (签名密钥文件，不要提交到仓库)
+android/key.properties
+android/app/*.jks
+
 # IntelliJ related
 *.iml
 *.ipr
