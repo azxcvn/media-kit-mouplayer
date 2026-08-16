@@ -29,14 +29,16 @@ class CapsuleNavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final viewPadding = MediaQuery.viewPaddingOf(context);
-    // 用 viewPadding 规避系统导航键（手势/三键都兼容）
+    // 用 padding（而非 viewPadding）：全局 SafeArea 已移除底部安全区，
+    // 内部 padding.bottom = 0，避免与 SafeArea 双重计算导致胶囊悬空过高
+    final padding = MediaQuery.paddingOf(context);
+    // 用 padding 规避系统导航键（手势/三键都兼容）
     return Padding(
       padding: EdgeInsets.fromLTRB(
-        viewPadding.left,
+        padding.left,
         0,
-        viewPadding.right,
-        8 + viewPadding.bottom,
+        padding.right,
+        8 + padding.bottom,
       ),
       child: SizedBox(
         height: 64,
@@ -50,6 +52,11 @@ class CapsuleNavBar extends StatelessWidget {
               color: scheme.surfaceContainer,
               shape: RoundedSuperellipseBorder(
                 borderRadius: BorderRadius.circular(32),
+                side: BorderSide(
+                  // 浅浅的描边，增强与背景的视觉区分
+                  color: scheme.outlineVariant.withValues(alpha: 0.6),
+                  width: 1,
+                ),
               ),
               shadows: [
                 BoxShadow(

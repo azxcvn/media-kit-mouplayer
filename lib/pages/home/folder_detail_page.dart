@@ -1,216 +1,182 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:moumou/models/video_file.dart';
-import 'package:moumou/models/video_folder.dart';
 import 'package:moumou/pages/player/player_page.dart';
-import 'package:moumou/services/video_info_service.dart';
-import 'package:moumou/services/video_scanner.dart';
+import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/view_settings.dart';
+import 'package:moumou/utils/app_dialog.dart';
+import 'package:moumou/widgets/video_card.dart';
 
-/// 文件夹详情页：列出该文件夹内的视频（卡片式 + 缩略图）
+/// 文件夹视频列表页：列表模式下点击文件夹进入，只显示该文件夹内的视频
 class FolderDetailPage extends StatefulWidget {
-  final VideoFolder folder;
+  final String title;
+  final List<VideoFile> videos;
+  final ViewSettings viewSettings;
 
-  const FolderDetailPage({super.key, required this.folder});
+  const FolderDetailPage({
+    super.key,
+    required this.title,
+    required this.videos,
+    required this.viewSettings,
+  });
 
   @override
   State<FolderDetailPage> createState() => _FolderDetailPageState();
 }
 
 class _FolderDetailPageState extends State<FolderDetailPage> {
-  List<VideoFile> _videos = [];
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
+  void _showVideoOptions() {
+    showAppDialog(
+      context: context,
+      builder: (context) =>
+          _VideoOptionsSheet(viewSettings: widget.viewSettings),
+    );
   }
 
-  Future<void> _load() async {
-    final dir = Directory(widget.folder.path);
-    final videos = <VideoFile>[];
-
-    if (await dir.exists()) {
-      await for (final entity in dir.list(recursive: false)) {
-        if (entity is! File) continue;
-        final lower = entity.path.toLowerCase();
-        if (VideoScanner.videoExt.any((ext) => lower.endsWith(ext))) {
-          videos.add(VideoFile(
-            path: entity.path,
-            name: entity.path.split('/').last,
-          ));
-        }
-      }
-    }
-
-    videos.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-
-    if (!mounted) return;
-    setState(() {
-      _videos = videos;
-      _loading = false;
-    });
+  Future<void> _openPlayer(VideoFile video) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PlayerPage(path: video.path, title: video.name),
+      ),
+    );
+    // 从播放页返回后主动刷新，进度条立即更新
+    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.folder.name)),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _videos.isEmpty
-              ? const Center(child: Text('该文件夹没有视频'))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                  itemCount: _videos.length,
-                  itemBuilder: (context, index) {
-                    final video = _videos[index];
-                    return _VideoCard(
-                      video: video,
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => PlayerPage(
-                              path: video.path,
-                              title: video.name,
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.sort),
+            tooltip: '排序与字段',
+            onPressed: _showVideoOptions,
+          ),
+        ],
+      ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (widget.videos.isEmpty) {
+      return const Center(child: Text('该文件夹没有视频'));
+    }
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        widget.viewSettings,
+        PlaybackProgressService.instance,
+      ]),
+      builder: (context, _) {
+        final videos = widget.viewSettings.sortVideos(widget.videos);
+        // 底部安全区已由全局 SafeArea 处理
+        return ListView.builder(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          itemCount: videos.length,
+          itemBuilder: (context, index) {
+            final video = videos[index];
+            return VideoCard(
+              video: video,
+              fields: widget.viewSettings.videoFields,
+              onTap: () => _openPlayer(video),
+            );
+          },
+        );
+      },
     );
   }
 }
 
-/// 视频卡片：缩略图 + 文件名 + 大小
-class _VideoCard extends StatefulWidget {
-  final VideoFile video;
-  final VoidCallback onTap;
+/// 视频列表的排序与字段弹窗
+class _VideoOptionsSheet extends StatelessWidget {
+  final ViewSettings viewSettings;
 
-  const _VideoCard({required this.video, required this.onTap});
-
-  @override
-  State<_VideoCard> createState() => _VideoCardState();
-}
-
-class _VideoCardState extends State<_VideoCard> {
-  String? _thumbPath;
-  String? _sizeText;
-  String? _durationText;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadInfo();
-  }
-
-  Future<void> _loadInfo() async {
-    final info = await VideoInfoService.get(widget.video.path);
-    final file = File(widget.video.path);
-    String? sizeText;
-    if (await file.exists()) {
-      sizeText = _formatSize(await file.length());
-    }
-    if (!mounted) return;
-    setState(() {
-      _thumbPath = info.thumbPath;
-      _sizeText = sizeText;
-      if (info.durationMs > 0) {
-        _durationText = _formatDuration(info.durationMs);
-      }
-    });
-  }
-
-  String _formatSize(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    if (bytes < 1024 * 1024 * 1024) {
-      return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
-    }
-    return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GB';
-  }
-
-  String _formatDuration(int ms) {
-    final totalSeconds = ms ~/ 1000;
-    final h = totalSeconds ~/ 3600;
-    final m = (totalSeconds % 3600) ~/ 60;
-    final s = totalSeconds % 60;
-    if (h > 0) {
-      return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-    }
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
+  const _VideoOptionsSheet({required this.viewSettings});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      elevation: 0,
-      color: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: InkWell(
-        onTap: widget.onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Padding(
-          padding: const EdgeInsets.all(10),
-          child: Row(
-            children: [
-              // 缩略图
-              ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: SizedBox(
-                  width: 120,
-                  height: 68,
-                  child: _thumbPath != null
-                      ? Image.file(
-                          File(_thumbPath!),
-                          fit: BoxFit.cover,
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      child: SingleChildScrollView(
+        child: ListenableBuilder(
+          listenable: viewSettings,
+          builder: (context, _) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text('排序与字段', style: Theme.of(context).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  _sectionTitle(context, '排序方式'),
+                  SegmentedButton<VideoSortField>(
+                    showSelectedIcon: false,
+                    segments: VideoSortField.values
+                        .map(
+                          (e) => ButtonSegment(value: e, label: Text(e.label)),
                         )
-                      : Container(
-                          color: scheme.surfaceContainerHighest,
-                          child: Icon(
-                            Icons.movie_outlined,
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(width: 14),
-              // 信息
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.video.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
+                        .toList(),
+                    selected: {viewSettings.videoSortField},
+                    onSelectionChanged: (s) =>
+                        viewSettings.setVideoSortField(s.first),
+                  ),
+                  const SizedBox(height: 16),
+                  _sectionTitle(context, '排序方向'),
+                  SegmentedButton<SortOrder>(
+                    showSelectedIcon: false,
+                    segments: SortOrder.values
+                        .map(
+                          (e) => ButtonSegment(value: e, label: Text(e.label)),
+                        )
+                        .toList(),
+                    selected: {viewSettings.videoSortOrder},
+                    onSelectionChanged: (s) =>
+                        viewSettings.setVideoSortOrder(s.first),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  _sectionTitle(context, '显示字段'),
+                  Align(
+                    alignment: Alignment.center,
+                    child: Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: VideoField.values.map((f) {
+                        final selected = viewSettings.videoFields.contains(f);
+                        return FilterChip(
+                          label: Text(f.label),
+                          selected: selected,
+                          showCheckmark: false,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          onSelected: (_) => viewSettings.toggleVideoField(f),
+                        );
+                      }).toList(),
                     ),
-                    if (_sizeText != null || _durationText != null) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        [_durationText, _sizeText]
-                            .whereType<String>()
-                            .join(' · '),
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
               ),
-              Icon(Icons.play_circle_outline, color: scheme.onSurfaceVariant),
-            ],
-          ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(BuildContext context, String title) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        title,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );

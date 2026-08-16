@@ -12,6 +12,9 @@
 .swiftpm/
 migrate_working_dir/
 
+# Agent teams related
+.agent-teams/
+
 # IntelliJ related
 *.iml
 *.ipr

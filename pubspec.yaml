@@ -37,6 +37,8 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   permission_handler: ^11.3.1
   shared_preferences: ^2.3.2
+  # 更多 Material 3 调色板风格（FlexSchemeVariant，21 种变体）
+  flex_seed_scheme: ^4.0.1
 
 dev_dependencies:
   flutter_test:
