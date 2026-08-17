@@ -35,10 +35,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
   }
 
   Future<void> _openPlayer(VideoFile video) async {
+    // 传当前可见的排序列表，作为播放页「下一集」的兄弟列表
+    final playlist = widget.viewSettings.sortVideos(widget.videos);
     await Navigator.of(context).push(
       MaterialPageRoute(
         settings: const RouteSettings(name: playerRouteName),
-        builder: (_) => PlayerPage(path: video.path, title: video.name),
+        builder: (_) => PlayerPage(
+          path: video.path,
+          title: video.name,
+          playlist: playlist,
+        ),
       ),
     );
     // 从播放页返回后主动刷新，进度条立即更新

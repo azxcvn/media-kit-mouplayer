@@ -2,6 +2,7 @@
 
 > 本文件是项目的**唯一架构契约**。任何 AI / 开发者在本仓库添加新功能前，必须先读完本文件。
 > 遵循本文件的约定，项目可以健康扩展到 PiliPlus / mpvRx 同量级规模；违反约定堆代码，项目会退化为屎山。
+> **完成重大功能新增 / 优化或 Bug 修复后，必须同步更新本文档（至少 §2 目录结构），禁止文档与代码脱节。**
 
 ---
 
@@ -26,20 +27,23 @@ lib/
 ├── main.dart                  # 入口：主题装配 + AppFrame + 路由观察者
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         #   目录树节点（folder/video）
-│   └── video_file.dart        #   视频文件信息
+│   ├── video_file.dart        #   视频文件信息
+│   └── player_action.dart     #   播放器按钮动作（含占位入口）/ 双击手势模式枚举
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     #   排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     #   扫描 + 建树 + 建文件夹列表
 │   ├── video_info_service.dart#   缩略图生成（跨进程，磁盘缓存）
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化）
+│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设，单例 + 持久化）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
 │   ├── app_dialog.dart        #   showAppDialog（统一弹窗动画）
+│   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/更多/编辑控制栏共用）
 │   ├── options_sheet.dart     #   showSortOptionsSheet（统一排序弹窗）
 │   ├── folder_card.dart       #   文件夹卡片（列表/树状共用）
 │   ├── video_card.dart        #   视频卡片（列表/树状/详情共用）
-│   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项）
+│   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/Kazumi 滑杆主题）
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
 │   └── marquee_text.dart      #   无缝循环跑马灯
@@ -52,16 +56,25 @@ lib/
 │   │   ├── folder_detail_page.dart    # 列表模式详情页（纯视频）
 │   │   └── tree_folder_page.dart      # 树状目录页（混合内容 + 面包屑）
 │   ├── player/
-│   │   └── player_page.dart   #   播放页（横屏沉浸式）
+│   │   ├── player_page.dart   #   播放页（横屏沉浸式，组装各控制视图）
+│   │   └── views/             #   播放页专属控制组件
+│   │       ├── player_top_bar.dart        # 顶栏：返回 + 标题 + 5 槽位（空槽隐藏）+ 固定「更多」
+│   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进（双三角图标）
+│   │       ├── player_bottom_bar.dart     # 底栏：下一集 + 时间 + 超分辨率入口
+│   │       ├── player_seek_bar.dart       # 全宽细进度条（拖动预览）
+│   │       ├── player_speed_panel.dart    # 倍速面板内容（预设置顶/精确调速/临时应用开关）
+│   │       └── player_play_pause_button.dart  # 播放/暂停图标切换动画
 │   └── settings/
 │       ├── settings_page.dart #   设置主页（分组结构，可扩展）
-│       └── appearance_page.dart      # 外观设置子页
+│       ├── appearance_page.dart      # 外观设置子页
+│       └── player_settings_page.dart # 播放器设置子页（手势/时长原地编辑/进度线/倍速）
 ├── theme/                     # 主题
 │   ├── app_theme.dart         #   ThemeData 生成（light/dark/amoled）
 │   └── theme_controller.dart  #   主题控制（模式/色/风格 + 旧数据迁移）
 └── utils/                     # 纯工具函数
     ├── app_dialog.dart        #   （见 widgets/app_dialog.dart 说明）
-    └── formatters.dart        #   文件大小/日期/时长格式化
+    ├── formatters.dart        #   文件大小/日期/时长/倍速格式化
+    └── player_gestures.dart   #   双击手势判定（纯函数，可单测）
 ```
 
 ---
@@ -116,9 +129,10 @@ models（模型）     → 无依赖（纯数据）
 
 `player_page.dart` 的 `_enterFullscreen()`：`immersiveSticky` + 透明系统栏（`_exitPlayer` / `dispose` 恢复竖屏 + edgeToEdge）。退出统一走 `PopScope` 拦截 + `_exitPlayer()`（保存进度 → 恢复竖屏 → pop），系统返回键与返回按钮行为一致。
 
-### 4.5 弹窗
+### 4.5 弹窗 / 面板
 
 - **所有弹窗统一用** `showAppDialog`（`lib/utils/app_dialog.dart`，缩放 + 淡入动画），**不要**直接 `showDialog`
+- **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
   - `hasFolders` / `hasVideos` 按页面内容动态传（纯文件夹页、纯视频页、混合页自动区分区块）
   - `showViewMode` 仅首页传 true
@@ -149,6 +163,7 @@ models（模型）     → 无依赖（纯数据）
 3. 需要排序弹窗 → `showSortOptionsSheet`；需要弹窗 → `showAppDialog`
 4. 跳转：`Navigator.push(MaterialPageRoute(builder: ...))`
    - 如果是播放页：加 `settings: const RouteSettings(name: playerRouteName)`
+   - 播放页可传 `playlist:`（当前可见的排序视频列表），用于「下一集」；不传则按钮置灰
 5. 页面专属小组件放 `lib/pages/<name>/views/`，跨页复用的放 `lib/widgets/`
 6. 底部有悬浮胶囊（主 tab 页）：ListView 底部 padding `88`
 
@@ -173,6 +188,16 @@ models（模型）     → 无依赖（纯数据）
 
 每个新逻辑都要配测试（见 §6），文件放 `test/`，命名 `<被测文件>_test.dart`。
 
+### 5.6 文档维护（必须）
+
+完成**重大功能新增 / 优化或 Bug 修复**后，必须在本文件（ARCHITECTURE.md）同步以下内容，再算收工：
+
+1. **§2 目录结构**：新增/删除/移动的文件、目录必须反映到树形图（含一行注释说明职责）；
+2. **受影响章节**：改到状态管理 → §4.1；新增弹窗 → §4.5；改播放页 → §5.1 / §4.3/4.4；新增设置 → §5.3；新增测试 → §6；
+3. **§7 已知注意事项**：新踩的坑（环境 / 框架 / 设备）要补进表格，防止他人重蹈覆辙。
+
+> 判断标准：改完代码后，**文档中任何与代码不一致的路径、文件名、组件名都算违约**。小改动（如改文案、调样式）不强制，但涉及结构 / 接口 / 行为变化必须更新。
+
 ---
 
 ## 6. 测试约定
@@ -183,6 +208,10 @@ models（模型）     → 无依赖（纯数据）
   - `test/view_settings_test.dart` — sortTree / sortFolders / sortVideos 排序逻辑
   - `test/app_frame_test.dart` — AppFrame 安全区行为 + 播放页路由检测（**安全区/播放页回归测试，改 AppFrame 必须跑**）
   - `test/home_page_permission_test.dart` — 权限流程（未授权 → 授予权限 → 授权扫描）
+  - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位增删/排序/上限/时长档位/倍速预设/旧数据迁移）
+  - `test/player_gestures_test.dart` — 双击手势三模式判定（含边界）
+  - `test/player_panel_test.dart` — 右侧面板打开/面板内导航不崩溃（**改 PlayerPanel 必须跑**）
+  - `test/player_speed_panel_test.dart` — 倍速面板（「我的预设」✕ 删除 / 「添加到预设」随滑杆联动）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -198,6 +227,9 @@ models（模型）     → 无依赖（纯数据）
 | 播放页退出横屏闪烁 | 系统返回键直接 pop，未先恢复竖屏 | PopScope 统一走 `_exitPlayer`（§4.4） |
 | 弹窗三份重复 | 排序弹窗曾复制 3 份 | 统一 `showSortOptionsSheet`（§4.5） |
 | 全局状态 hack | 全局 ValueNotifier 跨页面通信引发连锁补丁 | 禁止，用 ChangeNotifier / 路由机制（§4.1/4.3） |
+| 面板红底黄字崩溃 | 右侧面板用普通 Container 包裹，内容里的 ListTile/SwitchListTile/TextField 找不到 Material 祖先 → "No Material widget found" | PlayerPanel 外壳必须用 `Material`（含圆角/裁剪），勿换回 Container（§4.5） |
+| 编辑控制栏点击无反应 | 面板内容里调 `PlayerPanelNavigator.of(context)` 时用了 State 外层 context（不在 _PanelNavigatorScope 下）→ 断言 scope == null | 面板内容必须用 `Builder` 取面板树内的 context 再调用 `of`（§4.5） |
+| Flutter 工具链"卡死" | DSH 沙箱拦截 flutter/dart 启动分析器、测试等子进程（`CreateFile failed 5` 拒绝访问），表现为进程冻结、长时间无输出 | 运行 `flutter analyze` / `flutter test` 需以 **danger-full-access** 权限执行；升级后 2-3 秒出结果。**勿用 `flutter --version` 探路**（同样会被卡住）；先用 `dart analyze` 也无效（同样被拒），直接以完整权限跑 `flutter analyze` |
 
 ---
 

@@ -28,3 +28,9 @@ String formatDuration(int ms) {
   }
   return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
 }
+
+/// 倍速显示：1.0 → '1.0x'，1.25 → '1.25x'（播放器倍速胶囊 / 倍速面板共用）
+String formatSpeed(double speed) {
+  final s = speed.toStringAsFixed(speed == speed.roundToDouble() ? 1 : 2);
+  return '${s}x';
+}

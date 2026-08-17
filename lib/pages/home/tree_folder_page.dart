@@ -89,10 +89,20 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
   }
 
   Future<void> _openVideo(VideoFile video) async {
+    // 传当前目录的排序视频列表，作为播放页「下一集」的兄弟列表
+    final children = widget.viewSettings.sortTree(widget.node.children);
+    final playlist = [
+      for (final c in children)
+        if (!c.isFolder) c.video!,
+    ];
     await Navigator.of(context).push(
       MaterialPageRoute(
         settings: const RouteSettings(name: playerRouteName),
-        builder: (_) => PlayerPage(path: video.path, title: video.name),
+        builder: (_) => PlayerPage(
+          path: video.path,
+          title: video.name,
+          playlist: playlist,
+        ),
       ),
     );
     // 返回后刷新，进度条立即更新

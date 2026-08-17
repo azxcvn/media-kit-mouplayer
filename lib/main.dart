@@ -3,6 +3,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/theme/app_theme.dart';
 import 'package:moumou/theme/theme_controller.dart';
@@ -33,6 +34,7 @@ class _MoumouAppState extends State<MoumouApp> {
     _themeController.load();
     _viewSettings.load();
     PlaybackProgressService.instance.load();
+    PlayerControlsSettings.instance.load();
   }
 
   @override

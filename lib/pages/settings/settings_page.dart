@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
+import 'package:moumou/pages/settings/player_settings_page.dart';
 import 'package:moumou/theme/theme_controller.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
@@ -61,6 +62,22 @@ class SettingsPage extends StatelessWidget {
                       MaterialPageRoute(
                         builder: (_) =>
                             AppearancePage(controller: controller),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // ── 播放器 ──────────────────────────────
+              const SettingsGroupTitle(title: '播放器'),
+              SettingsCard(
+                child: SettingsTile(
+                  icon: Icons.play_circle_outline,
+                  title: '播放器',
+                  subtitle: const Text('双击手势 · 倍速 · 控制栏按钮'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const PlayerSettingsPage(),
                       ),
                     );
                   },

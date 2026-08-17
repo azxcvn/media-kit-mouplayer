@@ -3,6 +3,19 @@ import 'package:flutter/material.dart';
 /// 现代化设置界面的公共组件：分组标题 + 圆角卡片 + 设置项行。
 /// 供设置主页面、外观子页及后续新增的设置页复用。
 
+/// Kazumi 风格滑块主题：2024 新式滑杆外观（缺口轨道 + 小柄拇指），
+/// 无拖拽气泡（数值由外部读数展示）。设置页档位滑杆与播放器倍速面板共用。
+SliderThemeData kazumiSliderTheme(ColorScheme scheme) => SliderThemeData(
+      // 显式选择 2024 新式滑杆外观（Kazumi 同款）。year2023 是兼容开关，
+      // 默认仍为旧式大圆钮，必须显式关闭才生效。
+      // ignore: deprecated_member_use
+      year2023: false,
+      activeTrackColor: scheme.primary,
+      inactiveTrackColor: scheme.secondaryContainer,
+      thumbColor: scheme.primary,
+      showValueIndicator: ShowValueIndicator.never,
+    );
+
 /// 分组标题（如「外观」「播放」）
 class SettingsGroupTitle extends StatelessWidget {
   final String title;

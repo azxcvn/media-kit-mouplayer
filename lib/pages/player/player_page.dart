@@ -4,14 +4,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:moumou/models/player_action.dart';
+import 'package:moumou/models/video_file.dart';
+import 'package:moumou/pages/player/views/player_bottom_bar.dart';
+import 'package:moumou/pages/player/views/player_center_cluster.dart';
+import 'package:moumou/pages/player/views/player_speed_panel.dart';
+import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
+import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/utils/player_gestures.dart';
+import 'package:moumou/widgets/player_panel.dart';
 
-/// 播放页：默认横屏播放，自定义现代化控制 UI
+/// 播放页：默认横屏播放，自定义现代化控制 UI。
+///
+/// - 中央三键簇：快退 / 播放暂停 / 快进；
+/// - 双击手势可自定义（暂停 / 左退右进 / 混合）；
+/// - 右上角固定「更多」按钮 → 右侧面板（动作列表 + 编辑控制栏）；
+/// - 倍速等二级设置统一走右侧滑入面板（[showPlayerPanel]）。
+///
+/// [playlist] 为兄弟视频列表（用于「下一集」，null 时按钮置灰）。
 class PlayerPage extends StatefulWidget {
   final String path;
   final String title;
+  final List<VideoFile>? playlist;
 
-  const PlayerPage({super.key, required this.path, required this.title});
+  const PlayerPage({
+    super.key,
+    required this.path,
+    required this.title,
+    this.playlist,
+  });
 
   @override
   State<PlayerPage> createState() => _PlayerPageState();
@@ -20,7 +43,10 @@ class PlayerPage extends StatefulWidget {
 class _PlayerPageState extends State<PlayerPage> {
   late final Player _player;
   late final VideoController _controller;
+  final PlayerControlsSettings _settings = PlayerControlsSettings.instance;
 
+  late String _path;
+  late String _title;
   bool _controlsVisible = true;
   Timer? _hideTimer;
   bool _playing = false;
@@ -29,14 +55,34 @@ class _PlayerPageState extends State<PlayerPage> {
   Duration? _dragPosition;
   double _speed = 1.0;
 
+  /// 实际倍速的监听器：倍速面板（独立弹窗路由）通过它实时刷新
+  final ValueNotifier<double> _speedNotifier = ValueNotifier(1.0);
+
+  String? _seekFeedback;
+  Timer? _seekFeedbackTimer;
+
   final List<StreamSubscription<dynamic>> _subs = [];
+
+  /// 是否存在「下一集」（playlist 中当前视频之后还有视频）
+  bool get _hasNext {
+    final list = widget.playlist;
+    if (list == null || list.isEmpty) return false;
+    final idx = list.indexWhere((v) => v.path == _path);
+    return idx >= 0 && idx < list.length - 1;
+  }
 
   @override
   void initState() {
     super.initState();
+    _path = widget.path;
+    _title = widget.title;
     _player = Player();
     _controller = VideoController(_player);
-    _player.open(Media(widget.path));
+
+    // 倍速记忆：启用时恢复上次倍速
+    _speed = _settings.rememberSpeed ? _settings.lastSpeed : 1.0;
+    _speedNotifier.value = _speed;
+    _openAndSetRate();
 
     // 默认强制横屏 + 沉浸式全屏
     SystemChrome.setPreferredOrientations([
@@ -54,7 +100,12 @@ class _PlayerPageState extends State<PlayerPage> {
 
     _subs.add(
       _player.stream.playing.listen((p) {
-        if (mounted) setState(() => _playing = p);
+        if (!mounted) return;
+        setState(() {
+          _playing = p;
+          // 暂停时总是显示控制层（含中央播放键）
+          if (!p) _controlsVisible = true;
+        });
       }),
     );
     _subs.add(
@@ -69,6 +120,12 @@ class _PlayerPageState extends State<PlayerPage> {
     );
 
     _resetHideTimer();
+  }
+
+  /// 打开媒体后再设置倍速（media_kit 在加载完成后生效）
+  Future<void> _openAndSetRate() async {
+    await _player.open(Media(_path));
+    _player.setRate(_speed);
   }
 
   /// 进入沉浸式全屏：隐藏状态栏/导航栏，并把系统栏设为透明
@@ -87,6 +144,8 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
+  // ── 控制层显隐 ──────────────────────────────────────────
+
   void _resetHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
@@ -97,8 +156,13 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _toggleControls() {
-    setState(() => _controlsVisible = !_controlsVisible);
-    if (_controlsVisible) _resetHideTimer();
+    final visible = !_controlsVisible;
+    setState(() => _controlsVisible = visible);
+    if (visible) {
+      _resetHideTimer();
+    } else {
+      _hideTimer?.cancel();
+    }
   }
 
   Future<void> _togglePlay() async {
@@ -106,14 +170,266 @@ class _PlayerPageState extends State<PlayerPage> {
     _resetHideTimer();
   }
 
-  Future<void> _cycleSpeed() async {
-    const speeds = [1.0, 1.25, 1.5, 2.0];
-    final next = speeds[(speeds.indexOf(_speed) + 1) % speeds.length];
-    _speed = next;
-    await _player.setRate(next);
-    if (mounted) setState(() {});
+  // ── 手势 ────────────────────────────────────────────────
+
+  void _handleDoubleTap(double dx, double width) {
+    final gesture = classifyDoubleTap(
+      dx,
+      width,
+      _settings.doubleTapMode,
+    );
+    switch (gesture) {
+      case DoubleTapGesture.pauseToggle:
+        _togglePlay();
+      case DoubleTapGesture.seekBackward:
+        _seekBy(-_settings.seekSeconds);
+      case DoubleTapGesture.seekForward:
+        _seekBy(_settings.seekSeconds);
+    }
+  }
+
+  Future<void> _seekBy(int seconds) async {
+    final total = _duration.inMilliseconds;
+    final target = (_position + Duration(seconds: seconds))
+        .inMilliseconds
+        .clamp(0, total);
+    await _player.seek(Duration(milliseconds: target));
+    _showSeekFeedback(seconds >= 0 ? '+$seconds' : '$seconds');
     _resetHideTimer();
   }
+
+  /// 双击快进/快退的顶部徽章反馈（控制层隐藏时也显示）
+  void _showSeekFeedback(String text) {
+    _seekFeedbackTimer?.cancel();
+    if (mounted) setState(() => _seekFeedback = text);
+    _seekFeedbackTimer = Timer(const Duration(milliseconds: 700), () {
+      if (mounted) setState(() => _seekFeedback = null);
+    });
+  }
+
+  /// 提示功能即将上线（占位入口）
+  void _showComingSoon(String name) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('「$name」功能即将上线'),
+          duration: const Duration(milliseconds: 1200),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  // ── 下一集 ──────────────────────────────────────────────
+
+  Future<void> _playNext() async {
+    final list = widget.playlist;
+    if (list == null) return;
+    final idx = list.indexWhere((v) => v.path == _path);
+    if (idx < 0 || idx >= list.length - 1) return;
+    final next = list[idx + 1];
+    _saveProgress();
+    await _player.open(Media(next.path));
+    _player.setRate(_speed);
+    if (mounted) {
+      setState(() {
+        _path = next.path;
+        _title = next.name;
+        _position = Duration.zero;
+        _duration = Duration.zero;
+        _dragPosition = null;
+      });
+    }
+    _resetHideTimer();
+  }
+
+  // ── 倍速 ────────────────────────────────────────────────
+
+  /// 应用倍速。[remember] 为 true 时写入记忆（下次打开恢复），
+  /// 临时调整传 false，避免高频写盘。
+  void _setSpeed(double v, {bool remember = true}) {
+    _speed = v;
+    _speedNotifier.value = v; // 通知倍速面板实时刷新
+    _player.setRate(v);
+    if (remember) _settings.setSpeed(v);
+    if (mounted) setState(() {});
+  }
+
+  // ── 右侧面板（更多 / 倍速 / 编辑控制栏）────────────────
+
+  /// 倍速面板页（槽位点击倍速时弹出）
+  PlayerPanelPage _speedPanelPage() => PlayerPanelPage(
+        title: '播放倍速',
+        body: PlayerSpeedPanel(
+          speedListenable: _speedNotifier,
+          onSpeedChanged: _setSpeed,
+          onTemporaryApply: (v) => _setSpeed(v, remember: false),
+          onReset: () => _setSpeed(1.0),
+        ),
+      );
+
+  /// 「更多」面板主页：仅「编辑控制栏」入口（功能由用户放到槽位后使用）
+  Widget _buildMorePanel() {
+    // 用 Builder 取面板树内的 context：PlayerPanelNavigator.of 要求调用方
+    // 位于 _PanelNavigatorScope 之下（在弹窗路由内），不能直接用 State 的 context
+    // （历史 bug：of() 断言 scope == null，编辑控制栏点击无反应）。
+    return Builder(
+      builder: (panelContext) => ListView(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        children: [
+          _PanelActionTile(
+            icon: Icons.tune,
+            label: '编辑控制栏',
+            subtitle: '管理右上角 5 个槽位按钮（添加 / 移除 / 排序）',
+            onTap: () => PlayerPanelNavigator.of(panelContext).push(
+              PlayerPanelPage(title: '编辑控制栏', body: _buildEditPanel()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 「编辑控制栏」页：已启用槽位（拖拽排序 + 文本「删除」）+ 可添加（文本「添加」）
+  Widget _buildEditPanel() {
+    final scheme = Theme.of(context).colorScheme;
+    return ListenableBuilder(
+      listenable: _settings,
+      builder: (context, _) {
+        final enabled = _settings.topActions;
+        final disabled = PlayerTopAction.values
+            .where((a) => !enabled.contains(a))
+            .toList();
+        final full = enabled.length >= PlayerControlsSettings.maxTopActions;
+        return ListView(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          children: [
+            if (enabled.isNotEmpty) ...[
+              const _PanelSectionLabel('已启用（长按拖拽排序）'),
+              ReorderableListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: enabled.length,
+                onReorderItem: (o, n) => _settings.reorderTopAction(o, n),
+                itemBuilder: (context, index) {
+                  final a = enabled[index];
+                  return ListTile(
+                    key: ValueKey(a.id),
+                    leading: Icon(a.icon, color: Colors.white),
+                    title: Text(
+                      a.label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 15,
+                      ),
+                    ),
+                    subtitle: a.implemented
+                        ? null
+                        : const Text(
+                            '功能即将上线',
+                            style: TextStyle(
+                              color: Colors.white38,
+                              fontSize: 12,
+                            ),
+                          ),
+                    trailing: TextButton(
+                      style: TextButton.styleFrom(
+                        foregroundColor: scheme.error,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                      ),
+                      onPressed: () => _settings.removeTopAction(a),
+                      child: const Text('删除'),
+                    ),
+                  );
+                },
+              ),
+              const Divider(height: 1, color: Colors.white12),
+            ],
+            if (disabled.isNotEmpty) ...[
+              const _PanelSectionLabel('可添加'),
+              for (final a in disabled)
+                ListTile(
+                  leading: Icon(a.icon, color: Colors.white),
+                  title: Text(
+                    a.label,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                    ),
+                  ),
+                  subtitle: Text(
+                    !a.implemented
+                        ? '功能即将上线'
+                        : (full ? '槽位已满（5/5），需先移除一个' : ''),
+                    style: const TextStyle(
+                      color: Colors.white38,
+                      fontSize: 12,
+                    ),
+                  ),
+                  trailing: TextButton(
+                    style: TextButton.styleFrom(
+                      foregroundColor: scheme.primary,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                    ),
+                    onPressed: full ? null : () => _settings.addTopAction(a),
+                    child: const Text('添加'),
+                  ),
+                ),
+              const Divider(height: 1, color: Colors.white12),
+            ],
+            _PanelActionTile(
+              icon: Icons.restart_alt,
+              label: '重置控制栏',
+              subtitle: '清空全部槽位（仅保留「更多」按钮）',
+              onTap: _settings.resetTopActions,
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 点击顶栏槽位执行动作（倍速 → 弹倍速面板；占位 → 提示即将上线）
+  void _handleSlotAction(PlayerTopAction action) {
+    if (!action.implemented) {
+      _showComingSoon(action.label);
+      return;
+    }
+    switch (action) {
+      case PlayerTopAction.speed:
+        _openSpeedPanel();
+        break;
+      case PlayerTopAction.subtitle:
+      case PlayerTopAction.danmaku:
+      case PlayerTopAction.audio:
+      case PlayerTopAction.aspect:
+        // 占位动作已在上面统一提示
+        break;
+    }
+  }
+
+  Future<void> _openSpeedPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_speedPanelPage()]);
+    _resetHideTimer();
+  }
+
+  Future<void> _openMorePanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(
+      context,
+      pages: [PlayerPanelPage(title: '控制栏', body: _buildMorePanel())],
+    );
+    _resetHideTimer();
+  }
+
+  // ── 退出与进度 ──────────────────────────────────────────
 
   /// 退出播放器：先保存进度、恢复竖屏，再返回
   Future<void> _exitPlayer() async {
@@ -128,16 +444,18 @@ class _PlayerPageState extends State<PlayerPage> {
     if (_position.inMilliseconds > 0 &&
         _duration.inMilliseconds > 0 &&
         _position < _duration) {
-      PlaybackProgressService.instance.save(widget.path, _position);
+      PlaybackProgressService.instance.save(_path, _position);
     }
   }
 
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _seekFeedbackTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
+    _speedNotifier.dispose();
     _saveProgress();
     // 退出时强制恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -146,15 +464,7 @@ class _PlayerPageState extends State<PlayerPage> {
     super.dispose();
   }
 
-  String _fmt(Duration d) {
-    final h = d.inHours;
-    final m = d.inMinutes.remainder(60);
-    final s = d.inSeconds.remainder(60);
-    if (h > 0) {
-      return '$h:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-    }
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
-  }
+  String _fmt(Duration d) => formatDuration(d.inMilliseconds);
 
   @override
   Widget build(BuildContext context) {
@@ -168,200 +478,210 @@ class _PlayerPageState extends State<PlayerPage> {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: Stack(
-          children: [
-            // 视频画面（禁用默认控件）
-            Positioned.fill(
-              child: Video(controller: _controller, controls: NoVideoControls),
-            ),
-            // 点击层：切换控制层显隐
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: _toggleControls,
-                behavior: HitTestBehavior.opaque,
-              ),
-            ),
-            // 控制层
-            IgnorePointer(
-              ignoring: !_controlsVisible,
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 200),
-                child: Column(
-                  children: [
-                    _buildTopBar(),
-                    const Spacer(),
-                    _buildBottomBar(),
-                  ],
+        body: LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            return Stack(
+              children: [
+                // 视频画面（禁用默认控件）
+                Positioned.fill(
+                  child: Video(
+                    controller: _controller,
+                    controls: NoVideoControls,
+                  ),
                 ),
-              ),
-            ),
-            // 中央大播放按钮（暂停时显示）
-            if (!_playing && _controlsVisible)
-              Center(
-                child: GestureDetector(
-                  onTap: _togglePlay,
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.4),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 44,
+                // 点击层：单击显隐控制层，双击手势可自定义
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _toggleControls,
+                    onDoubleTapDown: (TapDownDetails d) =>
+                        _handleDoubleTap(d.localPosition.dx, width),
+                  ),
+                ),
+                // 控制层：顶栏 + 底栏
+                IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Column(
+                      children: [
+                        PlayerTopBar(
+                          title: _title,
+                          onBack: _exitPlayer,
+                          onMore: _openMorePanel,
+                          onActionTap: _handleSlotAction,
+                        ),
+                        const Spacer(),
+                        PlayerBottomBar(
+                          valueMs: (_dragPosition ?? _position)
+                              .inMilliseconds
+                              .toDouble(),
+                          maxMs: _duration.inMilliseconds > 0
+                              ? _duration.inMilliseconds.toDouble()
+                              : 1.0,
+                          onSeekChanged: (v) {
+                            setState(
+                              () => _dragPosition =
+                                  Duration(milliseconds: v.round()),
+                            );
+                            _resetHideTimer();
+                          },
+                          onSeekEnd: (v) {
+                            _player.seek(Duration(milliseconds: v.round()));
+                            _dragPosition = null;
+                            _resetHideTimer();
+                          },
+                          hasNext: _hasNext,
+                          onNext: _playNext,
+                          timeText:
+                              '${_fmt(_dragPosition ?? _position)} / ${_fmt(_duration)}',
+                          superResolutionLabel: '超分辨率',
+                          onSuperResolutionTap: () =>
+                              _showComingSoon('超分辨率'),
+                        ),
+                      ],
                     ),
                   ),
                 ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTopBar() {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
-        ),
-      ),
-      child: SafeArea(
-        // 横屏时挖孔在物理左/右侧，控制层不应消费左右 inset，
-        // 否则返回按钮/进度条会被挖孔区域挤到右侧
-        left: false,
-        bottom: false,
-        right: false,
-        child: Row(
-          children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
-              onPressed: _exitPlayer,
-            ),
-            Expanded(
-              child: Text(
-                widget.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(width: 48),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBottomBar() {
-    final total = _duration.inMilliseconds > 0 ? _duration : Duration.zero;
-    final current = _dragPosition ?? _position;
-    final maxMs = total.inMilliseconds
-        .toDouble()
-        .clamp(1.0, double.infinity)
-        .toDouble();
-    final valueMs = current.inMilliseconds
-        .toDouble()
-        .clamp(0.0, total.inMilliseconds.toDouble())
-        .toDouble();
-
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
-        ),
-      ),
-      child: SafeArea(
-        // 横屏时挖孔在物理左/右侧，底部控制栏同样不消费左右 inset
-        left: false,
-        top: false,
-        right: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 进度条
-            SliderTheme(
-              data: SliderThemeData(
-                trackHeight: 2.5,
-                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                activeTrackColor: Colors.white,
-                inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
-                thumbColor: Colors.white,
-                overlayColor: Colors.white.withValues(alpha: 0.2),
-              ),
-              child: Slider(
-                min: 0,
-                max: maxMs,
-                value: valueMs,
-                onChanged: (v) {
-                  setState(
-                    () => _dragPosition = Duration(milliseconds: v.round()),
-                  );
-                  _resetHideTimer();
-                },
-                onChangeEnd: (v) {
-                  _player.seek(Duration(milliseconds: v.round()));
-                  _dragPosition = null;
-                  _resetHideTimer();
-                },
-              ),
-            ),
-            // 按钮行
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 0, 12, 8),
-              child: Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                      color: Colors.white,
-                      size: 32,
-                    ),
-                    onPressed: _togglePlay,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${_fmt(current)} / ${_fmt(total)}',
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: _cycleSpeed,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
+                // 中央控制簇
+                IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: AnimatedOpacity(
+                    opacity: _controlsVisible ? 1 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: Center(
+                      child: PlayerCenterCluster(
+                        seekSeconds: _settings.seekSeconds,
+                        playing: _playing,
+                        onSeekBackward: () => _seekBy(-_settings.seekSeconds),
+                        onSeekForward: () => _seekBy(_settings.seekSeconds),
+                        onTogglePlay: _togglePlay,
                       ),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: Text(
-                        '${_speed}x',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                // 双击快进/快退反馈徽章（贴近横屏顶部区域，但不完全贴边）
+                if (_seekFeedback != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 20,
+                    child: IgnorePointer(
+                      child: Center(
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 150),
+                          child: Container(
+                            key: ValueKey(_seekFeedback),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              _seekFeedback!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ],
-              ),
+                // 常驻进度线（设置开启且控制层隐藏时显示）
+                if (_settings.showProgressLine &&
+                    !_controlsVisible &&
+                    _duration > Duration.zero)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: 2.5,
+                    child: IgnorePointer(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Container(
+                          height: 2.5,
+                          color: Colors.white.withValues(alpha: 0.25),
+                          alignment: Alignment.centerLeft,
+                          child: FractionallySizedBox(
+                            widthFactor: (_position.inMilliseconds /
+                                    _duration.inMilliseconds)
+                                .clamp(0.0, 1.0),
+                            child: Container(
+                              color: Colors.white.withValues(alpha: 0.8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// 「更多」面板中的动作行：图标 + 名称 +（副标题）+ 箭头
+class _PanelActionTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String? subtitle;
+  final VoidCallback onTap;
+
+  const _PanelActionTile({
+    required this.icon,
+    required this.label,
+    this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: Colors.white),
+      title: Text(
+        label,
+        style: const TextStyle(color: Colors.white, fontSize: 15),
+      ),
+      subtitle: subtitle == null
+          ? null
+          : Text(
+              subtitle!,
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
-          ],
+      trailing: const Icon(Icons.chevron_right, color: Colors.white54),
+      onTap: onTap,
+    );
+  }
+}
+
+/// 「编辑控制栏」页内的小节标题（已启用 / 可添加）
+class _PanelSectionLabel extends StatelessWidget {
+  final String text;
+
+  const _PanelSectionLabel(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white54,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );

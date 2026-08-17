@@ -207,10 +207,20 @@ class _HomePageState extends State<HomePage>
   }
 
   Future<void> _openVideo(VideoFile video) async {
+    // 传首页一级界面的排序视频列表（树状模式根层视频），作为「下一集」的兄弟列表
+    final roots = widget.viewSettings.sortTree(_roots);
+    final playlist = [
+      for (final c in roots)
+        if (!c.isFolder) c.video!,
+    ];
     await Navigator.of(context).push(
       MaterialPageRoute(
         settings: const RouteSettings(name: playerRouteName),
-        builder: (_) => PlayerPage(path: video.path, title: video.name),
+        builder: (_) => PlayerPage(
+          path: video.path,
+          title: video.name,
+          playlist: playlist,
+        ),
       ),
     );
     // 返回后刷新，进度条立即更新
