@@ -3,13 +3,14 @@ import 'package:moumou/models/tree_node.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/home/folder_detail_page.dart';
 import 'package:moumou/pages/home/tree_folder_page.dart';
+import 'package:moumou/pages/home/views/folder_list_view.dart';
+import 'package:moumou/pages/home/views/tree_list_view.dart';
 import 'package:moumou/pages/player/player_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/video_scanner.dart';
 import 'package:moumou/services/view_settings.dart';
-import 'package:moumou/utils/app_dialog.dart';
-import 'package:moumou/widgets/folder_card.dart';
-import 'package:moumou/widgets/video_card.dart';
+import 'package:moumou/widgets/app_frame.dart';
+import 'package:moumou/widgets/options_sheet.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 /// 首页：展示视频库（列表视图 / 树状视图，两种视图共用同一棵目录树）
@@ -95,10 +96,12 @@ class _HomePageState extends State<HomePage>
   }
 
   void _showViewOptions() {
-    showAppDialog(
-      context: context,
-      builder: (context) =>
-          _ViewOptionsSheet(viewSettings: widget.viewSettings),
+    showSortOptionsSheet(
+      context,
+      widget.viewSettings,
+      hasFolders: true,
+      hasVideos: false,
+      showViewMode: true,
     );
   }
 
@@ -152,63 +155,23 @@ class _HomePageState extends State<HomePage>
           final roots = widget.viewSettings.sortTree(_roots);
           return RefreshIndicator(
             onRefresh: _load,
-            child: _buildTree(roots),
+            child: TreeListView(
+              roots: roots,
+              folderFields: widget.viewSettings.fields,
+              videoFields: widget.viewSettings.videoFields,
+              onFolderTap: _openTreeFolder,
+              onVideoTap: _openVideo,
+            ),
           );
         }
         final folders = widget.viewSettings.sortFolders(_folders);
         return RefreshIndicator(
           onRefresh: _load,
-          child: _buildList(folders),
-        );
-      },
-    );
-  }
-
-  /// 列表视图：只列出文件夹（点进去只显示该文件夹内的视频）
-  Widget _buildList(List<TreeNode> folders) {
-    return ListView.builder(
-      // 底部预留悬浮胶囊空间（系统安全区已由全局 SafeArea 处理）
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-      itemCount: folders.length,
-      itemBuilder: (context, index) {
-        final node = folders[index];
-        return FolderCard(
-          node: node,
-          fields: widget.viewSettings.fields,
-          onTap: () => _openFolder(node),
-        );
-      },
-    );
-  }
-
-  /// 树状视图：一级界面与列表模式一致的文件夹卡片列表（不展开整棵树）。
-  /// 文件夹点击进入目录浏览页逐级下钻，视频点击直接播放。
-  Widget _buildTree(List<TreeNode> roots) {
-    if (roots.isEmpty) {
-      return _buildMessage(
-        icon: Icons.folder_off_outlined,
-        message: '没有找到视频',
-        buttonText: '重新扫描',
-        onPressed: _load,
-      );
-    }
-    return ListView.builder(
-      // 底部预留悬浮胶囊空间（系统安全区已由全局 SafeArea 处理）
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-      itemCount: roots.length,
-      itemBuilder: (context, index) {
-        final node = roots[index];
-        if (node.isFolder) {
-          return FolderCard(
-            node: node,
+          child: FolderListView(
+            folders: folders,
             fields: widget.viewSettings.fields,
-            onTap: () => _openTreeFolder(node),
-          );
-        }
-        return VideoCard(
-          video: node.video!,
-          fields: widget.viewSettings.videoFields,
-          onTap: () => _openVideo(node.video!),
+            onFolderTap: _openFolder,
+          ),
         );
       },
     );
@@ -246,6 +209,7 @@ class _HomePageState extends State<HomePage>
   Future<void> _openVideo(VideoFile video) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
+        settings: const RouteSettings(name: playerRouteName),
         builder: (_) => PlayerPage(path: video.path, title: video.name),
       ),
     );
@@ -279,112 +243,4 @@ class _HomePageState extends State<HomePage>
   }
 }
 
-/// 排序弹窗
-class _ViewOptionsSheet extends StatelessWidget {
-  final ViewSettings viewSettings;
-
-  const _ViewOptionsSheet({required this.viewSettings});
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: SingleChildScrollView(
-        child: ListenableBuilder(
-          listenable: viewSettings,
-          builder: (context, _) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text('排序', style: Theme.of(context).textTheme.titleLarge),
-                  const SizedBox(height: 16),
-                  _sectionTitle(context, '排序方式'),
-                  SegmentedButton<SortField>(
-                    showSelectedIcon: false,
-                    segments: SortField.values
-                        .map(
-                          (e) => ButtonSegment(value: e, label: Text(e.label)),
-                        )
-                        .toList(),
-                    selected: {viewSettings.sortField},
-                    onSelectionChanged: (s) =>
-                        viewSettings.setSortField(s.first),
-                  ),
-                  const SizedBox(height: 16),
-                  _sectionTitle(context, '排序方向'),
-                  SegmentedButton<SortOrder>(
-                    showSelectedIcon: false,
-                    segments: SortOrder.values
-                        .map(
-                          (e) => ButtonSegment(value: e, label: Text(e.label)),
-                        )
-                        .toList(),
-                    selected: {viewSettings.sortOrder},
-                    onSelectionChanged: (s) =>
-                        viewSettings.setSortOrder(s.first),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  _sectionTitle(context, '显示字段'),
-                  Align(
-                    alignment: Alignment.center,
-                    child: Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
-                      children: FolderField.values.map((f) {
-                        final selected = viewSettings.fields.contains(f);
-                        return FilterChip(
-                          label: Text(f.label),
-                          selected: selected,
-                          showCheckmark: false,
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          onSelected: (_) => viewSettings.toggleField(f),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  _sectionTitle(context, '显示模式'),
-                  SegmentedButton<ViewMode>(
-                    showSelectedIcon: false,
-                    // 列表模式在前、树状模式在后
-                    segments: [ViewMode.list, ViewMode.tree]
-                        .map(
-                          (e) => ButtonSegment(value: e, label: Text(e.label)),
-                        )
-                        .toList(),
-                    selected: {viewSettings.viewMode},
-                    onSelectionChanged: (s) =>
-                        viewSettings.setViewMode(s.first),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _sectionTitle(BuildContext context, String title) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        title,
-        style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-}
+/// 排序弹窗：统一由 lib/widgets/options_sheet.dart 的 showSortOptionsSheet 提供

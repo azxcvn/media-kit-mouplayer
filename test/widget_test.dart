@@ -27,7 +27,8 @@ void main() {
         ),
       ),
     );
+    // 胶囊导航（Telegram 风格）设计上所有标签都显示，仅样式区分选中态
     expect(find.text('首页'), findsOneWidget);
-    expect(find.text('设置'), findsNothing);
+    expect(find.text('设置'), findsOneWidget);
   });
 }

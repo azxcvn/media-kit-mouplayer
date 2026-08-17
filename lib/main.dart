@@ -6,6 +6,7 @@ import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/theme/app_theme.dart';
 import 'package:moumou/theme/theme_controller.dart';
+import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/capsule_nav_bar.dart';
 import 'package:moumou/widgets/main_scaffold.dart';
 
@@ -68,16 +69,10 @@ class _MoumouAppState extends State<MoumouApp> {
           theme: light,
           darkTheme: dark,
           themeMode: themeMode,
-          // 全局处理系统底部导航键（三大金刚键）安全区：
-          // 所有页面（含以后新增的）自动避开底部安全区，无需每页手动处理。
-          // 顶部不处理（AppBar 自行适配状态栏）；播放页为横屏沉浸式，
-          // 横屏下底部安全区为 0，不受影响。
-          // ColoredBox：让 SafeArea 底部的系统导航栏区域与页面背景同色
-          // （否则该区域在 Navigator 之外，会露出窗口默认黑色背景）。
-          builder: (context, child) => ColoredBox(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            child: SafeArea(top: false, bottom: true, child: child!),
-          ),
+          // 全局框架：安全区 + 播放页全屏（详见 AppFrame）
+          builder: (context, child) => AppFrame(child: child!),
+          // 路由观察者：AppFrame 据此检测播放页，切换全屏行为
+          navigatorObservers: [AppFrameObserver.instance],
           home: MainScaffold(
             items: [
               CapsuleNavItem(

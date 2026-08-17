@@ -43,7 +43,14 @@ class _PlayerPageState extends State<PlayerPage> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    _enterFullscreen();
+
+    // 横屏旋转与路由转场是异步的，完成后系统栏可能被临时恢复显示；
+    // 在转场后再次确认沉浸式，并延迟重设一次，确保状态栏不再露出
+    WidgetsBinding.instance.addPostFrameCallback((_) => _enterFullscreen());
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (mounted) _enterFullscreen();
+    });
 
     _subs.add(
       _player.stream.playing.listen((p) {
@@ -62,6 +69,22 @@ class _PlayerPageState extends State<PlayerPage> {
     );
 
     _resetHideTimer();
+  }
+
+  /// 进入沉浸式全屏：隐藏状态栏/导航栏，并把系统栏设为透明
+  /// （即使系统栏短暂出现，也是透明的，不会露出浅色背景）
+  void _enterFullscreen() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.transparent,
+        systemNavigationBarDividerColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+        systemNavigationBarIconBrightness: Brightness.light,
+      ),
+    );
   }
 
   void _resetHideTimer() {
@@ -135,53 +158,66 @@ class _PlayerPageState extends State<PlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // 视频画面（禁用默认控件）
-          Positioned.fill(
-            child: Video(controller: _controller, controls: NoVideoControls),
-          ),
-          // 点击层：切换控制层显隐
-          Positioned.fill(
-            child: GestureDetector(
-              onTap: _toggleControls,
-              behavior: HitTestBehavior.opaque,
+    // 拦截系统返回键（手势/三键），与左上角返回按钮走同一路径：
+    // 先保存进度、恢复竖屏和系统 UI，再退出，避免横屏闪烁
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _exitPlayer();
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: Stack(
+          children: [
+            // 视频画面（禁用默认控件）
+            Positioned.fill(
+              child: Video(controller: _controller, controls: NoVideoControls),
             ),
-          ),
-          // 控制层
-          IgnorePointer(
-            ignoring: !_controlsVisible,
-            child: AnimatedOpacity(
-              opacity: _controlsVisible ? 1 : 0,
-              duration: const Duration(milliseconds: 200),
-              child: Column(
-                children: [_buildTopBar(), const Spacer(), _buildBottomBar()],
+            // 点击层：切换控制层显隐
+            Positioned.fill(
+              child: GestureDetector(
+                onTap: _toggleControls,
+                behavior: HitTestBehavior.opaque,
               ),
             ),
-          ),
-          // 中央大播放按钮（暂停时显示）
-          if (!_playing && _controlsVisible)
-            Center(
-              child: GestureDetector(
-                onTap: _togglePlay,
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.4),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.play_arrow_rounded,
-                    color: Colors.white,
-                    size: 44,
-                  ),
+            // 控制层
+            IgnorePointer(
+              ignoring: !_controlsVisible,
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 200),
+                child: Column(
+                  children: [
+                    _buildTopBar(),
+                    const Spacer(),
+                    _buildBottomBar(),
+                  ],
                 ),
               ),
             ),
-        ],
+            // 中央大播放按钮（暂停时显示）
+            if (!_playing && _controlsVisible)
+              Center(
+                child: GestureDetector(
+                  onTap: _togglePlay,
+                  child: Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.4),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(
+                      Icons.play_arrow_rounded,
+                      color: Colors.white,
+                      size: 44,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -196,7 +232,11 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       ),
       child: SafeArea(
+        // 横屏时挖孔在物理左/右侧，控制层不应消费左右 inset，
+        // 否则返回按钮/进度条会被挖孔区域挤到右侧
+        left: false,
         bottom: false,
+        right: false,
         child: Row(
           children: [
             IconButton(
@@ -243,7 +283,10 @@ class _PlayerPageState extends State<PlayerPage> {
         ),
       ),
       child: SafeArea(
+        // 横屏时挖孔在物理左/右侧，底部控制栏同样不消费左右 inset
+        left: false,
         top: false,
+        right: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

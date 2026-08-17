@@ -43,6 +43,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # 权限测试需要 mock 权限平台接口
+  permission_handler_platform_interface: ^4.4.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
