@@ -3,7 +3,7 @@ import 'package:moumou/models/player_action.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 播放器控制设置：右上角「更多」面板的启用动作、双击手势、快进/快退时长、
-/// 常驻进度线、倍速记忆、自定义倍速预设。
+/// 常驻进度线、倍速记忆、自定义倍速预设、控制按钮背景、画面比例。
 ///
 /// 全局单例（同 [PlaybackProgressService] 模式），ChangeNotifier + shared_preferences
 /// 持久化；播放页与「播放器设置」子页共同监听。
@@ -19,6 +19,8 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyLastSpeed = 'player_controls_last_speed';
   static const _keySeek = 'player_controls_seek';
   static const _keyCustomSpeedPresets = 'player_controls_custom_speed_presets';
+  static const _keyButtonBackground = 'player_controls_button_background';
+  static const _keyVideoFit = 'player_controls_video_fit';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -39,10 +41,17 @@ class PlayerControlsSettings extends ChangeNotifier {
   List<PlayerTopAction> _topActions = const [];
   DoubleTapMode _doubleTapMode = DoubleTapMode.mixed;
   bool _showProgressLine = false;
-  bool _rememberSpeed = true;
+  bool _rememberSpeed = false;
   double _lastSpeed = 1.0;
   int _seekSeconds = 10;
   List<double> _customSpeedPresets = const [];
+
+  /// 播放控制按钮背景（默认关闭）：开启后底栏倍速图标与顶栏控制图标
+  /// 显示半透明圆角背景
+  bool _showButtonBackground = false;
+
+  /// 画面比例（默认自动 contain）
+  PlayerVideoFit _videoFit = PlayerVideoFit.contain;
 
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
@@ -52,6 +61,8 @@ class PlayerControlsSettings extends ChangeNotifier {
   double get lastSpeed => _lastSpeed;
   int get seekSeconds => _seekSeconds;
   List<double> get customSpeedPresets => List.unmodifiable(_customSpeedPresets);
+  bool get showButtonBackground => _showButtonBackground;
+  PlayerVideoFit get videoFit => _videoFit;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -66,8 +77,15 @@ class PlayerControlsSettings extends ChangeNotifier {
       _doubleTapMode = DoubleTapMode.values[mode];
     }
     _showProgressLine = prefs.getBool(_keyProgressLine) ?? false;
-    _rememberSpeed = prefs.getBool(_keyRememberSpeed) ?? true;
+    // 记忆倍速默认关闭（用户显式开启后才记住上次倍速）
+    _rememberSpeed = prefs.getBool(_keyRememberSpeed) ?? false;
     _lastSpeed = prefs.getDouble(_keyLastSpeed) ?? 1.0;
+    _showButtonBackground =
+        prefs.getBool(_keyButtonBackground) ?? false;
+    final fit = prefs.getInt(_keyVideoFit);
+    if (fit != null && fit >= 0 && fit < PlayerVideoFit.values.length) {
+      _videoFit = PlayerVideoFit.values[fit];
+    }
     // 新 key 优先；兼容旧版按钮时长（v1 拆分，现合并为单一时长）
     _seekSeconds = (prefs.getInt(_keySeek) ??
             prefs.getInt(_legacyKeyButtonSeek) ??
@@ -96,6 +114,24 @@ class PlayerControlsSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyProgressLine, v);
+  }
+
+  /// 播放控制按钮背景开关（默认关闭）
+  Future<void> setShowButtonBackground(bool v) async {
+    if (_showButtonBackground == v) return;
+    _showButtonBackground = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyButtonBackground, v);
+  }
+
+  /// 画面比例（拉伸/自动/裁剪/等宽/等高/原始/限制/4:3/16:9）
+  Future<void> setVideoFit(PlayerVideoFit v) async {
+    if (_videoFit == v) return;
+    _videoFit = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyVideoFit, v.index);
   }
 
   Future<void> setRememberSpeed(bool v) async {
@@ -210,10 +246,12 @@ class PlayerControlsSettings extends ChangeNotifier {
     _topActions = const [];
     _doubleTapMode = DoubleTapMode.mixed;
     _showProgressLine = false;
-    _rememberSpeed = true;
+    _rememberSpeed = false;
     _lastSpeed = 1.0;
     _seekSeconds = 10;
     _customSpeedPresets = const [];
+    _showButtonBackground = false;
+    _videoFit = PlayerVideoFit.contain;
     notifyListeners();
   }
 }

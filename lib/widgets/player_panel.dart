@@ -112,6 +112,17 @@ class _PlayerPanelState extends State<PlayerPanel> {
                     reverseDuration: const Duration(milliseconds: 80),
                     switchInCurve: Curves.easeOutCubic,
                     switchOutCurve: Curves.easeInCubic,
+                    // 内容顶部对齐（默认 Stack 居中会让内容较短的面板
+                    // 垂直居中，如画面比例面板）
+                    layoutBuilder: (currentChild, previousChildren) {
+                      return Stack(
+                        alignment: Alignment.topCenter,
+                        children: [
+                          ...previousChildren,
+                          ?currentChild,
+                        ],
+                      );
+                    },
                     transitionBuilder: (child, animation) {
                       return FadeTransition(
                         opacity: animation,

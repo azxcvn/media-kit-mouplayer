@@ -37,8 +37,12 @@ dependencies:
   media_kit_libs_video: ^1.0.5
   permission_handler: ^11.3.1
   shared_preferences: ^2.3.2
+  # 超分着色器：拷贝 assets 到应用目录 + 拼接绝对路径
+  path_provider: ^2.1.5
+  path: ^1.9.0
   # 更多 Material 3 调色板风格（FlexSchemeVariant，21 种变体）
   flex_seed_scheme: ^4.0.1
+  saver_gallery: ^5.1.0
 
 dev_dependencies:
   flutter_test:
@@ -65,9 +69,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/shaders/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
@@ -94,3 +97,4 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+

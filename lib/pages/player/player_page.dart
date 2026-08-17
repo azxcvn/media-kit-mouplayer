@@ -8,13 +8,18 @@ import 'package:moumou/models/player_action.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
+import 'package:moumou/pages/player/views/player_fit_panel.dart';
+import 'package:moumou/pages/player/views/player_right_actions.dart';
 import 'package:moumou/pages/player/views/player_speed_panel.dart';
+import 'package:moumou/pages/player/views/player_super_resolution_panel.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
+import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/player_gestures.dart';
 import 'package:moumou/widgets/player_panel.dart';
+import 'package:saver_gallery/saver_gallery.dart';
 
 /// 播放页：默认横屏播放，自定义现代化控制 UI。
 ///
@@ -40,7 +45,8 @@ class PlayerPage extends StatefulWidget {
   State<PlayerPage> createState() => _PlayerPageState();
 }
 
-class _PlayerPageState extends State<PlayerPage> {
+class _PlayerPageState extends State<PlayerPage>
+    with TickerProviderStateMixin {
   late final Player _player;
   late final VideoController _controller;
   final PlayerControlsSettings _settings = PlayerControlsSettings.instance;
@@ -54,6 +60,43 @@ class _PlayerPageState extends State<PlayerPage> {
   Duration _duration = Duration.zero;
   Duration? _dragPosition;
   double _speed = 1.0;
+
+  /// 控制层显隐动画（Kazumi 风格：顶部下落 / 底部上升 / 右侧滑入 / 中央淡入）
+  late final AnimationController _controlsController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 250),
+    value: 1, // 初始显示
+  );
+  late final Animation<Offset> _topSlide = Tween<Offset>(
+    begin: const Offset(0, -1),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _controlsController, curve: Curves.easeInOut));
+  late final Animation<Offset> _bottomSlide = Tween<Offset>(
+    begin: const Offset(0, 1),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _controlsController, curve: Curves.easeInOut));
+  late final Animation<Offset> _rightSlide = Tween<Offset>(
+    begin: const Offset(1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _controlsController, curve: Curves.easeInOut));
+
+  /// 控制层是否锁定（锁定后隐藏全部控制；左右两侧出现解锁按钮，
+  /// 单击屏幕可呼出/隐藏解锁按钮）
+  bool _locked = false;
+
+  /// 解锁按钮显隐动画（锁定后从左右两侧滑入，单击屏幕切换呼出/隐藏）
+  late final AnimationController _unlockController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 250),
+  );
+  late final Animation<Offset> _leftUnlockSlide = Tween<Offset>(
+    begin: const Offset(-1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _unlockController, curve: Curves.easeInOut));
+  late final Animation<Offset> _rightUnlockSlide = Tween<Offset>(
+    begin: const Offset(1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _unlockController, curve: Curves.easeInOut));
 
   /// 实际倍速的监听器：倍速面板（独立弹窗路由）通过它实时刷新
   final ValueNotifier<double> _speedNotifier = ValueNotifier(1.0);
@@ -82,6 +125,9 @@ class _PlayerPageState extends State<PlayerPage> {
     // 倍速记忆：启用时恢复上次倍速
     _speed = _settings.rememberSpeed ? _settings.lastSpeed : 1.0;
     _speedNotifier.value = _speed;
+    // 进入播放器：未开启记忆时本次会话从「关闭/均衡」开始超分
+    // （退出播放/重启后自动回到默认关闭，记忆开启才恢复上次设置）
+    SuperResolutionService.instance.enterPlayer();
     _openAndSetRate();
 
     // 默认强制横屏 + 沉浸式全屏
@@ -104,7 +150,10 @@ class _PlayerPageState extends State<PlayerPage> {
         setState(() {
           _playing = p;
           // 暂停时总是显示控制层（含中央播放键）
-          if (!p) _controlsVisible = true;
+          if (!p && !_locked) {
+            _controlsVisible = true;
+            _controlsController.forward();
+          }
         });
       }),
     );
@@ -122,10 +171,12 @@ class _PlayerPageState extends State<PlayerPage> {
     _resetHideTimer();
   }
 
-  /// 打开媒体后再设置倍速（media_kit 在加载完成后生效）
+  /// 打开媒体后再设置倍速（media_kit 在加载完成后生效）；
+  /// 随后按当前超分模式重放着色器（切换文件后 mpv 的 glsl-shaders 需重新确认）
   Future<void> _openAndSetRate() async {
     await _player.open(Media(_path));
     _player.setRate(_speed);
+    await SuperResolutionService.instance.apply(_player);
   }
 
   /// 进入沉浸式全屏：隐藏状态栏/导航栏，并把系统栏设为透明
@@ -149,20 +200,95 @@ class _PlayerPageState extends State<PlayerPage> {
   void _resetHideTimer() {
     _hideTimer?.cancel();
     _hideTimer = Timer(const Duration(seconds: 3), () {
-      if (mounted && _playing) {
+      if (mounted && _playing && !_locked) {
         setState(() => _controlsVisible = false);
+        _controlsController.reverse();
       }
     });
   }
 
   void _toggleControls() {
+    // 锁定时单击：呼出/隐藏左右解锁按钮（带滑入滑出动画）
+    if (_locked) {
+      if (_unlockController.status == AnimationStatus.forward ||
+          _unlockController.status == AnimationStatus.completed) {
+        _unlockController.reverse();
+      } else {
+        _unlockController.forward();
+      }
+      return;
+    }
     final visible = !_controlsVisible;
     setState(() => _controlsVisible = visible);
     if (visible) {
+      _controlsController.forward();
       _resetHideTimer();
     } else {
+      _controlsController.reverse();
       _hideTimer?.cancel();
     }
+  }
+
+  // ── 锁定 / 解锁 ─────────────────────────────────────────
+
+  void _toggleLock() {
+    setState(() => _locked = !_locked);
+    if (_locked) {
+      // 锁定：隐藏全部控制，左右滑入解锁按钮
+      _hideTimer?.cancel();
+      if (_controlsVisible) {
+        _controlsVisible = false;
+        _controlsController.reverse();
+      }
+      _unlockController.forward();
+    } else {
+      // 解锁：解锁按钮滑出，恢复控制层
+      _unlockController.reverse();
+      _controlsVisible = true;
+      _controlsController.forward();
+      _resetHideTimer();
+    }
+  }
+
+  void _unlock() => _toggleLock();
+
+  // ── 截图 ────────────────────────────────────────────────
+
+  Future<void> _takeScreenshot() async {
+    Uint8List? bytes;
+    try {
+      bytes = await _player.screenshot(format: 'image/png');
+    } catch (e) {
+      _toast('截图失败：$e');
+      return;
+    }
+    if (bytes == null || bytes.isEmpty) {
+      _toast('截图失败：未获取到图像');
+      return;
+    }
+    try {
+      final name = 'moumou_${DateTime.now().millisecondsSinceEpoch}.png';
+      final result = await SaverGallery.saveImage(
+        bytes,
+        fileName: name,
+        skipIfExists: false,
+      );
+      _toast(result.isSuccess ? '已保存到相册' : '截图保存失败：${result.errorMessage}');
+    } catch (e) {
+      _toast('截图保存失败：$e');
+    }
+  }
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(milliseconds: 1500),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 
   Future<void> _togglePlay() async {
@@ -173,6 +299,7 @@ class _PlayerPageState extends State<PlayerPage> {
   // ── 手势 ────────────────────────────────────────────────
 
   void _handleDoubleTap(double dx, double width) {
+    if (_locked) return; // 锁定状态拦截双击手势，防误触
     final gesture = classifyDoubleTap(
       dx,
       width,
@@ -231,6 +358,8 @@ class _PlayerPageState extends State<PlayerPage> {
     _saveProgress();
     await _player.open(Media(next.path));
     _player.setRate(_speed);
+    // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
+    await SuperResolutionService.instance.apply(_player);
     if (mounted) {
       setState(() {
         _path = next.path;
@@ -257,7 +386,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ── 右侧面板（更多 / 倍速 / 编辑控制栏）────────────────
 
-  /// 倍速面板页（槽位点击倍速时弹出）
+  /// 倍速面板页（底栏倍速按钮弹出）
   PlayerPanelPage _speedPanelPage() => PlayerPanelPage(
         title: '播放倍速',
         body: PlayerSpeedPanel(
@@ -266,6 +395,19 @@ class _PlayerPageState extends State<PlayerPage> {
           onTemporaryApply: (v) => _setSpeed(v, remember: false),
           onReset: () => _setSpeed(1.0),
         ),
+      );
+
+  /// 超分面板页（底栏超分辨率按钮弹出，与倍速面板同一外壳/胶囊样式）。
+  /// 面板直接驱动 [SuperResolutionService] 单例（模式/质量/记忆）。
+  PlayerPanelPage _superResolutionPanelPage() => PlayerPanelPage(
+        title: '超分辨率',
+        body: PlayerSuperResolutionPanel(player: _player),
+      );
+
+  /// 画面比例面板页（顶栏「比例」槽位弹出，PiliPlus 同款选项）
+  PlayerPanelPage _fitPanelPage() => PlayerPanelPage(
+        title: '画面比例',
+        body: const PlayerFitPanel(),
       );
 
   /// 「更多」面板主页：仅「编辑控制栏」入口（功能由用户放到槽位后使用）
@@ -395,28 +537,34 @@ class _PlayerPageState extends State<PlayerPage> {
     );
   }
 
-  /// 点击顶栏槽位执行动作（倍速 → 弹倍速面板；占位 → 提示即将上线）
+  /// 点击顶栏槽位执行动作（比例 → 弹画面比例面板；其余占位提示即将上线）。
+  /// 倍速已移至底栏固定按钮（见底栏），不在此列。
   void _handleSlotAction(PlayerTopAction action) {
-    if (!action.implemented) {
-      _showComingSoon(action.label);
-      return;
-    }
     switch (action) {
-      case PlayerTopAction.speed:
-        _openSpeedPanel();
-        break;
+      case PlayerTopAction.aspect:
+        _openFitPanel();
       case PlayerTopAction.subtitle:
       case PlayerTopAction.danmaku:
       case PlayerTopAction.audio:
-      case PlayerTopAction.aspect:
-        // 占位动作已在上面统一提示
-        break;
+        if (!action.implemented) _showComingSoon(action.label);
     }
   }
 
   Future<void> _openSpeedPanel() async {
     _hideTimer?.cancel();
     await showPlayerPanel(context, pages: [_speedPanelPage()]);
+    _resetHideTimer();
+  }
+
+  Future<void> _openSuperResolutionPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_superResolutionPanelPage()]);
+    _resetHideTimer();
+  }
+
+  Future<void> _openFitPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_fitPanelPage()]);
     _resetHideTimer();
   }
 
@@ -455,6 +603,8 @@ class _PlayerPageState extends State<PlayerPage> {
     for (final s in _subs) {
       s.cancel();
     }
+    _controlsController.dispose();
+    _unlockController.dispose();
     _speedNotifier.dispose();
     _saveProgress();
     // 退出时强制恢复竖屏和系统 UI
@@ -483,11 +633,13 @@ class _PlayerPageState extends State<PlayerPage> {
             final width = constraints.maxWidth;
             return Stack(
               children: [
-                // 视频画面（禁用默认控件）
+                // 视频画面（禁用默认控件；画面比例由设置驱动）
                 Positioned.fill(
                   child: Video(
                     controller: _controller,
                     controls: NoVideoControls,
+                    fit: _settings.videoFit.boxFit,
+                    aspectRatio: _settings.videoFit.aspectRatio,
                   ),
                 ),
                 // 点击层：单击显隐控制层，双击手势可自定义
@@ -499,58 +651,84 @@ class _PlayerPageState extends State<PlayerPage> {
                         _handleDoubleTap(d.localPosition.dx, width),
                   ),
                 ),
-                // 控制层：顶栏 + 底栏
+                // 控制层（锁定后全部隐藏）：
+                // 顶栏顶部下落 / 底栏底部上升 / 右侧操作右侧滑入（Kazumi 风格）
                 IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: AnimatedOpacity(
-                    opacity: _controlsVisible ? 1 : 0,
-                    duration: const Duration(milliseconds: 200),
-                    child: Column(
-                      children: [
-                        PlayerTopBar(
-                          title: _title,
-                          onBack: _exitPlayer,
-                          onMore: _openMorePanel,
-                          onActionTap: _handleSlotAction,
-                        ),
-                        const Spacer(),
-                        PlayerBottomBar(
-                          valueMs: (_dragPosition ?? _position)
-                              .inMilliseconds
-                              .toDouble(),
-                          maxMs: _duration.inMilliseconds > 0
-                              ? _duration.inMilliseconds.toDouble()
-                              : 1.0,
-                          onSeekChanged: (v) {
-                            setState(
-                              () => _dragPosition =
-                                  Duration(milliseconds: v.round()),
-                            );
-                            _resetHideTimer();
-                          },
-                          onSeekEnd: (v) {
-                            _player.seek(Duration(milliseconds: v.round()));
-                            _dragPosition = null;
-                            _resetHideTimer();
-                          },
-                          hasNext: _hasNext,
-                          onNext: _playNext,
-                          timeText:
-                              '${_fmt(_dragPosition ?? _position)} / ${_fmt(_duration)}',
-                          superResolutionLabel: '超分辨率',
-                          onSuperResolutionTap: () =>
-                              _showComingSoon('超分辨率'),
-                        ),
-                      ],
+                  ignoring: !_controlsVisible || _locked,
+                  child: SlideTransition(
+                    position: _topSlide,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: PlayerTopBar(
+                        title: _title,
+                        onBack: _exitPlayer,
+                        onMore: _openMorePanel,
+                        onActionTap: _handleSlotAction,
+                      ),
                     ),
                   ),
                 ),
-                // 中央控制簇
                 IgnorePointer(
-                  ignoring: !_controlsVisible,
-                  child: AnimatedOpacity(
-                    opacity: _controlsVisible ? 1 : 0,
-                    duration: const Duration(milliseconds: 200),
+                  ignoring: !_controlsVisible || _locked,
+                  child: SlideTransition(
+                    position: _bottomSlide,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: PlayerBottomBar(
+                        valueMs: (_dragPosition ?? _position)
+                            .inMilliseconds
+                            .toDouble(),
+                        maxMs: _duration.inMilliseconds > 0
+                            ? _duration.inMilliseconds.toDouble()
+                            : 1.0,
+                        onSeekChanged: (v) {
+                          setState(
+                            () => _dragPosition =
+                                Duration(milliseconds: v.round()),
+                          );
+                          _resetHideTimer();
+                        },
+                        onSeekEnd: (v) {
+                          _player.seek(Duration(milliseconds: v.round()));
+                          _dragPosition = null;
+                          _resetHideTimer();
+                        },
+                        hasNext: _hasNext,
+                        onNext: _playNext,
+                        timeText:
+                            '${_fmt(_dragPosition ?? _position)} / ${_fmt(_duration)}',
+                        onSpeedTap: _openSpeedPanel,
+                        showSpeedButtonBackground:
+                            _settings.showButtonBackground,
+                        superResolutionLabel: '超分辨率',
+                        onSuperResolutionTap: _openSuperResolutionPanel,
+                      ),
+                    ),
+                  ),
+                ),
+                // 右侧操作（截图 / 锁定，从右侧滑入）
+                IgnorePointer(
+                  ignoring: !_controlsVisible || _locked,
+                  child: SlideTransition(
+                    position: _rightSlide,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: PlayerRightActions(
+                          locked: _locked,
+                          onScreenshot: _takeScreenshot,
+                          onToggleLock: _toggleLock,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // 中央控制簇（淡入）
+                IgnorePointer(
+                  ignoring: !_controlsVisible || _locked,
+                  child: FadeTransition(
+                    opacity: _controlsController,
                     child: Center(
                       child: PlayerCenterCluster(
                         seekSeconds: _settings.seekSeconds,
@@ -562,6 +740,29 @@ class _PlayerPageState extends State<PlayerPage> {
                     ),
                   ),
                 ),
+                // 锁定状态：左右两侧滑入解锁按钮（单击屏幕可呼出/隐藏）
+                if (_locked)
+                  SlideTransition(
+                    position: _leftUnlockSlide,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: _UnlockButton(onTap: _unlock),
+                      ),
+                    ),
+                  ),
+                if (_locked)
+                  SlideTransition(
+                    position: _rightUnlockSlide,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: _UnlockButton(onTap: _unlock),
+                      ),
+                    ),
+                  ),
                 // 双击快进/快退反馈徽章（贴近横屏顶部区域，但不完全贴边）
                 if (_seekFeedback != null)
                   Positioned(
@@ -595,9 +796,10 @@ class _PlayerPageState extends State<PlayerPage> {
                       ),
                     ),
                   ),
-                // 常驻进度线（设置开启且控制层隐藏时显示）
+                // 常驻进度线（设置开启且控制层隐藏时显示；锁定后不显示）
                 if (_settings.showProgressLine &&
                     !_controlsVisible &&
+                    !_locked &&
                     _duration > Duration.zero)
                   Positioned(
                     left: 0,
@@ -632,9 +834,33 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 }
 
+/// 锁定状态下的解锁按钮（屏幕左右两侧各一个）。
+/// 固定灰黑圆角背景（与右侧截图/锁定按钮同款），点击解锁。
+class _UnlockButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _UnlockButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: IconButton(
+        constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.lock_open, color: Colors.white, size: 22),
+        tooltip: '解锁',
+        onPressed: onTap,
+      ),
+    );
+  }
+}
+
 /// 「更多」面板中的动作行：图标 + 名称 +（副标题）+ 箭头
-class _PanelActionTile extends StatelessWidget {
-  final IconData icon;
+class _PanelActionTile extends StatelessWidget {  final IconData icon;
   final String label;
   final String? subtitle;
   final VoidCallback onTap;

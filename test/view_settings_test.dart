@@ -67,6 +67,22 @@ void main() {
       expect(result.map((n) => n.name).toList(), ['a', 'b']);
     });
 
+    test('文件夹按名称自然序（数字感知）', () async {
+      final settings = ViewSettings();
+      await settings.setSortField(SortField.name);
+      final result = settings.sortTree([
+        folder('第112话'),
+        folder('第12话'),
+        folder('第2话'),
+      ]);
+      // 数字按数值排序：2 < 12 < 112（而不是逐字符的 112 < 12 < 2）
+      expect(result.map((n) => n.name).toList(), [
+        '第2话',
+        '第12话',
+        '第112话',
+      ]);
+    });
+
     test('文件夹按数量降序', () async {
       final settings = ViewSettings();
       await settings.setSortField(SortField.count);
@@ -149,6 +165,18 @@ void main() {
         ),
       ]);
       expect(result.map((v) => v.name).toList(), ['old', 'new']);
+    });
+
+    test('sortVideos 按名称自然序（数字感知）', () async {
+      final settings = ViewSettings();
+      await settings.setVideoSortField(VideoSortField.name);
+      final result = settings.sortVideos([
+        VideoFile(path: '/12.mp4', name: '12.mp4'),
+        VideoFile(path: '/2.mp4', name: '2.mp4'),
+        VideoFile(path: '/112.mp4', name: '112.mp4'),
+      ]);
+      // 修复：升序时 112 曾排在 12 前面（逐字符比较），现按数值排序
+      expect(result.map((v) => v.name).toList(), ['2.mp4', '12.mp4', '112.mp4']);
     });
   });
 }

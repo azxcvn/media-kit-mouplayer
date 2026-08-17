@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/widgets/player_option_chip.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
 /// 倍速设置面板内容（通过 [showPlayerPanel] 弹出）。
@@ -414,27 +415,12 @@ class _SpeedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return GestureDetector(
+    // 与超分面板共用同一胶囊组件，保证两处交互与视觉一致
+    return PlayerOptionChip(
+      label: label,
+      selected: selected,
       onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: padding,
-        decoration: BoxDecoration(
-          color: selected
-              ? scheme.primary
-              : Colors.white.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: selected ? scheme.onPrimary : Colors.white,
-            fontSize: 13,
-            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-          ),
-        ),
-      ),
+      padding: padding,
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/tree_node.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/utils/natural_compare.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 排序维度
@@ -267,7 +268,8 @@ class ViewSettings extends ChangeNotifier {
 
   int _compareFolders(TreeNode a, TreeNode b) {
     return switch (_sortField) {
-      SortField.name => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      // 名称用自然序（数字感知）：「第2话」<「第12话」<「第112话」
+      SortField.name => naturalCompare(a.name, b.name),
       SortField.date =>
         (a.dateModified?.millisecondsSinceEpoch ?? 0).compareTo(
           b.dateModified?.millisecondsSinceEpoch ?? 0,
@@ -284,9 +286,8 @@ class ViewSettings extends ChangeNotifier {
 
   int _compareVideoFile(VideoFile a, VideoFile b) {
     return switch (_videoSortField) {
-      VideoSortField.name => a.name.toLowerCase().compareTo(
-        b.name.toLowerCase(),
-      ),
+      // 名称用自然序（数字感知）：「2.mp4」<「12.mp4」<「112.mp4」
+      VideoSortField.name => naturalCompare(a.name, b.name),
       VideoSortField.date =>
         (a.dateModified?.millisecondsSinceEpoch ?? 0).compareTo(
           b.dateModified?.millisecondsSinceEpoch ?? 0,

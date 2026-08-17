@@ -24,10 +24,10 @@ void main() {
   });
 
   testWidgets('showPlayerPanel 打开面板 + 编辑页跳转不崩溃', (tester) async {
-    // 预先放置两个动作，模拟用户已配置槽位
+    // 预先放置两个动作，模拟用户已配置槽位（倍速不在顶栏动作之列）
     final s = PlayerControlsSettings.instance;
-    await s.addTopAction(PlayerTopAction.speed);
     await s.addTopAction(PlayerTopAction.subtitle);
+    await s.addTopAction(PlayerTopAction.danmaku);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -54,8 +54,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('控制栏'), findsOneWidget);
     // 已放置的动作显示在面板列表中
-    expect(find.text('倍速'), findsOneWidget);
     expect(find.text('字幕'), findsOneWidget);
+    expect(find.text('弹幕'), findsOneWidget);
     expect(find.text('编辑控制栏'), findsOneWidget);
 
     // 点击「编辑控制栏」→ 面板内就地切换（无新面板、无崩溃）

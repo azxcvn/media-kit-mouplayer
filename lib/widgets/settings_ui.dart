@@ -92,7 +92,8 @@ class SettingsTile extends StatelessWidget {
       ),
       title: Text(
         title,
-        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+        // 主标题字号大于副标题（ListTile 默认副标题 14），形成清晰视觉层级
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
       ),
       subtitle: subtitle,
       trailing: trailing ?? Icon(Icons.chevron_right, color: scheme.onSurfaceVariant),
@@ -104,6 +105,7 @@ class SettingsTile extends StatelessWidget {
 class SettingsRadioTile extends StatelessWidget {
   final IconData icon;
   final String title;
+  final Widget? subtitle;
   final bool selected;
   final VoidCallback? onTap;
 
@@ -112,6 +114,7 @@ class SettingsRadioTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.selected,
+    this.subtitle,
     this.onTap,
   });
 
@@ -136,10 +139,11 @@ class SettingsRadioTile extends StatelessWidget {
       title: Text(
         title,
         style: TextStyle(
-          fontSize: 15,
+          fontSize: 17,
           fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
         ),
       ),
+      subtitle: subtitle,
       trailing: selected
           ? Icon(Icons.check_circle, color: scheme.primary)
           : Icon(Icons.circle_outlined, color: scheme.outlineVariant),

@@ -14,11 +14,36 @@ void main() {
     expect(s.topActions, isEmpty); // 默认不放置任何按钮
     expect(s.doubleTapMode, DoubleTapMode.mixed);
     expect(s.showProgressLine, isFalse);
-    expect(s.rememberSpeed, isTrue);
+    // 记忆上次倍速默认关闭（用户显式开启后才记住）
+    expect(s.rememberSpeed, isFalse);
     expect(s.lastSpeed, 1.0);
     expect(s.seekSeconds, 10);
     expect(s.customSpeedPresets, isEmpty);
     expect(PlayerControlsSettings.maxTopActions, 5);
+    // 按钮背景默认关闭（底栏倍速/顶栏图标默认无背景）
+    expect(s.showButtonBackground, isFalse);
+    // 画面比例默认自动
+    expect(s.videoFit, PlayerVideoFit.contain);
+  });
+
+  test('按钮背景：默认关闭，可开关并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setShowButtonBackground(true);
+    expect(s.showButtonBackground, isTrue);
+    await s.load(); // 模拟重启
+    expect(s.showButtonBackground, isTrue);
+    await s.setShowButtonBackground(false);
+    expect(s.showButtonBackground, isFalse);
+  });
+
+  test('画面比例：默认自动，可切换并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setVideoFit(PlayerVideoFit.ratio16x9);
+    expect(s.videoFit, PlayerVideoFit.ratio16x9);
+    await s.load(); // 模拟重启
+    expect(s.videoFit, PlayerVideoFit.ratio16x9);
+    await s.setVideoFit(PlayerVideoFit.cover);
+    expect(s.videoFit, PlayerVideoFit.cover);
   });
 
   test('槽位：添加/去重/上限', () async {
@@ -26,41 +51,41 @@ void main() {
     for (final a in PlayerTopAction.values) {
       await s.addTopAction(a);
     }
-    // 全部 5 个动作都放得下
+    // 全部动作都放得下（倍速不在顶栏动作之列，见 PlayerTopAction 注释）
     expect(s.topActions, PlayerTopAction.values);
     // 已存在 → 忽略
-    await s.addTopAction(PlayerTopAction.speed);
+    await s.addTopAction(PlayerTopAction.subtitle);
     expect(s.topActions.length, PlayerTopAction.values.length);
   });
 
   test('槽位：移除后可重新添加', () async {
     final s = PlayerControlsSettings.instance;
-    await s.addTopAction(PlayerTopAction.speed);
     await s.addTopAction(PlayerTopAction.subtitle);
-    expect(s.topActions, [PlayerTopAction.speed, PlayerTopAction.subtitle]);
-    await s.removeTopAction(PlayerTopAction.speed);
-    expect(s.topActions, [PlayerTopAction.subtitle]);
-    await s.addTopAction(PlayerTopAction.speed);
-    expect(s.topActions, [PlayerTopAction.subtitle, PlayerTopAction.speed]);
+    await s.addTopAction(PlayerTopAction.danmaku);
+    expect(s.topActions, [PlayerTopAction.subtitle, PlayerTopAction.danmaku]);
+    await s.removeTopAction(PlayerTopAction.subtitle);
+    expect(s.topActions, [PlayerTopAction.danmaku]);
+    await s.addTopAction(PlayerTopAction.subtitle);
+    expect(s.topActions, [PlayerTopAction.danmaku, PlayerTopAction.subtitle]);
   });
 
   test('槽位：拖拽排序', () async {
     final s = PlayerControlsSettings.instance;
-    await s.addTopAction(PlayerTopAction.speed);
     await s.addTopAction(PlayerTopAction.subtitle);
+    await s.addTopAction(PlayerTopAction.danmaku);
     await s.addTopAction(PlayerTopAction.audio);
     // onReorderItem 语义：移除 oldIndex 后插入 newIndex
     await s.reorderTopAction(0, 1);
     expect(s.topActions, [
+      PlayerTopAction.danmaku,
       PlayerTopAction.subtitle,
-      PlayerTopAction.speed,
       PlayerTopAction.audio,
     ]);
     await s.reorderTopAction(1, 2);
     expect(s.topActions, [
-      PlayerTopAction.subtitle,
+      PlayerTopAction.danmaku,
       PlayerTopAction.audio,
-      PlayerTopAction.speed,
+      PlayerTopAction.subtitle,
     ]);
   });
 
@@ -75,10 +100,10 @@ void main() {
 
   test('槽位持久化（模拟重启后 load 恢复）', () async {
     final s = PlayerControlsSettings.instance;
-    await s.addTopAction(PlayerTopAction.speed);
+    await s.addTopAction(PlayerTopAction.subtitle);
     await s.addTopAction(PlayerTopAction.aspect);
     await s.load();
-    expect(s.topActions, [PlayerTopAction.speed, PlayerTopAction.aspect]);
+    expect(s.topActions, [PlayerTopAction.subtitle, PlayerTopAction.aspect]);
   });
 
   test('快进时长设置并持久化', () async {
@@ -135,19 +160,19 @@ void main() {
     final s = PlayerControlsSettings.instance;
     await s.setDoubleTapMode(DoubleTapMode.seek);
     await s.setShowProgressLine(true);
-    await s.setRememberSpeed(false);
+    await s.setRememberSpeed(true); // 默认关闭，显式开启后应持久化
     await s.setSpeed(1.5);
     await s.setSeekSeconds(60);
     await s.addCustomSpeedPreset(1.75);
-    await s.addTopAction(PlayerTopAction.speed);
+    await s.addTopAction(PlayerTopAction.subtitle);
 
     await s.load();
     expect(s.doubleTapMode, DoubleTapMode.seek);
     expect(s.showProgressLine, isTrue);
-    expect(s.rememberSpeed, isFalse);
+    expect(s.rememberSpeed, isTrue);
     expect(s.lastSpeed, 1.5);
     expect(s.seekSeconds, 60);
     expect(s.customSpeedPresets, [1.75]);
-    expect(s.topActions, [PlayerTopAction.speed]);
+    expect(s.topActions, [PlayerTopAction.subtitle]);
   });
 }

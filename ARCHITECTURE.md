@@ -14,6 +14,7 @@ Flutter 本地视频播放器（Android），核心能力：
 - **树状模式**：逐级目录导航（mpvRx 风格），一级界面显示独立文件夹卡片，点入下钻，带面包屑
 - 两种模式共用同一套卡片组件（视觉一致）
 - 播放器：media_kit，横屏沉浸式全屏，播放进度持久化
+- 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
 - 外观设置：23 种主题色 + 21 种调色板风格（flex_seed_scheme）
 
 技术栈：Flutter 3.44+ / Dart 3.12+，依赖见 `pubspec.yaml`。
@@ -28,18 +29,21 @@ lib/
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         #   目录树节点（folder/video）
 │   ├── video_file.dart        #   视频文件信息
-│   └── player_action.dart     #   播放器按钮动作（含占位入口）/ 双击手势模式枚举
+│   ├── player_action.dart     #   播放器按钮动作（含占位入口）/ 双击手势模式枚举（倍速不在顶栏动作之列）
+│   └── super_resolution_mode.dart  # 超分模型：模式枚举（关闭+A/B/C/A+/B+/C+）+ 质量枚举（流畅/均衡/高清）+ buildAnime4KChain 纯函数
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     #   排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     #   扫描 + 建树 + 建文件夹列表
 │   ├── video_info_service.dart#   缩略图生成（跨进程，磁盘缓存）
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化）
-│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设，单例 + 持久化）
+│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设/按钮背景/进度条样式，单例 + 持久化）
+│   ├── super_resolution_service.dart   # 超分：模式+质量持久化、着色器 assets→目录拷贝、mpv glsl-shaders 应用与生效查询
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
 │   ├── app_dialog.dart        #   showAppDialog（统一弹窗动画）
-│   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/更多/编辑控制栏共用）
+│   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/超分/更多/编辑控制栏共用）
+│   ├── player_option_chip.dart#   面板选项胶囊（倍速预设/超分模式共用，保证视觉一致）
 │   ├── options_sheet.dart     #   showSortOptionsSheet（统一排序弹窗）
 │   ├── folder_card.dart       #   文件夹卡片（列表/树状共用）
 │   ├── video_card.dart        #   视频卡片（列表/树状/详情共用）
@@ -56,24 +60,28 @@ lib/
 │   │   ├── folder_detail_page.dart    # 列表模式详情页（纯视频）
 │   │   └── tree_folder_page.dart      # 树状目录页（混合内容 + 面包屑）
 │   ├── player/
-│   │   ├── player_page.dart   #   播放页（横屏沉浸式，组装各控制视图）
+│   │   ├── player_page.dart   #   播放页（横屏沉浸式；控制层 Kazumi 风格滑入动画；锁定后左右解锁按钮；截图）
 │   │   └── views/             #   播放页专属控制组件
-│   │       ├── player_top_bar.dart        # 顶栏：返回 + 标题 + 5 槽位（空槽隐藏）+ 固定「更多」
+│   │       ├── player_top_bar.dart        # 顶栏：返回 + 标题 + 5 槽位（空槽隐藏）+ 固定「更多」（图标背景可开关）
 │   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进（双三角图标）
-│   │       ├── player_bottom_bar.dart     # 底栏：下一集 + 时间 + 超分辨率入口
-│   │       ├── player_seek_bar.dart       # 全宽细进度条（拖动预览）
+│   │       ├── player_bottom_bar.dart     # 底栏：下一集 + 时间 + 固定「倍速」（图标）+「超分辨率」
+│   │       ├── player_seek_bar.dart       # 全宽进度条（默认细线，跟随主题色）
+│   │       ├── player_right_actions.dart  # 右侧竖排：截图 + 锁定（固定灰黑圆角背景，不受按钮背景设置控制）
+│   │       ├── player_fit_panel.dart      # 画面比例面板（PiliPlus 同款选项：拉伸/自动/裁剪/等宽/等高/原始/限制/4:3/16:9）
 │   │       ├── player_speed_panel.dart    # 倍速面板内容（预设置顶/精确调速/临时应用开关）
-│   │       └── player_play_pause_button.dart  # 播放/暂停图标切换动画
+│   │       ├── player_super_resolution_panel.dart  # 超分面板内容（模式三行胶囊 + 超分质量一行胶囊 + 记忆开关）
+│   │       └── player_play_pause_button.dart  # 播放/暂停图标形变动画（PiliPlus AnimatedIcon 风格）
 │   └── settings/
 │       ├── settings_page.dart #   设置主页（分组结构，可扩展）
 │       ├── appearance_page.dart      # 外观设置子页
-│       └── player_settings_page.dart # 播放器设置子页（手势/时长原地编辑/进度线/倍速）
+│       └── player_settings_page.dart # 播放器设置子页（手势/时长原地编辑/进度线/倍速记忆/按钮背景；超分在播放界面调）
 ├── theme/                     # 主题
 │   ├── app_theme.dart         #   ThemeData 生成（light/dark/amoled）
 │   └── theme_controller.dart  #   主题控制（模式/色/风格 + 旧数据迁移）
 └── utils/                     # 纯工具函数
     ├── app_dialog.dart        #   （见 widgets/app_dialog.dart 说明）
     ├── formatters.dart        #   文件大小/日期/时长/倍速格式化
+    ├── natural_compare.dart   #   自然序（数字感知）比较：名称排序用
     └── player_gestures.dart   #   双击手势判定（纯函数，可单测）
 ```
 
@@ -100,7 +108,8 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）与画面比例（默认自动）属 `PlayerControlsSettings`
+- 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
 - **禁止**：新增全局 `ValueNotifier` hack / 全局可变单例来跨页面通信
   - 反例教训：曾经的 `fullscreen_state.dart` 全局 `playerActive`，靠页面手动置位影响全局布局，引发连锁补丁 → 已重构为 `AppFrameObserver`（§4.3）
 - 跨页面状态先想清楚归属：全局设置 → services 里的 ChangeNotifier；页面局部 → 页面 State；路由相关 → 路由机制
@@ -132,7 +141,8 @@ models（模型）     → 无依赖（纯数据）
 ### 4.5 弹窗 / 面板
 
 - **所有弹窗统一用** `showAppDialog`（`lib/utils/app_dialog.dart`，缩放 + 淡入动画），**不要**直接 `showDialog`
-- **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context
+- **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 超分 / 画面比例 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context
+- **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音轨等后续功能）的，**一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
   - `hasFolders` / `hasVideos` 按页面内容动态传（纯文件夹页、纯视频页、混合页自动区分区块）
   - `showViewMode` 仅首页传 true
@@ -205,10 +215,13 @@ models（模型）     → 无依赖（纯数据）
 - 框架：`flutter_test`；权限 mock 用 `permission_handler_platform_interface` 的 `PermissionHandlerPlatform.instance` 替换（参考 `test/home_page_permission_test.dart`）
 - 现有测试（`flutter test` 全绿）：
   - `test/widget_test.dart` — 胶囊导航渲染（**注意**：胶囊设计上所有标签都显示，勿改成 findsNothing）
-  - `test/view_settings_test.dart` — sortTree / sortFolders / sortVideos 排序逻辑
+  - `test/view_settings_test.dart` — sortTree / sortFolders / sortVideos 排序逻辑（含名称自然序：2 < 12 < 112）
+  - `test/natural_compare_test.dart` — 自然序比较纯函数（数字段/字母段/前缀）
+  - `test/super_resolution_mode_test.dart` — 超分模型（7 模式 + 质量枚举 + buildAnime4KChain 链构建纯函数 + 着色器文件完整性）
+  - `test/super_resolution_service_test.dart` — 超分服务状态/持久化（模式、质量、记忆开关的开启/关闭/load 恢复）
   - `test/app_frame_test.dart` — AppFrame 安全区行为 + 播放页路由检测（**安全区/播放页回归测试，改 AppFrame 必须跑**）
   - `test/home_page_permission_test.dart` — 权限流程（未授权 → 授予权限 → 授权扫描）
-  - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位增删/排序/上限/时长档位/倍速预设/旧数据迁移）
+  - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位增删/排序/上限/时长档位/倍速预设/按钮背景/进度条样式/旧数据迁移；倍速不在顶栏动作之列）
   - `test/player_gestures_test.dart` — 双击手势三模式判定（含边界）
   - `test/player_panel_test.dart` — 右侧面板打开/面板内导航不崩溃（**改 PlayerPanel 必须跑**）
   - `test/player_speed_panel_test.dart` — 倍速面板（「我的预设」✕ 删除 / 「添加到预设」随滑杆联动）
@@ -230,6 +243,15 @@ models（模型）     → 无依赖（纯数据）
 | 面板红底黄字崩溃 | 右侧面板用普通 Container 包裹，内容里的 ListTile/SwitchListTile/TextField 找不到 Material 祖先 → "No Material widget found" | PlayerPanel 外壳必须用 `Material`（含圆角/裁剪），勿换回 Container（§4.5） |
 | 编辑控制栏点击无反应 | 面板内容里调 `PlayerPanelNavigator.of(context)` 时用了 State 外层 context（不在 _PanelNavigatorScope 下）→ 断言 scope == null | 面板内容必须用 `Builder` 取面板树内的 context 再调用 `of`（§4.5） |
 | Flutter 工具链"卡死" | DSH 沙箱拦截 flutter/dart 启动分析器、测试等子进程（`CreateFile failed 5` 拒绝访问），表现为进程冻结、长时间无输出 | 运行 `flutter analyze` / `flutter test` 需以 **danger-full-access** 权限执行；升级后 2-3 秒出结果。**勿用 `flutter --version` 探路**（同样会被卡住）；先用 `dart analyze` 也无效（同样被拒），直接以完整权限跑 `flutter analyze` |
+| mpv 着色器要绝对路径 | libmpv 的 `glsl-shaders` 不接受 assets 虚拟路径，必须给文件系统绝对路径 | `SuperResolutionService` 启动后把 `assets/shaders/*.glsl` 拷贝到应用支持目录（`anime_shaders/`），拼接绝对路径（Windows 用 `;`、其余平台用 `:`）再下发（§5.2） |
+| 切集/重开媒体着色器失效 | mpv 打开新文件时 `glsl-shaders` 链需重新确认，否则回到默认渲染 | `player_page` 在 `open()` 后与「下一集」后都调用 `SuperResolutionService.apply(player)` |
+| 超分模式切换后 UI 不刷新 | 面板是独立弹窗路由，播放页 setState 不会重建面板（同倍速历史 bug） | 超分面板通过 `ValueNotifier<SuperResolutionMode>` 实时刷新（`player_page` 的 `_superResolutionNotifier`） |
+| 超分"看不出效果" | 着色器只对「视频分辨率 < 屏幕分辨率」的场景有可见提升；1080p 视频在 1080p 屏上几乎无放大空间；且 Anime4K 面向动漫 | 用 720p 以下动漫测试；激进档位选 A+/B+/C+ 双段链 + 设置内「高清」质量 |
+| debug 版动画掉帧 | Flutter debug 构建为 JIT + 断言，控制层滑入动画（尤其启用超分、GPU 负载高时）易掉帧；release AOT 无此问题 | 用 `flutter build apk --release` 验证动画；非功能缺陷（参考 KT 开发经验：debug 掉帧、release 正常） |
+| 截图保存 | mpv `screenshot` 需渲染器就绪；保存到系统相册依赖平台插件 | 用 media_kit `Player.screenshot(format: 'image/png')` + `saver_gallery` 保存；失败时 Toast 提示 |
+| 右侧截图/锁定按钮背景 | 固定灰黑圆角背景，**不受**「按钮背景」设置控制（该设置只作用于顶栏/底栏图标） | 样式写死在 `player_right_actions.dart`，勿套用 `showButtonBackground` |
+| 锁定交互 | 锁定后控制层隐藏，**左右两侧滑入解锁按钮**；单击屏幕呼出/隐藏（动画）；点击解锁按钮解锁 | 解锁按钮显隐由 `_unlockController`（player_page）驱动，勿改回中央提示 |
+| 画面比例 | 用 media_kit Video 的 `fit` + `aspectRatio`（Flutter 渲染层），无需 mpv 属性；4:3/16:9 固定比例时 boxFit 取 contain | `PlayerVideoFit`（models/player_action.dart）持久化于 `PlayerControlsSettings`，顶栏「比例」槽位弹出面板 |
 
 ---
 

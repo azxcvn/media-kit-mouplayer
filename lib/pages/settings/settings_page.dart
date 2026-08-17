@@ -6,38 +6,13 @@ import 'package:moumou/widgets/settings_ui.dart';
 
 /// 设置主页：按大类分组展示设置项，点击进入对应子页。
 /// 当前第一组为「外观」；后续新增设置（如播放、存储等）只需在此追加分组。
+///
+/// 副标题统一用简短说明文字概括功能（如「调整应用外观」），
+/// 不展示具体选项摘要；主标题字号大于副标题，形成视觉层级。
 class SettingsPage extends StatelessWidget {
   final ThemeController controller;
 
   const SettingsPage({super.key, required this.controller});
-
-  /// 「外观」项的副标题摘要：当前主题色圆点 + 模式 + 调色板风格
-  Widget _appearanceSubtitle(BuildContext context, ThemeController controller) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            color: controller.seedColor,
-            shape: BoxShape.circle,
-            border: Border.all(color: scheme.outlineVariant),
-          ),
-        ),
-        const SizedBox(width: 6),
-        Expanded(
-          child: Text(
-            '${controller.mode.label} · '
-            '${ThemeController.variantLabels[controller.variant]}',
-            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,7 +31,7 @@ class SettingsPage extends StatelessWidget {
                 child: SettingsTile(
                   icon: Icons.palette_outlined,
                   title: '外观',
-                  subtitle: _appearanceSubtitle(context, controller),
+                  subtitle: const Text('调整应用外观'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -73,7 +48,7 @@ class SettingsPage extends StatelessWidget {
                 child: SettingsTile(
                   icon: Icons.play_circle_outline,
                   title: '播放器',
-                  subtitle: const Text('双击手势 · 倍速 · 控制栏按钮'),
+                  subtitle: const Text('调整播放相关设置'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(

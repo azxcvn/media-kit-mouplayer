@@ -6,6 +6,9 @@ import 'package:moumou/services/player_controls_settings.dart';
 ///
 /// 槽位内容由用户在「更多 → 编辑控制栏」中自由放置/排序；
 /// 「更多」按钮不可删除、不占槽位，是唯一的编辑入口。
+///
+/// 控制按钮背景：设置「播放器设置 → 按钮背景」开启后，返回/槽位/更多
+/// 图标显示半透明圆角背景（与底栏倍速图标一致）；默认关闭 = 纯图标。
 class PlayerTopBar extends StatelessWidget {
   final String title;
   final VoidCallback onBack;
@@ -22,6 +25,8 @@ class PlayerTopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 顶栏已随控制设置自动重建（槽位变化/背景开关共用同一监听）
+    final showBg = PlayerControlsSettings.instance.showButtonBackground;
     return Container(
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -37,8 +42,10 @@ class PlayerTopBar extends StatelessWidget {
         right: false,
         child: Row(
           children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back, color: Colors.white),
+            _TopIconButton(
+              icon: Icons.arrow_back,
+              tooltip: '返回',
+              showBackground: showBg,
               onPressed: onBack,
             ),
             Expanded(
@@ -63,9 +70,10 @@ class PlayerTopBar extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     for (final a in actions)
-                      IconButton(
-                        icon: Icon(a.icon, color: Colors.white, size: 22),
+                      _TopIconButton(
+                        icon: a.icon,
                         tooltip: a.label,
+                        showBackground: showBg,
                         onPressed: () => onActionTap(a),
                       ),
                   ],
@@ -75,14 +83,58 @@ class PlayerTopBar extends StatelessWidget {
             // 固定「更多」按钮（竖三点，更符合直觉），距右缘留间距
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: IconButton(
-                icon: const Icon(Icons.more_vert, color: Colors.white),
+              child: _TopIconButton(
+                icon: Icons.more_vert,
                 tooltip: '更多',
+                showBackground: showBg,
                 onPressed: onMore,
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 顶栏图标按钮：[showBackground] 为 true 时套半透明圆角背景
+/// （样式与底栏倍速图标胶囊一致），false 时纯图标。
+class _TopIconButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final bool showBackground;
+  final VoidCallback onPressed;
+
+  const _TopIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.showBackground,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // 无背景：默认 IconButton（48dp 触摸目标，纯图标）
+    if (!showBackground) {
+      return IconButton(
+        icon: Icon(icon, color: Colors.white, size: 22),
+        tooltip: tooltip,
+        onPressed: onPressed,
+      );
+    }
+    // 有背景：小圆形背景（28×28）+ 小图标，紧凑不占空间
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        shape: BoxShape.circle,
+      ),
+      child: IconButton(
+        constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+        padding: EdgeInsets.zero,
+        icon: Icon(icon, color: Colors.white, size: 16),
+        tooltip: tooltip,
+        onPressed: onPressed,
       ),
     );
   }

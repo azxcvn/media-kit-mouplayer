@@ -4,10 +4,10 @@ import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
 /// 播放器设置子页：双击手势、快进/快退时长（固定档位 + 点数值原地自定义）、
-/// 常驻进度线、倍速记忆。
+/// 常驻进度线、倍速记忆、按钮背景。
 ///
-/// 控制栏（启用动作）的编辑只在播放器内进行（「更多 → 编辑控制栏」），
-/// 本页不提供。
+/// 超分辨率（模式/质量/记忆）在播放界面右下角入口直接调整，本页不提供；
+/// 控制栏（启用动作）的编辑只在播放器内进行（「更多 → 编辑控制栏」），本页不提供。
 class PlayerSettingsPage extends StatelessWidget {
   const PlayerSettingsPage({super.key});
 
@@ -74,6 +74,15 @@ class PlayerSettingsPage extends StatelessWidget {
                       trailing: Switch(
                         value: settings.rememberSpeed,
                         onChanged: (v) => settings.setRememberSpeed(v),
+                      ),
+                    ),
+                    SettingsTile(
+                      icon: Icons.radio_button_checked,
+                      title: '按钮背景',
+                      subtitle: const Text('为播放控制按钮添加半透明圆角背景'),
+                      trailing: Switch(
+                        value: settings.showButtonBackground,
+                        onChanged: (v) => settings.setShowButtonBackground(v),
                       ),
                     ),
                   ],
