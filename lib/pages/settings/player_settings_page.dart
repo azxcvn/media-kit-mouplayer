@@ -4,7 +4,8 @@ import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
 /// 播放器设置子页：双击手势、快进/快退时长（固定档位 + 点数值原地自定义）、
-/// 常驻进度线、倍速记忆、按钮背景。
+/// 音量/亮度手势灵敏度、长按倍速（倍率滑杆/指示器开关）、保存音量到系统、
+/// 常驻进度线、倍速记忆、按钮背景、双指缩放。
 ///
 /// 超分辨率（模式/质量/记忆）在播放界面右下角入口直接调整，本页不提供；
 /// 控制栏（启用动作）的编辑只在播放器内进行（「更多 → 编辑控制栏」），本页不提供。
@@ -53,6 +54,51 @@ class PlayerSettingsPage extends StatelessWidget {
                   onChanged: settings.setSeekSeconds,
                 ),
               ),
+              const SizedBox(height: 16),
+              // 音量/亮度灵敏度
+              SettingsCard(
+                child: Column(
+                  children: [
+                    _SensitivityTile(
+                      icon: Icons.volume_up_outlined,
+                      title: '音量灵敏度',
+                      value: settings.volumeSensitivity,
+                      onChanged: settings.setVolumeSensitivity,
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    _SensitivityTile(
+                      icon: Icons.brightness_6_outlined,
+                      title: '亮度灵敏度',
+                      value: settings.brightnessSensitivity,
+                      onChanged: settings.setBrightnessSensitivity,
+                    ),
+                  ],
+                ),
+              ),
+              // ── 长按倍速 ──────────────────────────────
+              const SettingsGroupTitle(title: '长按倍速'),
+              SettingsCard(
+                child: _LongPressSpeedTile(
+                  value: settings.longPressSpeed,
+                  onChanged: settings.setLongPressSpeed,
+                ),
+              ),
+              const SizedBox(height: 16),
+              SettingsCard(
+                child: Column(
+                  children: [
+                    SettingsTile(
+                      icon: Icons.speed_rounded,
+                      title: '倍速播放指示器',
+                      subtitle: const Text('长按时在屏幕顶部显示「正在 X.Xx 倍速播放」'),
+                      trailing: Switch(
+                        value: settings.showSpeedIndicator,
+                        onChanged: (v) => settings.setShowSpeedIndicator(v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
               // ── 播放 ──────────────────────────────
               const SettingsGroupTitle(title: '播放'),
               SettingsCard(
@@ -68,12 +114,39 @@ class PlayerSettingsPage extends StatelessWidget {
                       ),
                     ),
                     SettingsTile(
+                      icon: Icons.image_outlined,
+                      title: '进度条缩略图',
+                      subtitle: const Text('拖动进度条时预览画面；关闭可省后台解码与缓存占用'),
+                      trailing: Switch(
+                        value: settings.showThumbnailPreview,
+                        onChanged: (v) => settings.setShowThumbnailPreview(v),
+                      ),
+                    ),
+                    SettingsTile(
                       icon: Icons.speed,
                       title: '记住上次倍速',
                       subtitle: const Text('下次打开视频自动恢复上次的播放速度'),
                       trailing: Switch(
                         value: settings.rememberSpeed,
                         onChanged: (v) => settings.setRememberSpeed(v),
+                      ),
+                    ),
+                    SettingsTile(
+                      icon: Icons.volume_off_outlined,
+                      title: '保存音量到系统',
+                      subtitle: const Text('退出播放时将本次调整的音量写回系统；关闭则恢复进入前音量'),
+                      trailing: Switch(
+                        value: settings.saveVolumeToSystem,
+                        onChanged: (v) => settings.setSaveVolumeToSystem(v),
+                      ),
+                    ),
+                    SettingsTile(
+                      icon: Icons.pinch_outlined,
+                      title: '双指缩小视频',
+                      subtitle: const Text('双指可缩放画面（最小 0.75 倍）；关闭则最小回到原始大小'),
+                      trailing: Switch(
+                        value: settings.enableShrinkVideo,
+                        onChanged: (v) => settings.setEnableShrinkVideo(v),
                       ),
                     ),
                     SettingsTile(
@@ -91,6 +164,154 @@ class PlayerSettingsPage extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// 音量/亮度手势灵敏度设置项：图标 + 标题 + 右侧倍率数值 + 滑杆（0.5x – 2.0x）。
+/// 灵敏度含义：满屏滑动对应的量程倍率（1.0 = 满屏滑完整个量程）。
+class _SensitivityTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _SensitivityTile({
+    required this.icon,
+    required this.title,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 22, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${value.toStringAsFixed(1)}x',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSecondaryContainer,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: kazumiSliderTheme(scheme),
+            child: Slider(
+              min: PlayerControlsSettings.minGestureSensitivity,
+              max: PlayerControlsSettings.maxGestureSensitivity,
+              divisions: 15,
+              value: value,
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 长按倍速设置项（滑杆式，参考快进/快退时长调节样式）：
+/// 图标 + 固定标题 + 右侧倍率数值 + 滑杆（1 – 6 倍，步进 0.1，离散）。
+class _LongPressSpeedTile extends StatelessWidget {
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _LongPressSpeedTile({
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.touch_app_outlined,
+                  size: 22, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  '长按倍速',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${value.toStringAsFixed(1)}x',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSecondaryContainer,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          // 50 档刻度过密会被 Flutter 跳过绘制，用密集刻度形状保证有圆点
+          SliderTheme(
+            data: kazumiSliderTheme(scheme).copyWith(
+              tickMarkShape: const DenseSliderTickMarkShape(),
+            ),
+            child: Slider(
+              min: PlayerControlsSettings.minLongPressSpeed,
+              max: PlayerControlsSettings.maxLongPressSpeed,
+              divisions: 50,
+              value: value,
+              onChanged: onChanged,
+            ),
+          ),
+          Text(
+            '长按屏幕临时倍速播放（1 – 6 倍，步进 0.1）；长按期间左右滑动可在 1.5 – 4 倍间临时调速',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+        ],
       ),
     );
   }

@@ -3,7 +3,9 @@ import 'package:moumou/models/player_action.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 播放器控制设置：右上角「更多」面板的启用动作、双击手势、快进/快退时长、
-/// 常驻进度线、倍速记忆、自定义倍速预设、控制按钮背景、画面比例。
+/// 常驻进度线、倍速记忆、自定义倍速预设、控制按钮背景、画面比例、
+/// 长按倍速（倍率/指示器开关/首次提示）、音量亮度手势（灵敏度/保存到系统）、
+/// 双指缩放。
 ///
 /// 全局单例（同 [PlaybackProgressService] 模式），ChangeNotifier + shared_preferences
 /// 持久化；播放页与「播放器设置」子页共同监听。
@@ -21,6 +23,17 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyCustomSpeedPresets = 'player_controls_custom_speed_presets';
   static const _keyButtonBackground = 'player_controls_button_background';
   static const _keyVideoFit = 'player_controls_video_fit';
+  // 手势 / 音量亮度 / 长按倍速
+  static const _keyLongPressSpeed = 'player_controls_long_press_speed';
+  static const _keyShowSpeedIndicator = 'player_controls_show_speed_indicator';
+  static const _keySpeedHintShown = 'player_controls_speed_hint_shown';
+  static const _keySaveVolumeToSystem = 'player_controls_save_volume_system';
+  static const _keyVolumeSensitivity = 'player_controls_volume_sensitivity';
+  static const _keyBrightnessSensitivity =
+      'player_controls_brightness_sensitivity';
+  static const _keyEnableShrinkVideo = 'player_controls_enable_shrink_video';
+  static const _keyShowThumbnailPreview =
+      'player_controls_show_thumbnail_preview';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -38,6 +51,20 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const double minSpeed = 0.25;
   static const double maxSpeed = 4.0;
 
+  /// 长按倍速：设置内可调范围 1.0 – 6.0，步进 0.1（离散）
+  static const double minLongPressSpeed = 1.0;
+  static const double maxLongPressSpeed = 6.0;
+
+  /// 长按期间左右滑动临时调速的范围：1.5 – 4.0，间隔 0.5（离散档位）
+  static const double minDynamicSpeed = 1.5;
+  static const double maxDynamicSpeed = 4.0;
+  static const double dynamicSpeedStep = 0.5;
+
+  /// 音量/亮度手势灵敏度范围（倍率，默认 1.0 = 满屏滑动走满整个量程）
+  static const double minGestureSensitivity = 0.5;
+  static const double maxGestureSensitivity = 2.0;
+  static const double defaultGestureSensitivity = 1.0;
+
   List<PlayerTopAction> _topActions = const [];
   DoubleTapMode _doubleTapMode = DoubleTapMode.mixed;
   bool _showProgressLine = false;
@@ -53,6 +80,30 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 画面比例（默认自动 contain）
   PlayerVideoFit _videoFit = PlayerVideoFit.contain;
 
+  /// 长按倍速（设置内 1.0 – 6.0，默认 2.0）
+  double _longPressSpeed = 2.0;
+
+  /// 长按倍速播放指示器开关（默认开启）
+  bool _showSpeedIndicator = true;
+
+  /// 是否已完成过完整的「长按 + 左右滑动」操作（首次使用提示只显示一次）
+  bool _speedHintShown = false;
+
+  /// 播放时调整的音量在退出后是否写回系统（默认开启；关闭则恢复进入前音量）
+  bool _saveVolumeToSystem = true;
+
+  /// 音量手势灵敏度（满屏滑动对应的音量变化倍率，0.5 – 2.0，默认 1.0）
+  double _volumeSensitivity = defaultGestureSensitivity;
+
+  /// 亮度手势灵敏度（同上，默认 1.0）
+  double _brightnessSensitivity = defaultGestureSensitivity;
+
+  /// 双指缩小视频（默认开启：最小缩放 0.75；关闭则最小 1.0）
+  bool _enableShrinkVideo = true;
+
+  /// 进度条缩略图预览（默认开启：拖动进度条时预览画面 + 后台预热缓存）
+  bool _showThumbnailPreview = true;
+
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
   DoubleTapMode get doubleTapMode => _doubleTapMode;
@@ -63,6 +114,14 @@ class PlayerControlsSettings extends ChangeNotifier {
   List<double> get customSpeedPresets => List.unmodifiable(_customSpeedPresets);
   bool get showButtonBackground => _showButtonBackground;
   PlayerVideoFit get videoFit => _videoFit;
+  double get longPressSpeed => _longPressSpeed;
+  bool get showSpeedIndicator => _showSpeedIndicator;
+  bool get speedHintShown => _speedHintShown;
+  bool get saveVolumeToSystem => _saveVolumeToSystem;
+  double get volumeSensitivity => _volumeSensitivity;
+  double get brightnessSensitivity => _brightnessSensitivity;
+  bool get enableShrinkVideo => _enableShrinkVideo;
+  bool get showThumbnailPreview => _showThumbnailPreview;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -97,6 +156,20 @@ class PlayerControlsSettings extends ChangeNotifier {
         .whereType<double>()
         .where((v) => v >= minSpeed && v <= maxSpeed)
         .toList();
+    _longPressSpeed = (prefs.getDouble(_keyLongPressSpeed) ?? 2.0)
+        .clamp(minLongPressSpeed, maxLongPressSpeed);
+    _showSpeedIndicator = prefs.getBool(_keyShowSpeedIndicator) ?? true;
+    _speedHintShown = prefs.getBool(_keySpeedHintShown) ?? false;
+    _saveVolumeToSystem = prefs.getBool(_keySaveVolumeToSystem) ?? true;
+    _volumeSensitivity = (prefs.getDouble(_keyVolumeSensitivity) ??
+            defaultGestureSensitivity)
+        .clamp(minGestureSensitivity, maxGestureSensitivity);
+    _brightnessSensitivity = (prefs.getDouble(_keyBrightnessSensitivity) ??
+            defaultGestureSensitivity)
+        .clamp(minGestureSensitivity, maxGestureSensitivity);
+    _enableShrinkVideo = prefs.getBool(_keyEnableShrinkVideo) ?? true;
+    _showThumbnailPreview =
+        prefs.getBool(_keyShowThumbnailPreview) ?? true;
     notifyListeners();
   }
 
@@ -158,6 +231,82 @@ class PlayerControlsSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_keySeek, clamped);
+  }
+
+  /// 长按倍速（1.0 – 6.0，步进 0.1，离散）
+  Future<void> setLongPressSpeed(double v) async {
+    final clamped = ((v * 10).roundToDouble() / 10)
+        .clamp(minLongPressSpeed, maxLongPressSpeed);
+    if ((_longPressSpeed - clamped).abs() < 0.001) return;
+    _longPressSpeed = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_keyLongPressSpeed, clamped);
+  }
+
+  /// 倍速播放指示器开关（长按倍速时是否显示「正在 X.Xx 倍速播放」）
+  Future<void> setShowSpeedIndicator(bool v) async {
+    if (_showSpeedIndicator == v) return;
+    _showSpeedIndicator = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyShowSpeedIndicator, v);
+  }
+
+  /// 标记「已完成一次完整的长按 + 左右滑动」，首次使用提示不再出现
+  Future<void> markSpeedHintShown() async {
+    if (_speedHintShown) return;
+    _speedHintShown = true;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keySpeedHintShown, true);
+  }
+
+  /// 播放时调整的音量是否在退出后写回系统（默认开启）
+  Future<void> setSaveVolumeToSystem(bool v) async {
+    if (_saveVolumeToSystem == v) return;
+    _saveVolumeToSystem = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keySaveVolumeToSystem, v);
+  }
+
+  /// 音量手势灵敏度（满屏滑动对应的量程倍率，0.5 – 2.0）
+  Future<void> setVolumeSensitivity(double v) async {
+    final clamped = v.clamp(minGestureSensitivity, maxGestureSensitivity);
+    if ((_volumeSensitivity - clamped).abs() < 0.001) return;
+    _volumeSensitivity = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_keyVolumeSensitivity, clamped);
+  }
+
+  /// 亮度手势灵敏度（同上）
+  Future<void> setBrightnessSensitivity(double v) async {
+    final clamped = v.clamp(minGestureSensitivity, maxGestureSensitivity);
+    if ((_brightnessSensitivity - clamped).abs() < 0.001) return;
+    _brightnessSensitivity = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_keyBrightnessSensitivity, clamped);
+  }
+
+  /// 双指缩小视频（默认开启：最小缩放 0.75；关闭则最小 1.0）
+  Future<void> setEnableShrinkVideo(bool v) async {
+    if (_enableShrinkVideo == v) return;
+    _enableShrinkVideo = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyEnableShrinkVideo, v);
+  }
+
+  /// 进度条缩略图预览开关（默认开启；关闭后不再抓帧/预热，省后台解码与缓存）
+  Future<void> setShowThumbnailPreview(bool v) async {
+    if (_showThumbnailPreview == v) return;
+    _showThumbnailPreview = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyShowThumbnailPreview, v);
   }
 
   /// 添加自定义倍速预设（去重、限制范围与数量）
@@ -252,6 +401,14 @@ class PlayerControlsSettings extends ChangeNotifier {
     _customSpeedPresets = const [];
     _showButtonBackground = false;
     _videoFit = PlayerVideoFit.contain;
+    _longPressSpeed = 2.0;
+    _showSpeedIndicator = true;
+    _speedHintShown = false;
+    _saveVolumeToSystem = true;
+    _volumeSensitivity = defaultGestureSensitivity;
+    _brightnessSensitivity = defaultGestureSensitivity;
+    _enableShrinkVideo = true;
+    _showThumbnailPreview = true;
     notifyListeners();
   }
 }

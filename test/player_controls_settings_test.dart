@@ -24,6 +24,102 @@ void main() {
     expect(s.showButtonBackground, isFalse);
     // 画面比例默认自动
     expect(s.videoFit, PlayerVideoFit.contain);
+    // 长按倍速默认 2.0、指示器开启、首次提示未完成
+    expect(s.longPressSpeed, 2.0);
+    expect(s.showSpeedIndicator, isTrue);
+    expect(s.speedHintShown, isFalse);
+    // 保存音量到系统默认开启
+    expect(s.saveVolumeToSystem, isTrue);
+    // 灵敏度默认 1.0，双指缩小默认开启
+    expect(s.volumeSensitivity, 1.0);
+    expect(s.brightnessSensitivity, 1.0);
+    expect(s.enableShrinkVideo, isTrue);
+    // 进度条缩略图默认开启
+    expect(s.showThumbnailPreview, isTrue);
+  });
+
+  test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setLongPressSpeed(2.3);
+    expect(s.longPressSpeed, 2.3);
+    await s.load(); // 模拟重启
+    expect(s.longPressSpeed, 2.3);
+    // 越界钳制到 1 – 6
+    await s.setLongPressSpeed(0.5);
+    expect(s.longPressSpeed, PlayerControlsSettings.minLongPressSpeed);
+    await s.setLongPressSpeed(9.9);
+    expect(s.longPressSpeed, PlayerControlsSettings.maxLongPressSpeed);
+    // 0.1 步进离散：2.34 → 2.3
+    await s.setLongPressSpeed(2.34);
+    expect(s.longPressSpeed, closeTo(2.3, 0.0001));
+  });
+
+  test('倍速播放指示器：默认开启，可开关并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setShowSpeedIndicator(false);
+    expect(s.showSpeedIndicator, isFalse);
+    await s.load();
+    expect(s.showSpeedIndicator, isFalse);
+    await s.setShowSpeedIndicator(true);
+    expect(s.showSpeedIndicator, isTrue);
+  });
+
+  test('首次提示：默认未完成，标记后持久化且不重复', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.speedHintShown, isFalse);
+    await s.markSpeedHintShown();
+    expect(s.speedHintShown, isTrue);
+    await s.load();
+    expect(s.speedHintShown, isTrue);
+    await s.markSpeedHintShown(); // 幂等
+    expect(s.speedHintShown, isTrue);
+  });
+
+  test('保存音量到系统：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setSaveVolumeToSystem(false);
+    expect(s.saveVolumeToSystem, isFalse);
+    await s.load();
+    expect(s.saveVolumeToSystem, isFalse);
+    await s.setSaveVolumeToSystem(true);
+    expect(s.saveVolumeToSystem, isTrue);
+  });
+
+  test('手势灵敏度：设置/持久化/范围钳制', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setVolumeSensitivity(1.5);
+    await s.setBrightnessSensitivity(0.8);
+    await s.load();
+    expect(s.volumeSensitivity, 1.5);
+    expect(s.brightnessSensitivity, 0.8);
+    // 越界钳制
+    await s.setVolumeSensitivity(0.1);
+    expect(s.volumeSensitivity, PlayerControlsSettings.minGestureSensitivity);
+    await s.setBrightnessSensitivity(9.9);
+    expect(
+      s.brightnessSensitivity,
+      PlayerControlsSettings.maxGestureSensitivity,
+    );
+  });
+
+  test('双指缩小视频：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setEnableShrinkVideo(false);
+    expect(s.enableShrinkVideo, isFalse);
+    await s.load();
+    expect(s.enableShrinkVideo, isFalse);
+    await s.setEnableShrinkVideo(true);
+    expect(s.enableShrinkVideo, isTrue);
+  });
+
+  test('进度条缩略图：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setShowThumbnailPreview(false);
+    expect(s.showThumbnailPreview, isFalse);
+    await s.load();
+    expect(s.showThumbnailPreview, isFalse);
+    await s.setShowThumbnailPreview(true);
+    expect(s.showThumbnailPreview, isTrue);
   });
 
   test('按钮背景：默认关闭，可开关并持久化', () async {

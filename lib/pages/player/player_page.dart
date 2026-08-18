@@ -9,13 +9,20 @@ import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
+import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
+import 'package:moumou/pages/player/views/player_gesture_layer.dart';
 import 'package:moumou/pages/player/views/player_right_actions.dart';
+import 'package:moumou/pages/player/views/player_speed_indicator.dart';
 import 'package:moumou/pages/player/views/player_speed_panel.dart';
 import 'package:moumou/pages/player/views/player_super_resolution_panel.dart';
+import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
+import 'package:moumou/pages/player/views/player_thumbnail_preview.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
+import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
+import 'package:moumou/services/thumbnail_preload_service.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/player_gestures.dart';
 import 'package:moumou/widgets/player_panel.dart';
@@ -104,6 +111,74 @@ class _PlayerPageState extends State<PlayerPage>
   String? _seekFeedback;
   Timer? _seekFeedbackTimer;
 
+  /// 当前视口尺寸（手势计算用，build 时更新）
+  double _viewportWidth = 0;
+  double _viewportHeight = 0;
+
+  // ── 音量 / 亮度 ────────────────────────────────────────
+
+  /// 当前应用音量（0 – 100，进入时同步自系统音量）
+  double _volume = 50;
+
+  /// 进入播放前的系统音量（退出时按设置写回或恢复）
+  double? _initialSystemVolume;
+
+  /// 当前亮度（0 – 1，窗口亮度）
+  double _brightness = 1.0;
+
+  /// 音量/亮度浮点累加器（小步长滑动不丢失，参考 kt 项目）
+  double _volumeAccum = 0;
+  double _brightnessAccum = 0;
+
+  /// 手势指示器（音量/亮度共用，2 秒无操作自动隐藏）
+  ({GestureIndicatorKind kind, double value})? _indicator;
+
+  /// 最近一次显示的指示器类型：退场动画期间 [_indicator] 已置 null，
+  /// 但布局位置（左/右）必须沿用旧类型，否则亮度退场会跳到左侧
+  GestureIndicatorKind? _indicatorKind;
+  Timer? _indicatorHideTimer;
+
+  // ── 长按倍速 ──────────────────────────────────────────
+
+  bool _longPressing = false;
+  double? _speedBeforeLongPress;
+
+  /// 当前长按倍速（初始为设置值，左右滑动后为动态档位）
+  double _longPressSpeed = 2.0;
+
+  /// 长按按下位置（动态调速的横向位移基准）
+  Offset? _longPressStartPos;
+
+  /// 动态调速起始档位索引（按下时确定，避免调速过程中漂移）
+  int _dynamicStartIndex = 0;
+  bool _dynamicSpeedActive = false;
+  bool _speedBarVisible = false;
+  Timer? _speedBarTimer;
+
+  // ── 水平滑动 seek ─────────────────────────────────────
+
+  Duration _swipeSeekStart = Duration.zero;
+  ({Duration target, Duration delta})? _swipeSeekData;
+  bool _swipeSeekVisible = false;
+  Timer? _swipeSeekClearTimer;
+  DateTime? _lastSwipeSeekTime;
+
+  // ── 双指缩放 / 平移 ───────────────────────────────────
+
+  double _zoomScale = 1.0;
+  Offset _zoomOffset = Offset.zero;
+  double? _zoomStartScale;
+
+  // ── 进度条缩略图预览 ──────────────────────────────────
+
+  /// 当前预览（bytes 为 null 表示帧仍在加载，先显示占位 + 时间）
+  ({Uint8List? bytes, Duration time})? _thumbPreview;
+  double _thumbFraction = 0;
+  int _lastThumbBucketMs = -1;
+
+  /// 全片缩略图后台预热（快速拖动也能即时显示最近帧）
+  final ThumbnailPreloadService _preload = ThumbnailPreloadService();
+
   final List<StreamSubscription<dynamic>> _subs = [];
 
   /// 是否存在「下一集」（playlist 中当前视频之后还有视频）
@@ -128,6 +203,8 @@ class _PlayerPageState extends State<PlayerPage>
     // 进入播放器：未开启记忆时本次会话从「关闭/均衡」开始超分
     // （退出播放/重启后自动回到默认关闭，记忆开启才恢复上次设置）
     SuperResolutionService.instance.enterPlayer();
+    // 同步系统音量/亮度作为本次会话起点（音量从手机当前音量开始）
+    _initDeviceState();
     _openAndSetRate();
 
     // 默认强制横屏 + 沉浸式全屏
@@ -165,6 +242,16 @@ class _PlayerPageState extends State<PlayerPage>
     _subs.add(
       _player.stream.duration.listen((d) {
         if (mounted) setState(() => _duration = d);
+        // 时长就绪后启动整段缩略图预热（换集后再次触发；设置关闭则跳过）
+        if (d > Duration.zero &&
+            _settings.showThumbnailPreview &&
+            !_preload.isActiveFor(_path)) {
+          _preload.start(
+            _path,
+            d.inMilliseconds,
+            fromMs: _position.inMilliseconds,
+          );
+        }
       }),
     );
 
@@ -177,6 +264,42 @@ class _PlayerPageState extends State<PlayerPage>
     await _player.open(Media(_path));
     _player.setRate(_speed);
     await SuperResolutionService.instance.apply(_player);
+  }
+
+  /// 读取系统音量/亮度作为本次会话起点：
+  /// - 音量：以手机当前系统音量为播放音量起点（如 20%）；
+  /// - 亮度：读系统亮度并应用到窗口（kt/mpvEx 做法），保证指示器数值
+  ///   与屏幕实际亮度一致；退出时恢复 -1 交还系统控制（自动亮度恢复）。
+  Future<void> _initDeviceState() async {
+    final vol = await DeviceServices.getSystemVolume();
+    _initialSystemVolume = vol;
+    if (vol != null) {
+      _volume = vol;
+      await _player.setVolume(vol);
+    } else {
+      // 读取失败：用中间值兜底
+      _volume = 50;
+      await _player.setVolume(50);
+    }
+    final brightness = await DeviceServices.getBrightness();
+    if (brightness != null) {
+      _brightness = brightness;
+      // 锁到窗口，使屏幕显示与指示器一致（播放期间亮度不随自动亮度漂移）
+      await DeviceServices.setWindowBrightness(brightness);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// 退出播放时恢复设备状态：
+  /// - 亮度：恢复 -1（交还系统控制 = 进入播放前的状态）；
+  /// - 音量：开启「保存到系统」→ 写回当前播放音量；
+  ///   关闭 → 恢复进入前的系统音量。
+  Future<void> _restoreDeviceState() async {
+    await DeviceServices.setWindowBrightness(null);
+    final target = _settings.saveVolumeToSystem
+        ? _volume
+        : (_initialSystemVolume ?? _volume);
+    await DeviceServices.setSystemVolume(target);
   }
 
   /// 进入沉浸式全屏：隐藏状态栏/导航栏，并把系统栏设为透明
@@ -315,6 +438,305 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  // ── 音量 / 亮度手势（左侧亮度，右侧音量）───────────────
+
+  /// 指示器显隐：显示 [kind] 对应指示器，2 秒无操作自动隐藏
+  void _showIndicator(GestureIndicatorKind kind, double value) {
+    _indicatorHideTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _indicatorKind = kind;
+        _indicator = (kind: kind, value: value);
+      });
+    }
+    _indicatorHideTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _indicator = null);
+    });
+  }
+
+  void _onVerticalSwipe(double dyDelta, bool isLeftHalf) {
+    if (_locked) return;
+    if (_viewportHeight <= 0) return;
+    if (isLeftHalf) {
+      // 左侧：亮度（只调窗口亮度，不动系统；退出恢复）
+      _brightnessAccum +=
+          brightnessDeltaForSwipe(
+            dyDelta,
+            _viewportHeight,
+            _settings.brightnessSensitivity,
+          ) *
+          100;
+      final intDelta = _brightnessAccum.truncate();
+      if (intDelta != 0) {
+        _brightnessAccum -= intDelta;
+        final newB = (_brightness * 100 + intDelta).clamp(0.0, 100.0) / 100;
+        if ((newB - _brightness).abs() > 0.0001) {
+          _brightness = newB;
+          DeviceServices.setWindowBrightness(newB);
+          _showIndicator(GestureIndicatorKind.brightness, newB);
+        }
+      }
+    } else {
+      // 右侧：音量（只调播放器音量，退出时按设置写回/恢复系统）
+      _volumeAccum +=
+          volumeDeltaForSwipe(
+            dyDelta,
+            _viewportHeight,
+            _settings.volumeSensitivity,
+          );
+      final intDelta = _volumeAccum.truncate();
+      if (intDelta != 0) {
+        _volumeAccum -= intDelta;
+        final newV = (_volume + intDelta).clamp(0.0, 100.0);
+        if ((newV - _volume).abs() > 0.001) {
+          _volume = newV;
+          _player.setVolume(newV);
+          _showIndicator(GestureIndicatorKind.volume, newV);
+        }
+      }
+    }
+  }
+
+  // ── 水平滑动 seek ──────────────────────────────────────
+
+  void _onSwipeStart() {
+    if (_locked) return;
+    _swipeSeekStart = _position;
+    _volumeAccum = 0;
+    _brightnessAccum = 0;
+    _hideTimer?.cancel();
+  }
+
+  void _onHorizontalSwipe(double totalDx) {
+    if (_locked || _duration <= Duration.zero) return;
+    final target = swipeSeekTarget(
+      _swipeSeekStart,
+      totalDx,
+      _viewportWidth,
+      _duration,
+    );
+    // 实时 seek 节流：两次操作至少间隔 40ms，避免拖动过快卡顿
+    final now = DateTime.now();
+    if (_lastSwipeSeekTime == null ||
+        now.difference(_lastSwipeSeekTime!) >= const Duration(milliseconds: 40)) {
+      _lastSwipeSeekTime = now;
+      _player.seek(target);
+    }
+    _swipeSeekClearTimer?.cancel();
+    if (mounted) {
+      setState(() {
+        _swipeSeekData = (target: target, delta: target - _swipeSeekStart);
+        _swipeSeekVisible = true;
+      });
+    }
+  }
+
+  void _onSwipeEnd() {
+    _swipeSeekVisible = false;
+    _lastSwipeSeekTime = null;
+    _swipeSeekClearTimer?.cancel();
+    // 数据保留 250ms 让浮层淡出
+    _swipeSeekClearTimer = Timer(const Duration(milliseconds: 250), () {
+      if (mounted) setState(() => _swipeSeekData = null);
+    });
+    if (mounted) setState(() {});
+    _resetHideTimer();
+  }
+
+  /// 单指滑动被双指手势打断（意图改为缩放）：撤销已发生的 seek，
+  /// 避免「缩放时误触发左右滑动」
+  void _onSwipeCancel() {
+    if (_swipeSeekData != null && _duration > Duration.zero) {
+      _player.seek(_swipeSeekStart);
+    }
+    _swipeSeekVisible = false;
+    _swipeSeekClearTimer?.cancel();
+    _lastSwipeSeekTime = null;
+    _swipeSeekData = null;
+    if (mounted) setState(() {});
+  }
+
+  // ── 长按倍速 ───────────────────────────────────────────
+
+  void _onLongPressStart(Offset pos) {
+    if (_locked) return;
+    _speedBeforeLongPress = _speed;
+    _longPressStartPos = pos;
+    _longPressSpeed = _settings.longPressSpeed;
+    _dynamicStartIndex = nearestSpeedPresetIndex(
+      _settings.longPressSpeed,
+      dynamicSpeedPresets(),
+    );
+    _dynamicSpeedActive = false;
+    _speedBarVisible = false;
+    _longPressing = true;
+    _player.setRate(_longPressSpeed);
+    _hideTimer?.cancel(); // 长按期间不自动隐藏控制层
+    if (mounted) setState(() {});
+  }
+
+  /// 长按期间左右滑动：临时调整长按倍速（1.5 – 4.0，间隔 0.5，离散）
+  void _onLongPressUpdate(Offset pos) {
+    final start = _longPressStartPos;
+    if (start == null || !_longPressing || _locked) return;
+    if (_viewportWidth <= 0) return;
+    final presets = dynamicSpeedPresets();
+    final dx = pos.dx - start.dx;
+    final newIndex = dynamicSpeedIndex(
+      dx,
+      _viewportWidth,
+      _dynamicStartIndex,
+      presets.length,
+    );
+    final newSpeed = presets[newIndex];
+    if ((newSpeed - _longPressSpeed).abs() < 0.01) return;
+    _longPressSpeed = newSpeed;
+    _player.setRate(newSpeed);
+    _dynamicSpeedActive = true;
+    _speedBarVisible = true;
+    // 首次完成「长按 + 左右滑动」：永久标记，后续不再出现提示
+    _settings.markSpeedHintShown();
+    // 停在某档位 3 秒后自动隐藏倍速条
+    _speedBarTimer?.cancel();
+    _speedBarTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _speedBarVisible = false);
+    });
+    if (mounted) setState(() {});
+  }
+
+  void _onLongPressEnd() {
+    if (!_longPressing) return;
+    _longPressing = false;
+    _speedBarTimer?.cancel();
+    _speedBarVisible = false;
+    _dynamicSpeedActive = false;
+    // 恢复长按前的倍速
+    final restore = _speedBeforeLongPress ?? _speed;
+    _speedBeforeLongPress = null;
+    _longPressStartPos = null;
+    _player.setRate(restore);
+    if (mounted) setState(() {});
+    _resetHideTimer();
+  }
+
+  // ── 双指缩放 / 平移 ────────────────────────────────────
+
+  void _onZoomStart() {
+    if (_locked) return;
+    _zoomStartScale = _zoomScale;
+    _hideTimer?.cancel();
+  }
+
+  void _onZoomUpdate(ScaleUpdateDetails d) {
+    if (_locked || _zoomStartScale == null) return;
+    final minScale = _settings.enableShrinkVideo ? 0.75 : 1.0;
+    final newScale = (_zoomStartScale! * d.scale).clamp(minScale, 2.0);
+    final ratio = newScale / _zoomScale;
+    final focal = d.localFocalPoint;
+    // 以双指焦点为中心缩放，再跟随焦点移动平移（PiliPlus 同款）
+    _zoomOffset = focal - (focal - _zoomOffset) * ratio;
+    _zoomScale = newScale;
+    _zoomOffset += d.focalPointDelta;
+    _clampZoomOffset();
+    if (mounted) setState(() {});
+  }
+
+  void _onZoomEnd() {
+    _zoomStartScale = null;
+    if (_zoomScale == 1.0) _zoomOffset = Offset.zero;
+    if (mounted) setState(() {});
+    _resetHideTimer();
+  }
+
+  /// 缩放平移边界：画面不能露出黑边（缩放 1 倍时归中）
+  void _clampZoomOffset() {
+    final w = _viewportWidth;
+    final h = _viewportHeight;
+    if (w <= 0 || h <= 0) return;
+    final maxDx = ((_zoomScale - 1).abs() * w) / 2;
+    final maxDy = ((_zoomScale - 1).abs() * h) / 2;
+    _zoomOffset = Offset(
+      _zoomOffset.dx.clamp(-maxDx, maxDx),
+      _zoomOffset.dy.clamp(-maxDy, maxDy),
+    );
+  }
+
+  /// 画面缩放矩阵：以视口中心为缩放原点，再按 [_zoomOffset] 平移
+  Matrix4 _zoomMatrix() {
+    final w = _viewportWidth / 2;
+    final h = _viewportHeight / 2;
+    return Matrix4.identity()
+      ..translateByDouble(_zoomOffset.dx + w, _zoomOffset.dy + h, 0, 1)
+      ..scaleByDouble(_zoomScale, _zoomScale, _zoomScale, 1)
+      ..translateByDouble(-w, -h, 0, 1);
+  }
+
+  void _resetZoom() {
+    _zoomScale = 1.0;
+    _zoomOffset = Offset.zero;
+    if (mounted) setState(() {});
+  }
+
+  // ── 进度条缩略图预览 ───────────────────────────────────
+
+  /// 拖动进度条时请求对应时刻的画面。
+  ///
+  /// 两级策略（快速拖动也能即时出图）：
+  /// 1. 先查内存缓存中的「最近预生成帧」——命中即秒显（时间胶囊仍显示
+  ///    拖动位置，画面是最近采样点，精确帧到了再替换）；
+  /// 2. 无覆盖时显示加载占位，再走精确解码（与预生成共享缓存/去重）。
+  void _requestThumbnail(int ms) {
+    if (!_settings.showThumbnailPreview) return;
+    if (_duration <= Duration.zero || _path.isEmpty) return;
+    final clamped = ms.clamp(0, _duration.inMilliseconds);
+    final bucket = (clamped ~/ 1000) * 1000;
+    if (bucket == _lastThumbBucketMs) return;
+    _lastThumbBucketMs = bucket;
+    _thumbFraction = _duration.inMilliseconds > 0
+        ? clamped / _duration.inMilliseconds
+        : 0;
+
+    // 1) 最近预生成帧即时显示
+    final nearest = DeviceServices.peekNearestFrame(
+      _path,
+      bucket,
+      maxGapMs: ThumbnailPreloadService.intervalFor(_duration),
+    );
+    if (nearest != null) {
+      setState(() {
+        _thumbPreview =
+            (bytes: nearest.bytes, time: Duration(milliseconds: bucket));
+      });
+      // 精确桶已缓存或已跳过，则无需再取
+      if (DeviceServices.peekFrame(_path, bucket) != null) return;
+      _fetchThumbnail(bucket);
+      return;
+    }
+
+    // 2) 无覆盖：占位 + 精确解码
+    setState(() {
+      _thumbPreview = (bytes: null, time: Duration(milliseconds: bucket));
+    });
+    _fetchThumbnail(bucket);
+  }
+
+  /// 精确桶异步取帧（失败/过期自动丢弃）
+  void _fetchThumbnail(int bucket) {
+    DeviceServices.getVideoFrameAt(_path, bucket).then((bytes) {
+      if (!mounted || bytes == null || bytes.isEmpty) return;
+      // 已拖到别的秒：丢弃过期帧（_lastThumbBucketMs 只记录最新请求）
+      if (_lastThumbBucketMs != bucket) return;
+      setState(() {
+        _thumbPreview = (bytes: bytes, time: Duration(milliseconds: bucket));
+      });
+    });
+  }
+
+  void _clearThumbnail() {
+    _thumbPreview = null;
+    _lastThumbBucketMs = -1;
+  }
+
   Future<void> _seekBy(int seconds) async {
     final total = _duration.inMilliseconds;
     final target = (_position + Duration(seconds: seconds))
@@ -367,6 +789,11 @@ class _PlayerPageState extends State<PlayerPage>
         _position = Duration.zero;
         _duration = Duration.zero;
         _dragPosition = null;
+        _zoomScale = 1.0;
+        _zoomOffset = Offset.zero;
+        _indicator = null;
+        _swipeSeekData = null;
+        _clearThumbnail();
       });
     }
     _resetHideTimer();
@@ -579,9 +1006,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   // ── 退出与进度 ──────────────────────────────────────────
 
-  /// 退出播放器：先保存进度、恢复竖屏，再返回
+  /// 退出播放器：保存进度、恢复设备状态（音量/亮度）、恢复竖屏，再返回
   Future<void> _exitPlayer() async {
     _saveProgress();
+    await _restoreDeviceState();
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     if (mounted) Navigator.of(context).pop();
@@ -600,13 +1028,20 @@ class _PlayerPageState extends State<PlayerPage>
   void dispose() {
     _hideTimer?.cancel();
     _seekFeedbackTimer?.cancel();
+    _indicatorHideTimer?.cancel();
+    _speedBarTimer?.cancel();
+    _swipeSeekClearTimer?.cancel();
     for (final s in _subs) {
       s.cancel();
     }
     _controlsController.dispose();
     _unlockController.dispose();
     _speedNotifier.dispose();
+    _preload.cancel();
     _saveProgress();
+    // 兜底恢复设备状态（正常退出已走 _exitPlayer，这里防异常路径泄漏）
+    _restoreDeviceState();
+    DeviceServices.clearFrameCache();
     // 退出时强制恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -631,24 +1066,42 @@ class _PlayerPageState extends State<PlayerPage>
         body: LayoutBuilder(
           builder: (context, constraints) {
             final width = constraints.maxWidth;
+            _viewportWidth = constraints.maxWidth;
+            _viewportHeight = constraints.maxHeight;
             return Stack(
               children: [
-                // 视频画面（禁用默认控件；画面比例由设置驱动）
+                // 视频画面（禁用默认控件；画面比例由设置驱动；
+                // 外层 Transform 承载双指缩放/平移）
                 Positioned.fill(
-                  child: Video(
-                    controller: _controller,
-                    controls: NoVideoControls,
-                    fit: _settings.videoFit.boxFit,
-                    aspectRatio: _settings.videoFit.aspectRatio,
+                  child: Transform(
+                    transform: _zoomMatrix(),
+                    child: Video(
+                      controller: _controller,
+                      controls: NoVideoControls,
+                      fit: _settings.videoFit.boxFit,
+                      aspectRatio: _settings.videoFit.aspectRatio,
+                    ),
                   ),
                 ),
-                // 点击层：单击显隐控制层，双击手势可自定义
+                // 手势层：单击/双击/长按（+左右滑动调速）/单指滑动
+                // （音量·亮度·进度）/双指缩放平移
                 Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
+                  child: PlayerGestureLayer(
+                    locked: _locked,
                     onTap: _toggleControls,
-                    onDoubleTapDown: (TapDownDetails d) =>
-                        _handleDoubleTap(d.localPosition.dx, width),
+                    onDoubleTap: (pos) => _handleDoubleTap(pos.dx, width),
+                    onLongPressStart: _onLongPressStart,
+                    onLongPressUpdate: _onLongPressUpdate,
+                    onLongPressEnd: _onLongPressEnd,
+                    onSwipeStart: _onSwipeStart,
+                    onVerticalSwipe: _onVerticalSwipe,
+                    onHorizontalSwipe: _onHorizontalSwipe,
+                    onSwipeEnd: _onSwipeEnd,
+                    onSwipeCancel: _onSwipeCancel,
+                    onZoomStart: _onZoomStart,
+                    onZoomUpdate: _onZoomUpdate,
+                    onZoomEnd: _onZoomEnd,
+                    child: const SizedBox.expand(),
                   ),
                 ),
                 // 控制层（锁定后全部隐藏）：
@@ -686,11 +1139,15 @@ class _PlayerPageState extends State<PlayerPage>
                             () => _dragPosition =
                                 Duration(milliseconds: v.round()),
                           );
+                          _requestThumbnail(v.round());
                           _resetHideTimer();
                         },
                         onSeekEnd: (v) {
                           _player.seek(Duration(milliseconds: v.round()));
-                          _dragPosition = null;
+                          setState(() {
+                            _dragPosition = null;
+                            _clearThumbnail();
+                          });
                           _resetHideTimer();
                         },
                         hasNext: _hasNext,
@@ -794,6 +1251,124 @@ class _PlayerPageState extends State<PlayerPage>
                           ),
                         ),
                       ),
+                    ),
+                  ),
+                // 音量/亮度手势指示器：音量在左侧、亮度在右侧（对称），
+                // kazumi 风格：从屏幕边缘滑入（音量从左、亮度从右）+ 淡入。
+                // 位置由 _indicatorKind 决定（退场动画期间 _indicator 为
+                // null，但仍沿用最近类型，避免退场跳边）
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Align(
+                      alignment:
+                          (_indicatorKind ?? GestureIndicatorKind.volume) ==
+                              GestureIndicatorKind.volume
+                          ? Alignment.centerLeft
+                          : Alignment.centerRight,
+                      child: Padding(
+                        padding: EdgeInsets.only(
+                          left: (_indicatorKind ??
+                                      GestureIndicatorKind.volume) ==
+                                  GestureIndicatorKind.volume
+                              ? 32
+                              : 0,
+                          right: (_indicatorKind ??
+                                      GestureIndicatorKind.volume) ==
+                                  GestureIndicatorKind.brightness
+                              ? 32
+                              : 0,
+                        ),
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 260),
+                          switchInCurve: Curves.easeOutBack,
+                          switchOutCurve: Curves.easeIn,
+                          transitionBuilder: (child, animation) {
+                            final kind = child is PlayerGestureIndicator
+                                ? child.kind
+                                : GestureIndicatorKind.volume;
+                            final fromLeft =
+                                kind == GestureIndicatorKind.volume;
+                            return FadeTransition(
+                              opacity: animation,
+                              child: SlideTransition(
+                                position: Tween<Offset>(
+                                  begin: Offset(fromLeft ? -0.35 : 0.35, 0),
+                                  end: Offset.zero,
+                                ).animate(animation),
+                                child: ScaleTransition(
+                                  scale: Tween<double>(
+                                    begin: 0.92,
+                                    end: 1.0,
+                                  ).animate(animation),
+                                  child: child,
+                                ),
+                              ),
+                            );
+                          },
+                          child: _indicator == null
+                              ? const SizedBox.shrink(key: ValueKey('none'))
+                              : PlayerGestureIndicator(
+                                  key: ValueKey(_indicator!.kind),
+                                  kind: _indicator!.kind,
+                                  value: _indicator!.value,
+                                ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // 水平滑动 seek 预览浮层（居中）
+                if (_swipeSeekData != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: PlayerSwipeSeekOverlay(
+                          target: _swipeSeekData!.target,
+                          delta: _swipeSeekData!.delta,
+                          visible: _swipeSeekVisible,
+                        ),
+                      ),
+                    ),
+                  ),
+                // 长按倍速指示器（顶部居中；含倍速条与首次使用提示）
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 15,
+                  child: IgnorePointer(
+                    child: Center(
+                      child: PlayerSpeedIndicator(
+                        speed: _longPressSpeed,
+                        visible: _longPressing &&
+                            _settings.showSpeedIndicator,
+                        dynamicActive: _dynamicSpeedActive,
+                        showBar: _speedBarVisible,
+                        showHint: !_settings.speedHintShown,
+                        presets: dynamicSpeedPresets(),
+                      ),
+                    ),
+                  ),
+                ),
+                // 进度条拖动缩略图预览（进度条上方跟随拖动位置）
+                if (_thumbPreview != null && _dragPosition != null)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 104,
+                    child: PlayerThumbnailPreview(
+                      bytes: _thumbPreview!.bytes,
+                      time: _thumbPreview!.time,
+                      fraction: _thumbFraction,
+                      visible: true,
+                    ),
+                  ),
+                // 双指缩放后显示「还原画面」入口（播放/暂停按钮下方，
+                // 与中央簇保持一定间距）
+                if (_zoomScale != 1.0 || _zoomOffset != Offset.zero)
+                  Positioned.fill(
+                    child: Align(
+                      alignment: const Alignment(0, 0.24),
+                      child: _ZoomRestoreChip(onTap: _resetZoom),
                     ),
                   ),
                 // 常驻进度线（设置开启且控制层隐藏时显示；锁定后不显示）
@@ -908,6 +1483,42 @@ class _PanelSectionLabel extends StatelessWidget {
           color: Colors.white54,
           fontSize: 12,
           fontWeight: FontWeight.w500,
+        ),
+      ),
+    );
+  }
+}
+
+/// 双指缩放后的「还原画面」胶囊（PiliPlus 同款，点击恢复 1:1）
+class _ZoomRestoreChip extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _ZoomRestoreChip({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.zoom_out_map_rounded, color: Colors.white, size: 20),
+            SizedBox(width: 6),
+            Text(
+              '还原画面',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );

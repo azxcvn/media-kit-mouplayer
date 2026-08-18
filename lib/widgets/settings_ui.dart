@@ -16,6 +16,63 @@ SliderThemeData kazumiSliderTheme(ColorScheme scheme) => SliderThemeData(
       showValueIndicator: ShowValueIndicator.never,
     );
 
+/// 密集档位滑杆（divisions 很大）的刻度点形状。
+///
+/// Flutter 的 Slider 在刻度过密时（间距 < 3 × 刻度宽）会整条跳过绘制
+/// 刻度（见 slider.dart 的密度检查），导致长按倍速这类 50 档滑杆看起来
+/// 没有刻度点。此形状对外声明一个极小的占用尺寸以通过密度检查，
+/// 实际仍按正常半径绘制小圆点（与 5/15 档滑杆的刻度观感一致）。
+class DenseSliderTickMarkShape extends SliderTickMarkShape {
+  /// 实际绘制的圆点半径（逻辑像素）
+  final double radius;
+
+  const DenseSliderTickMarkShape({this.radius = 1.4});
+
+  @override
+  Size getPreferredSize({
+    required bool isEnabled,
+    required SliderThemeData sliderTheme,
+  }) {
+    // 故意极小：让「间距 / 声明的刻度宽」通过密度检查（阈值 3.0px）
+    return const Size(1.0, 1.0);
+  }
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required Animation<double> enableAnimation,
+    required TextDirection textDirection,
+    required Offset thumbCenter,
+    required bool isEnabled,
+  }) {
+    // 颜色逻辑与 RoundSliderTickMarkShape 一致：拇指右侧用未播放色，
+    // 左侧用已播放色（按文本方向区分）
+    final double xOffset = center.dx - thumbCenter.dx;
+    final (Color? begin, Color? end) = switch (textDirection) {
+      TextDirection.ltr when xOffset > 0 => (
+        sliderTheme.disabledInactiveTickMarkColor,
+        sliderTheme.inactiveTickMarkColor,
+      ),
+      TextDirection.rtl when xOffset < 0 => (
+        sliderTheme.disabledInactiveTickMarkColor,
+        sliderTheme.inactiveTickMarkColor,
+      ),
+      TextDirection.ltr || TextDirection.rtl => (
+        sliderTheme.disabledActiveTickMarkColor,
+        sliderTheme.activeTickMarkColor,
+      ),
+    };
+    final paint = Paint()
+      ..color = ColorTween(begin: begin, end: end).evaluate(enableAnimation)!;
+    if (radius > 0) {
+      context.canvas.drawCircle(center, radius, paint);
+    }
+  }
+}
+
 /// 分组标题（如「外观」「播放」）
 class SettingsGroupTitle extends StatelessWidget {
   final String title;

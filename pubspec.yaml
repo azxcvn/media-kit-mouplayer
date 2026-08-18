@@ -43,6 +43,12 @@ dependencies:
   # 更多 Material 3 调色板风格（FlexSchemeVariant，21 种变体）
   flex_seed_scheme: ^4.0.1
   saver_gallery: ^5.1.0
+  # 进度条拖动缩略图预览：本地视频任意时刻抓帧。
+  # 用 video_thumbnail_plus（WutangNailao 维护分支）：修复了原包
+  # android/build.gradle 里的 jcenter()（Gradle 9 已移除）与旧 DSL（AGP 9 不兼容）
+  video_thumbnail_plus: ^0.0.2
+  # 关于页显示应用版本号
+  package_info_plus: ^9.0.1
 
 dev_dependencies:
   flutter_test:

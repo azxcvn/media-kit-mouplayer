@@ -353,7 +353,7 @@ packages:
     source: hosted
     version: "3.0.0"
   package_info_plus:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: package_info_plus
       sha256: "468c26b4254ab01979fa5e4a98cb343ea3631b9acee6f21028997419a80e1a20"
@@ -709,6 +709,14 @@ packages:
       url: "https://pub.flutter-io.cn"
     source: hosted
     version: "2.2.0"
+  video_thumbnail_plus:
+    dependency: "direct main"
+    description:
+      name: video_thumbnail_plus
+      sha256: ae4c7adb8c555350c0a5808c3e03b62343d84fa506a780f5b57d61ad3645d946
+      url: "https://pub.flutter-io.cn"
+    source: hosted
+    version: "0.0.2"
   vm_service:
     dependency: transitive
     description:

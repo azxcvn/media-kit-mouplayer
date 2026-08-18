@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/pages/settings/about_page.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
 import 'package:moumou/pages/settings/player_settings_page.dart';
 import 'package:moumou/theme/theme_controller.dart';
@@ -54,6 +55,20 @@ class SettingsPage extends StatelessWidget {
                       MaterialPageRoute(
                         builder: (_) => const PlayerSettingsPage(),
                       ),
+                    );
+                  },
+                ),
+              ),
+              // ── 其他（后续在此追加更多项）──────────────
+              const SettingsGroupTitle(title: '其他'),
+              SettingsCard(
+                child: SettingsTile(
+                  icon: Icons.info_outline,
+                  title: '关于',
+                  subtitle: const Text('版本信息与工具'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const AboutPage()),
                     );
                   },
                 ),
