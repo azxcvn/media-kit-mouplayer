@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// 播放页路由标识：播放页 push 时需携带 RouteSettings(name: playerRouteName)
 const String playerRouteName = 'player';
@@ -20,18 +21,43 @@ class AppFrame extends StatelessWidget {
   Widget build(BuildContext context) {
     return ValueListenableBuilder<bool>(
       valueListenable: AppFrameObserver.instance.isPlayerTop,
-      builder: (context, isPlayer, _) => ColoredBox(
-        color: isPlayer
-            ? Colors.black
-            : Theme.of(context).scaffoldBackgroundColor,
-        child: SafeArea(
-          left: false,
-          top: false,
-          right: false,
-          bottom: !isPlayer,
-          child: child,
-        ),
-      ),
+      builder: (context, isPlayer, _) {
+        // 非播放页时按主题设置系统栏（状态栏 + 导航栏）样式：
+        // - 深色 / AMOLED：导航栏黑底 + 浅色键（修复三大金刚键区域白底）；
+        // - 浅色：导航栏浅色底（对齐主题背景）+ 深色键。
+        // 此处是 MaterialApp.builder，在 MaterialApp 内部 _themeBuilder
+        // 覆写系统栏样式之后执行（同一构建帧内后写者生效），保证按主题生效；
+        // 播放页在栈顶时跳过 —— 播放页自管沉浸式透明系统栏（见 player_page）。
+        if (!isPlayer) {
+          final theme = Theme.of(context);
+          final isDark = theme.brightness == Brightness.dark;
+          SystemChrome.setSystemUIOverlayStyle(
+            SystemUiOverlayStyle(
+              statusBarColor: Colors.transparent,
+              statusBarIconBrightness:
+                  isDark ? Brightness.light : Brightness.dark,
+              statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
+              systemNavigationBarColor:
+                  isDark ? Colors.black : theme.scaffoldBackgroundColor,
+              systemNavigationBarDividerColor: Colors.transparent,
+              systemNavigationBarIconBrightness:
+                  isDark ? Brightness.light : Brightness.dark,
+            ),
+          );
+        }
+        return ColoredBox(
+          color: isPlayer
+              ? Colors.black
+              : Theme.of(context).scaffoldBackgroundColor,
+          child: SafeArea(
+            left: false,
+            top: false,
+            right: false,
+            bottom: !isPlayer,
+            child: child,
+          ),
+        );
+      },
     );
   }
 }

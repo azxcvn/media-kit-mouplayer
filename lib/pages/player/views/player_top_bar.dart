@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/player_action.dart';
+import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 
 /// 顶栏：返回 + 标题 + 自定义槽位（最多 5 个，空槽隐藏）+ 固定「更多」按钮。
@@ -40,14 +41,18 @@ class PlayerTopBar extends StatelessWidget {
         left: false,
         bottom: false,
         right: false,
-        child: Row(
-          children: [
-            _TopIconButton(
-              icon: Icons.arrow_back,
-              tooltip: '返回',
-              showBackground: showBg,
-              onPressed: onBack,
-            ),
+        // 人体工学（工作.md 第 19 点）：返回按钮整体右移，与底栏进度条
+        // 开端/下一集/时间文本对齐到同一 x（kPlayerLeftInset）
+        child: Padding(
+          padding: const EdgeInsets.only(left: kPlayerLeftInset),
+          child: Row(
+            children: [
+              _TopIconButton(
+                icon: Icons.arrow_back,
+                tooltip: '返回',
+                showBackground: showBg,
+                onPressed: onBack,
+              ),
             Expanded(
               child: Text(
                 title,
@@ -90,7 +95,8 @@ class PlayerTopBar extends StatelessWidget {
                 onPressed: onMore,
               ),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );

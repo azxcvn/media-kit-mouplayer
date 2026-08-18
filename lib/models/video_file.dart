@@ -17,4 +17,7 @@ class VideoFile {
     this.height = 0,
     this.dateModified,
   });
+
+  /// 修改时间（毫秒时间戳）；未记录时为 null（播放列表日期排序用）
+  int? get dateModifiedMs => dateModified?.millisecondsSinceEpoch;
 }

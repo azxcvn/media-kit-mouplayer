@@ -2,14 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:moumou/pages/settings/cache_management_page.dart';
 import 'package:moumou/pages/settings/error_log_page.dart';
+// 前缀导入：本文件自定义 LicensePage 与 material 内置 LicensePage 同名
+import 'package:moumou/pages/settings/license_page.dart' as app;
 import 'package:moumou/widgets/settings_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// 关于页（设置 → 其他 → 关于）：
-/// - 顶部卡片式软件信息（横向：左侧 icon 放大、中间 名称+版本 纵向、右侧 邮箱/GitHub 图标）；
+/// - 顶部卡片式软件信息（三部分等宽：左 icon、中 名称+版本 水平居中、右 邮箱/GitHub 纯图标按钮）；
 /// - 「工具」组：缓存管理、错误日志（崩溃日志查看/导出/复制）；
-/// - 「信息」组：许可证书（LicensePage 自动收集全部开源许可）。
+/// - 「信息」组：许可证书（自定义 LicensePage：紧凑卡片头部 + 自动收集全部开源许可）。
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
 
@@ -21,7 +23,7 @@ class _AboutPageState extends State<AboutPage> {
   String? _version;
 
   /// 使用反馈收件邮箱
-  static const _feedbackEmail = '2297065843@qq.ccom';
+  static const _feedbackEmail = '2297065843@qq.com';
 
   /// GitHub 主页地址（暂时留空，后续接入）
   static const _githubUrl = '';
@@ -93,28 +95,31 @@ class _AboutPageState extends State<AboutPage> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 18, 12, 18),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
               child: Row(
                 children: [
-                  // 左侧：icon 整体放大
-                  Container(
-                    width: 76,
-                    height: 76,
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(22),
-                    ),
-                    child: Icon(
-                      Icons.play_circle_fill_rounded,
-                      size: 48,
-                      color: scheme.primary,
+                  // 左：icon 居中
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        width: 76,
+                        height: 76,
+                        decoration: BoxDecoration(
+                          color: scheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: Icon(
+                          Icons.play_circle_fill_rounded,
+                          size: 48,
+                          color: scheme.primary,
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  // 中间：名称 + 版本（纵向排列，上名字下版本）
+                  // 中：名称 + 版本（水平居中，上名字下版本）
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         const Text(
@@ -135,38 +140,40 @@ class _AboutPageState extends State<AboutPage> {
                       ],
                     ),
                   ),
-                  // 右侧：邮箱（上）/ GitHub（下），纵向排列
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _HeaderIconButton(
-                        tooltip: '发送使用反馈',
-                        onTap: _openEmail,
-                        child: SvgPicture.asset(
-                          'assets/icons/email.svg',
-                          width: 22,
-                          height: 22,
-                          colorFilter: ColorFilter.mode(
-                            scheme.onSurfaceVariant,
-                            BlendMode.srcIn,
+                  // 右：邮箱（上）/ GitHub（下），纵向居中排列
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _HeaderIconButton(
+                          tooltip: '发送使用反馈',
+                          onTap: _openEmail,
+                          child: SvgPicture.asset(
+                            'assets/icons/email.svg',
+                            width: 22,
+                            height: 22,
+                            colorFilter: ColorFilter.mode(
+                              scheme.onSurfaceVariant,
+                              BlendMode.srcIn,
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 10),
-                      _HeaderIconButton(
-                        tooltip: 'GitHub',
-                        onTap: _openGitHub,
-                        child: SvgPicture.asset(
-                          'assets/icons/github.svg',
-                          width: 22,
-                          height: 22,
-                          colorFilter: ColorFilter.mode(
-                            scheme.onSurfaceVariant,
-                            BlendMode.srcIn,
+                        const SizedBox(height: 10),
+                        _HeaderIconButton(
+                          tooltip: 'GitHub',
+                          onTap: _openGitHub,
+                          child: SvgPicture.asset(
+                            'assets/icons/github.svg',
+                            width: 22,
+                            height: 22,
+                            colorFilter: ColorFilter.mode(
+                              scheme.onSurfaceVariant,
+                              BlendMode.srcIn,
+                            ),
                           ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -181,7 +188,7 @@ class _AboutPageState extends State<AboutPage> {
                 SettingsTile(
                   icon: Icons.cleaning_services_outlined,
                   title: '缓存管理',
-                  subtitle: const Text('查看与清除各类缓存（缩略图等）'),
+                  subtitle: const Text('查看与清除各类缓存'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -194,7 +201,7 @@ class _AboutPageState extends State<AboutPage> {
                 SettingsTile(
                   icon: Icons.receipt_long_outlined,
                   title: '错误日志',
-                  subtitle: const Text('崩溃日志自动记录，支持查看 / 导出 / 复制'),
+                  subtitle: const Text('查看 / 导出 / 复制崩溃日志'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -215,11 +222,11 @@ class _AboutPageState extends State<AboutPage> {
               title: '许可证书',
               subtitle: const Text('查看本应用使用的全部开源许可'),
               onTap: () {
-                showLicensePage(
-                  context: context,
-                  applicationName: '小牛Player',
-                  applicationVersion: _version == null ? '' : 'v$_version',
-                  applicationLegalese: '开源许可证',
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    // 前缀引用避免与 Flutter material 内置 LicensePage 冲突
+                    builder: (_) => const app.LicensePage(),
+                  ),
                 );
               },
             ),
@@ -230,7 +237,8 @@ class _AboutPageState extends State<AboutPage> {
   }
 }
 
-/// 关于页顶部卡片的圆形图标按钮（邮箱 / GitHub 共用样式）
+/// 关于页顶部卡片的纯图标按钮（邮箱 / GitHub 共用样式）：
+/// 无底色容器，仅 Tooltip + InkWell 波纹 + 图标，点击区域约 44×44。
 class _HeaderIconButton extends StatelessWidget {
   final String tooltip;
   final VoidCallback onTap;
@@ -244,20 +252,14 @@ class _HeaderIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Tooltip(
       message: tooltip,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
-        child: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: scheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Center(child: child),
+        child: Padding(
+          padding: const EdgeInsets.all(11),
+          child: child,
         ),
       ),
     );

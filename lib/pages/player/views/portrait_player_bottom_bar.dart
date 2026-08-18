@@ -2,18 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
-/// 底栏：全宽进度条 + 下一集 + 时间 + 右下角按钮组（超分辨率/列表/倍速/选择屏幕）。
+/// 竖屏播放页底栏（v3 布局）：
+/// - **进度条**（复用 [PlayerSeekBar]，轨道开端对齐 [kPlayerLeftInset]，
+///   与返回/下一集同一 x）；
+/// - **操作行**：下一集 + 时间文本（点击切换已播/总⇄已播/剩余）+
+///   右侧按钮簇（从右到左，工作.md 第 18 点）：**选择屏幕 → 倍速 → 列表 →
+///   超分辨率**（即左到右：超分辨率胶囊 → 列表图标 → 倍速图标 → 选择屏幕图标）。
 ///
-/// 布局（工作.md 第 18/19 点 + v3 用户反馈）：
-/// - 左下角「下一集」（无兄弟视频时置灰）+ 其右侧为**时间文本**（点击在
-///   「已播/总时长」⇄「已播/剩余时长」间切换，onTimeTap），三者左缘与
-///   进度条开端/返回箭头对齐到同一 x（[kPlayerLeftInset]）；
-/// - 右下角按钮从右到左：**选择屏幕**（最右）→ **倍速**（图标）→ **列表**（图标）
-///   → **超分辨率**（文本胶囊，最左）。
-///
-/// 倍速/选择屏幕图标默认**纯图标无背景**；设置「播放器设置 → 按钮背景」开启后
-/// 显示半透明圆角背景（与顶栏控制图标一致）；列表按钮恒为纯图标无背景。
-class PlayerBottomBar extends StatelessWidget {
+/// 倍速/选择屏幕图标默认纯图标无背景；「按钮背景」设置开启后显示半透明
+/// 圆角背景；列表按钮恒为纯图标无背景。底部渐变压暗（与横屏底栏一致）。
+class PortraitPlayerBottomBar extends StatelessWidget {
   final double valueMs;
   final double maxMs;
   final ValueChanged<double> onSeekChanged;
@@ -21,24 +19,22 @@ class PlayerBottomBar extends StatelessWidget {
   final bool hasNext;
   final VoidCallback onNext;
   final String timeText;
-
-  /// 点击时间文本：切换「已播/总时长」⇄「已播/剩余时长」（工作.md 第 20 点）
   final VoidCallback onTimeTap;
   final VoidCallback onSpeedTap;
   final bool showSpeedButtonBackground;
   final String superResolutionLabel;
   final VoidCallback onSuperResolutionTap;
 
-  /// 「选择屏幕」：切换到竖屏播放页（最右侧按钮）
+  /// 「选择屏幕」：切回横屏（本页退出返回横屏播放页，最右侧按钮）
   final VoidCallback onScreenSwitchTap;
 
   /// 选择屏幕图标是否显示半透明圆角背景（与倍速按钮同设置）
   final bool showScreenSwitchBackground;
 
-  /// 「列表」：打开播放列表面板（倍速按钮左侧，恒纯图标无背景）
+  /// 「列表」：底部弹出播放列表面板（倍速按钮左侧，恒纯图标无背景）
   final VoidCallback onPlaylistTap;
 
-  const PlayerBottomBar({
+  const PortraitPlayerBottomBar({
     super.key,
     required this.valueMs,
     required this.maxMs,
@@ -68,34 +64,40 @@ class PlayerBottomBar extends StatelessWidget {
         ),
       ),
       child: SafeArea(
-        // 横屏时挖孔在物理左/右侧，底部控制栏同样不消费左右 inset
+        // 竖屏下消费底部 inset（手势条/导航键），左右不消费
         left: false,
         top: false,
         right: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // ── 进度条：PlayerSeekBar 内部已按 kPlayerLeftInset 对齐轨道开端 ──
             PlayerSeekBar(
               valueMs: valueMs,
               maxMs: maxMs,
               onChanged: onSeekChanged,
               onChangeEnd: onSeekEnd,
             ),
+            // ── 操作行：下一集 + 时间（点击切换）+ 右侧按钮簇 ──
             Padding(
               // 左缘与进度条开端对齐（kPlayerLeftInset），右缘留 20
-              padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 0, 20, 8),
+              padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 0, 20, 10),
               child: Row(
                 children: [
+                  // 下一集：紧凑尺寸（默认 48dp 触摸目标在竖屏窄屏会溢出）
                   IconButton(
-                    icon: const Icon(Icons.skip_next_rounded, size: 32),
+                    icon: const Icon(Icons.skip_next_rounded, size: 26),
                     style: IconButton.styleFrom(
                       foregroundColor: Colors.white,
                       disabledForegroundColor: Colors.white38,
+                      padding: const EdgeInsets.all(2),
+                      minimumSize: const Size(38, 40),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     tooltip: '下一集',
                     onPressed: hasNext ? onNext : null,
                   ),
-                  const SizedBox(width: 4),
+                  const SizedBox(width: 2),
                   // 时间文本：下一集右侧（v3 用户反馈改回此款式），
                   // 点击切换「已播/总时长」⇄「已播/剩余时长」。
                   // ⚠️ 布局要点：Expanded 是**唯一**弹性元素——时间文本占满
@@ -117,33 +119,33 @@ class PlayerBottomBar extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 13,
+                            fontSize: 12,
                           ),
                         ),
                       ),
                     ),
                   ),
                   // 右侧按钮簇（从右到左，工作.md 第 18 点）：
-                  // 选择屏幕（最右）→ 倍速（图标）→ 列表（图标）→ 超分辨率（胶囊，最左）
-                  _BottomPill(
+                  // 选择屏幕（最右）→ 倍速（图标）→ 列表（图标）→ 超分辨率（文本）
+                  _PortraitBottomPill(
                     label: superResolutionLabel,
                     onTap: onSuperResolutionTap,
                   ),
-                  const SizedBox(width: 8),
-                  _BottomIconButton(
+                  const SizedBox(width: 6),
+                  _PortraitBottomIconButton(
                     icon: Icons.playlist_play,
                     showBackground: false,
                     tooltip: '播放列表',
                     onTap: onPlaylistTap,
                   ),
-                  const SizedBox(width: 8),
-                  _BottomIconButton(
+                  const SizedBox(width: 6),
+                  _PortraitBottomIconButton(
                     icon: Icons.speed_rounded,
                     showBackground: showSpeedButtonBackground,
                     onTap: onSpeedTap,
                   ),
-                  const SizedBox(width: 8),
-                  _BottomIconButton(
+                  const SizedBox(width: 6),
+                  _PortraitBottomIconButton(
                     icon: Icons.screen_rotation,
                     showBackground: showScreenSwitchBackground,
                     tooltip: '选择屏幕',
@@ -159,19 +161,19 @@ class PlayerBottomBar extends StatelessWidget {
   }
 }
 
-/// 底栏右下角的固定功能胶囊（倍速 / 超分辨率共用样式）
-class _BottomPill extends StatelessWidget {
+/// 底栏右下角的固定功能胶囊（超分辨率，样式对齐横屏底栏）
+class _PortraitBottomPill extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
 
-  const _BottomPill({required this.label, required this.onTap});
+  const _PortraitBottomPill({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.15),
           borderRadius: BorderRadius.circular(16),
@@ -180,7 +182,7 @@ class _BottomPill extends StatelessWidget {
           label,
           style: const TextStyle(
             color: Colors.white,
-            fontSize: 13,
+            fontSize: 12,
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -189,15 +191,16 @@ class _BottomPill extends StatelessWidget {
   }
 }
 
-/// 底栏倍速/选择屏幕图标按钮：默认纯图标无背景；[showBackground] 为 true 时
-/// 套半透明圆角背景（与顶栏控制图标一致）。
-class _BottomIconButton extends StatelessWidget {
+/// 底栏倍速/列表/选择屏幕图标按钮：默认纯图标无背景；[showBackground]
+/// 为 true 时套半透明圆角背景（样式对齐横屏底栏倍速按钮）；
+/// [tooltip] 非空时包裹 Tooltip。
+class _PortraitBottomIconButton extends StatelessWidget {
   final IconData icon;
   final bool showBackground;
   final VoidCallback onTap;
   final String? tooltip;
 
-  const _BottomIconButton({
+  const _PortraitBottomIconButton({
     required this.icon,
     required this.showBackground,
     required this.onTap,
@@ -206,18 +209,19 @@ class _BottomIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final iconWidget = Icon(icon, size: 16, color: Colors.white);
+    final iconWidget = Icon(icon, size: 15, color: Colors.white);
     final Widget inner;
     if (!showBackground) {
+      // 紧凑尺寸（v3 溢出修复：竖屏窄屏按钮行超宽）
       inner = Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-        child: Icon(icon, size: 22, color: Colors.white),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+        child: Icon(icon, size: 20, color: Colors.white),
       );
     } else {
       // 有背景时与顶栏控制图标同款：小圆形背景（28×28）+ 小图标
       inner = Container(
-        width: 28,
-        height: 28,
+        width: 26,
+        height: 26,
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: 0.15),
           shape: BoxShape.circle,
@@ -225,7 +229,9 @@ class _BottomIconButton extends StatelessWidget {
         child: Center(child: iconWidget),
       );
     }
-    final child = tooltip == null ? inner : Tooltip(message: tooltip!, child: inner);
+    final child = tooltip == null
+        ? inner
+        : Tooltip(message: tooltip!, child: inner);
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,

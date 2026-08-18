@@ -5,14 +5,17 @@ import 'package:moumou/widgets/settings_ui.dart';
 
 /// 播放器设置子页：双击手势、快进/快退时长（固定档位 + 点数值原地自定义）、
 /// 音量/亮度手势灵敏度、长按倍速（倍率滑杆，归「手势」组）、
-/// 倍速播放指示器（归「播放行为」组）、保存音量到系统、
+/// 自动连播 / 播放完毕自动退出（归「播放行为」组）、
 /// 常驻进度线、倍速记忆、按钮背景、双指缩放、已观看进度阈值。
 ///
-/// 分组结构（各组别内的设置项连为一体）：
+/// 分组结构（各组别内的设置项以分割线分隔）：
 /// - **手势**：双击手势、快进/快退时长、音量/亮度灵敏度、长按倍速滑杆；
 /// - **播放行为**：常驻进度线、进度条缩略图、记住上次倍速、保存音量到系统、
-///   双指缩小视频、按钮背景、倍速播放指示器、已观看进度阈值。
+///   双指缩小视频、按钮背景、自动连播、播放完毕自动退出、倍速播放指示器；
+/// - **已观看进度阈值**：滑杆设置（5% – 100%，步进 5%）。
 ///
+/// 循环播放模式（关闭/列表循环/单集循环）已移至播放界面内调整
+/// （顶栏/更多面板的「循环播放」槽位动作），本页不再提供。
 /// 超分辨率（模式/质量/记忆）在播放界面右下角入口直接调整，本页不提供；
 /// 控制栏（启用动作）的编辑只在播放器内进行（「更多 → 编辑控制栏」），本页不提供。
 class PlayerSettingsPage extends StatelessWidget {
@@ -103,6 +106,7 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setShowProgressLine(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
                       icon: Icons.image_outlined,
                       title: '进度条缩略图',
@@ -112,6 +116,7 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setShowThumbnailPreview(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
                       icon: Icons.speed,
                       title: '记住上次倍速',
@@ -121,6 +126,7 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setRememberSpeed(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
                       icon: Icons.volume_off_outlined,
                       title: '保存音量到系统',
@@ -130,6 +136,7 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setSaveVolumeToSystem(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
                       icon: Icons.pinch_outlined,
                       title: '双指缩小视频',
@@ -139,6 +146,7 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setEnableShrinkVideo(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
                       icon: Icons.radio_button_checked,
                       title: '按钮背景',
@@ -146,6 +154,26 @@ class PlayerSettingsPage extends StatelessWidget {
                       trailing: Switch(
                         value: settings.showButtonBackground,
                         onChanged: (v) => settings.setShowButtonBackground(v),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsTile(
+                      icon: Icons.skip_next_rounded,
+                      title: '自动连播',
+                      subtitle: const Text('当前视频播完后自动播放下一集'),
+                      trailing: Switch(
+                        value: settings.autoNext,
+                        onChanged: (v) => settings.setAutoNext(v),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsTile(
+                      icon: Icons.exit_to_app,
+                      title: '播放完毕自动退出',
+                      subtitle: const Text('当前文件夹最后一个视频播完后自动退出播放页'),
+                      trailing: Switch(
+                        value: settings.autoExit,
+                        onChanged: (v) => settings.setAutoExit(v),
                       ),
                     ),
                     const Divider(height: 1, indent: 16, endIndent: 16),
@@ -471,7 +499,7 @@ class _SeekSettingTileState extends State<_SeekSettingTile> {
   }
 }
 
-/// 「已观看」进度阈值设置项（滑杆式，50% – 100%，默认 95%）：
+/// 「已观看」进度阈值设置项（滑杆式，5% – 100%，步进 5%，默认 95%）：
 /// 视频列表「进度」字段据此判定 未观看 / 观看中 / 已看完（看完的卡片置灰）。
 class _WatchThresholdTile extends StatelessWidget {
   final double value;
@@ -528,15 +556,15 @@ class _WatchThresholdTile extends StatelessWidget {
               tickMarkShape: const DenseSliderTickMarkShape(),
             ),
             child: Slider(
-              min: 0.5,
-              max: 1.0,
-              divisions: 50,
+              min: PlayerControlsSettings.minWatchThreshold,
+              max: PlayerControlsSettings.maxWatchThreshold,
+              divisions: 19,
               value: value,
               onChanged: onChanged,
             ),
           ),
           Text(
-            '播放进度达到该比例即视为「已看完」（列表置灰）。默认 95%。',
+            '播放进度达到该比例即视为「已看完」（列表置灰）。5% – 100%，步进 5%，默认 95%。',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],

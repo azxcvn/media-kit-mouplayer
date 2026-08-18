@@ -1,0 +1,75 @@
+MIT License
+
+Copyright (c) 2025 小牛Player contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 第三方组件声明 / Third-Party Notices
+
+小牛Player（moumou）基于以下开源组件构建。各组件版权归其各自作者所有，并
+在各自许可证条款下分发。应用内「设置 → 关于 → 许可证书」页面（Flutter
+LicenseRegistry / showLicensePage）会自动汇总并展示已随包分发的全部许可证
+全文，本清单为概要说明。
+
+### Flutter / Dart 依赖（见 pubspec.yaml，版本以 .dart_tool/package_config.json 解析结果为准）
+
+| 组件 | 解析版本 | 许可证 |
+| --- | --- | --- |
+| [media_kit](https://pub.dev/packages/media_kit) | 1.2.6 | MIT |
+| [media_kit_video](https://pub.dev/packages/media_kit_video) | 1.3.1 | MIT |
+| [media_kit_libs_video](https://pub.dev/packages/media_kit_libs_video)（含各平台 libs 包：android/ios/linux/macos/windows video，均 MIT） | 1.0.7 | MIT |
+| [permission_handler](https://pub.dev/packages/permission_handler) | 11.4.0 | MIT |
+| [shared_preferences](https://pub.dev/packages/shared_preferences) | 2.5.5 | BSD-3-Clause |
+| [path_provider](https://pub.dev/packages/path_provider) | 2.1.6 | BSD-3-Clause |
+| [path](https://pub.dev/packages/path) | 1.9.1 | BSD-3-Clause |
+| [flex_seed_scheme](https://pub.dev/packages/flex_seed_scheme) | 4.0.1 | BSD-3-Clause |
+| [saver_gallery](https://pub.dev/packages/saver_gallery) | 5.1.0 | MIT |
+| [video_thumbnail_plus](https://pub.dev/packages/video_thumbnail_plus) | 0.0.2 | MIT |
+| [package_info_plus](https://pub.dev/packages/package_info_plus) | 9.0.1 | BSD-3-Clause |
+| [flutter_svg](https://pub.dev/packages/flutter_svg) | 2.3.0 | MIT |
+| [url_launcher](https://pub.dev/packages/url_launcher) | 6.3.2 | BSD-3-Clause |
+| [flutter_lints](https://pub.dev/packages/flutter_lints)（dev） | 6.0.0 | BSD-3-Clause |
+
+### Android 原生侧
+
+| 组件 | 版本 | 许可证 |
+| --- | --- | --- |
+| [mediainfoAndroid](https://github.com/marlboro-advance/mediainfoAndroid)（JitPack：`com.github.marlboro-advance:mediainfoAndroid:v1.1.0`，MediaInfoLib 的 Android 绑定，参考 fam4k007 项目） | v1.1.0 | BSD-2-Clause |
+
+### 资源 / 着色器
+
+| 组件 | 说明 | 许可证 |
+| --- | --- | --- |
+| [Anime4K](https://github.com/bloc97/Anime4K) 着色器（assets/shaders/*.glsl，超分/恢复/降噪） | 每个 .glsl 文件头部均内嵌版权声明 | MIT（Copyright (c) 2019-2021 bloc97） |
+
+### 说明 / Notes
+
+- **media_kit 捆绑的原生库**：media_kit 系列包以 MIT 授权，但其 Android/iOS 等平台
+  包会捆绑预编译的 libmpv / FFmpeg 原生库，这些库自身遵循 mpv（GPL-2.0+）与
+  FFmpeg（LGPL-2.1+，部分组件 GPL）等许可证。进行二进制分发前请核实并遵守对应
+  许可证义务。
+- **图标素材**：assets/icons/ 下的 SVG 为 Material Design 图标风格素材
+  （Apache-2.0 / 各素材原许可证），github.svg / email.svg 源自参考项目图标素材，
+  仅作界面展示用途。
+- **参考项目**：本项目开发过程中参考了 PiliPlus-main（GPL-3.0）、Kazumi-main
+  （GPL-3.0）、mpvRx-master（AGPL-3.0）及 fam4k007 示例工程的设计与思路，但未
+  复制其受保护代码；若日后引入参考项目代码，请另行遵守其原始许可证。
+- 各依赖包内的 LICENSE 文件副本随 pub 缓存分发，亦可在上述许可证链接处获取。

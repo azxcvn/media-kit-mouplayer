@@ -37,8 +37,10 @@ enum PlayerVideoFit {
 
 /// 播放器右上角可自定义的按钮动作（最多 5 个，顺序可调）。
 ///
-/// [implemented] 为 false 的动作是占位入口（字幕/弹幕/音轨），
+/// [implemented] 为 false 的动作是占位入口（字幕/弹幕/音轨/音频均衡器/解码/片头片尾），
 /// 顶栏点击提示「功能即将上线」，待后续接入具体功能。
+/// [implemented] 为 true 的动作：比例（已接入）；画中画/听视频（v2 已规划，
+/// 接入见对应任务，接入前点击暂不响应）。
 ///
 /// 注意：倍速（speed）**不在**顶栏动作之列 —— 倍速按钮固定于播放页
 /// 底栏（超分辨率按钮左侧），不支持在顶栏控制栏增加或删除。
@@ -46,7 +48,17 @@ enum PlayerTopAction {
   subtitle('subtitle', '字幕', Icons.subtitles_outlined, false),
   danmaku('danmaku', '弹幕', Icons.comment_outlined, false),
   audio('audio', '音轨', Icons.library_music_outlined, false),
-  aspect('aspect', '比例', Icons.aspect_ratio, true);
+  aspect('aspect', '比例', Icons.aspect_ratio, true),
+  // v2 新增：pip/listen 已规划实现（implemented=true，具体接入见后续任务）；
+  // equalizer/decode/introOutro 仅入口（implemented=false → 点击提示即将上线）
+  pip('pip', '画中画', Icons.picture_in_picture_alt_outlined, true),
+  // v3：听视频暂移除实现（待重做），仅保留图标入口（点击提示即将上线）
+  listen('listen', '听视频', Icons.headphones_outlined, false),
+  // v3：循环播放从设置页移入播放界面，作为可自定义槽位动作（可增删）
+  loop('loop', '循环播放', Icons.repeat, true),
+  equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, false),
+  decode('decode', '解码', Icons.deblur_outlined, false),
+  introOutro('intro_outro', '片头片尾', Icons.movie_filter_outlined, false);
 
   /// 持久化标识（稳定，勿改）
   final String id;

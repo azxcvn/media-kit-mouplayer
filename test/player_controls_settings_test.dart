@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:moumou/models/player_action.dart';
+import 'package:moumou/models/player_loop.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -38,6 +39,10 @@ void main() {
     expect(s.showThumbnailPreview, isFalse);
     // 「已观看」进度阈值默认 95%
     expect(s.watchThreshold, 0.95);
+    // 自动连播 / 播放完毕自动退出默认开启，循环播放默认关闭
+    expect(s.autoNext, isTrue);
+    expect(s.autoExit, isTrue);
+    expect(s.loopMode, LoopMode.off);
   });
 
   test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
@@ -124,18 +129,82 @@ void main() {
     expect(s.showThumbnailPreview, isFalse);
   });
 
-  test('「已观看」进度阈值：默认 95%，可设置/持久化/范围钳制', () async {
+  test('「已观看」进度阈值：默认 95%，5% 步进/范围 5%-100%/持久化', () async {
     final s = PlayerControlsSettings.instance;
     expect(s.watchThreshold, 0.95);
     await s.setWatchThreshold(0.8);
     expect(s.watchThreshold, 0.8);
     await s.load(); // 模拟重启
     expect(s.watchThreshold, 0.8);
-    // 越界钳制到 0.5 – 1.0
-    await s.setWatchThreshold(0.1);
-    expect(s.watchThreshold, 0.5);
-    await s.setWatchThreshold(1.5);
+    // 就近 5% 对齐：83% → 85%，97% → 95%，98% → 100%
+    await s.setWatchThreshold(0.83);
+    expect(s.watchThreshold, 0.85);
+    await s.setWatchThreshold(0.97);
+    expect(s.watchThreshold, 0.95);
+    await s.setWatchThreshold(0.98);
     expect(s.watchThreshold, 1.0);
+    // 越界钳制到 5% – 100%
+    await s.setWatchThreshold(0.01);
+    expect(s.watchThreshold, PlayerControlsSettings.minWatchThreshold);
+    await s.setWatchThreshold(1.5);
+    expect(s.watchThreshold, PlayerControlsSettings.maxWatchThreshold);
+  });
+
+  test('「已观看」进度阈值：旧值（1% 粒度）迁移后就近 5% 对齐', () async {
+    // 旧版本以 1% 粒度保存（0.5 – 1.0），load 时钳制 + 就近对齐 5% 档位
+    SharedPreferences.setMockInitialValues({
+      'player_controls_watch_threshold': 0.93,
+    });
+    final s = PlayerControlsSettings.instance;
+    await s.load();
+    expect(s.watchThreshold, 0.95); // 93% → 95%
+
+    SharedPreferences.setMockInitialValues({
+      'player_controls_watch_threshold': 0.62,
+    });
+    await s.load();
+    expect(s.watchThreshold, 0.60); // 62% → 60%
+
+    SharedPreferences.setMockInitialValues({
+      'player_controls_watch_threshold': 0.02, // 旧范围外，钳制到下限
+    });
+    await s.load();
+    expect(s.watchThreshold, PlayerControlsSettings.minWatchThreshold);
+  });
+
+  test('自动连播：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.autoNext, isTrue);
+    await s.setAutoNext(false);
+    expect(s.autoNext, isFalse);
+    await s.load(); // 模拟重启
+    expect(s.autoNext, isFalse);
+    await s.setAutoNext(true);
+    expect(s.autoNext, isTrue);
+  });
+
+  test('播放完毕自动退出：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.autoExit, isTrue);
+    await s.setAutoExit(false);
+    expect(s.autoExit, isFalse);
+    await s.load(); // 模拟重启
+    expect(s.autoExit, isFalse);
+    await s.setAutoExit(true);
+    expect(s.autoExit, isTrue);
+  });
+
+  test('循环播放模式：默认关闭，可切换并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.loopMode, LoopMode.off);
+    await s.setLoopMode(LoopMode.loopAll);
+    expect(s.loopMode, LoopMode.loopAll);
+    await s.load(); // 模拟重启
+    expect(s.loopMode, LoopMode.loopAll);
+    await s.setLoopMode(LoopMode.repeatOne);
+    expect(s.loopMode, LoopMode.repeatOne);
+    await s.setLoopMode(LoopMode.off);
+    expect(s.loopMode, LoopMode.off);
   });
 
   test('按钮背景：默认关闭，可开关并持久化', () async {
@@ -160,14 +229,18 @@ void main() {
 
   test('槽位：添加/去重/上限', () async {
     final s = PlayerControlsSettings.instance;
+    // 顶栏动作总数超过槽位上限（9 > maxTopActions=5）：只放得下前 5 个
+    expect(
+      PlayerTopAction.values.length,
+      greaterThan(PlayerControlsSettings.maxTopActions),
+    );
     for (final a in PlayerTopAction.values) {
       await s.addTopAction(a);
     }
-    // 全部动作都放得下（倍速不在顶栏动作之列，见 PlayerTopAction 注释）
-    expect(s.topActions, PlayerTopAction.values);
-    // 已存在 → 忽略
+    expect(s.topActions.length, PlayerControlsSettings.maxTopActions);
+    // 已存在 → 忽略（重复添加不增加）
     await s.addTopAction(PlayerTopAction.subtitle);
-    expect(s.topActions.length, PlayerTopAction.values.length);
+    expect(s.topActions.length, PlayerControlsSettings.maxTopActions);
   });
 
   test('槽位：移除后可重新添加', () async {
@@ -277,6 +350,10 @@ void main() {
     await s.setSeekSeconds(60);
     await s.addCustomSpeedPreset(1.75);
     await s.addTopAction(PlayerTopAction.subtitle);
+    await s.setWatchThreshold(0.85);
+    await s.setAutoNext(false);
+    await s.setAutoExit(false);
+    await s.setLoopMode(LoopMode.loopAll);
 
     await s.load();
     expect(s.doubleTapMode, DoubleTapMode.seek);
@@ -286,5 +363,9 @@ void main() {
     expect(s.seekSeconds, 60);
     expect(s.customSpeedPresets, [1.75]);
     expect(s.topActions, [PlayerTopAction.subtitle]);
+    expect(s.watchThreshold, 0.85);
+    expect(s.autoNext, isFalse);
+    expect(s.autoExit, isFalse);
+    expect(s.loopMode, LoopMode.loopAll);
   });
 }

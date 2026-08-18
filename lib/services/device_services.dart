@@ -4,9 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:video_thumbnail_plus/video_thumbnail_plus.dart';
 
-/// 设备能力服务：系统音量 / 窗口亮度 / 任意时刻视频抓帧（本地文件）。
+/// 设备能力服务：系统音量 / 窗口亮度 / 任意时刻视频抓帧（本地文件）/ 画中画（PiP）。
 ///
-/// - 音量/亮度：走 [MethodChannel]（`moumou/video_info`，原生见 `MainActivity.kt`）；
+/// - 音量/亮度/画中画：走 [MethodChannel]（`moumou/video_info`，原生见 `MainActivity.kt`）；
 /// - 抓帧：**原生通道为主**（磁盘缓存 + MediaMetadataRetriever SYNC→CLOSEST
 ///   各自独立容错 + 落盘），video_thumbnail_plus 包为兜底（带超时防挂死，
 ///   成功也落盘）。
@@ -16,6 +16,49 @@ class DeviceServices {
   DeviceServices._();
 
   static const MethodChannel _channel = MethodChannel('moumou/video_info');
+
+  // ── 画中画（PiP）──────────────────────────────────────
+
+  /// 设备是否支持画中画（API 26+ 且系统具备该特性），失败返回 false
+  static Future<bool> isPipSupported() async {
+    try {
+      final ok = await _channel.invokeMethod<bool>('isPipSupported');
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 进入画中画小窗；[aspectWidth]/[aspectHeight] 为约分后的整数宽高比
+  /// （如 16/9，见 `utils/pip_aspect.dart` 的 [pipAspectRatio]）。
+  /// 已在画中画时返回 true；不支持/失败返回 false。
+  static Future<bool> enterPip({
+    required int aspectWidth,
+    required int aspectHeight,
+  }) async {
+    try {
+      final ok = await _channel.invokeMethod<bool>(
+        'enterPip',
+        {'aspectWidth': aspectWidth, 'aspectHeight': aspectHeight},
+      );
+      return ok ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 设置「返回桌面/上滑手势时自动进入画中画」（仅 API 31+ 生效，
+  /// 旧系统静默忽略）。播放页进入时置 true、退出时置 false。
+  static Future<void> setAutoPipEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'setAutoPipEnabled',
+        {'enabled': enabled},
+      );
+    } catch (_) {
+      // 旧系统/不支持时静默忽略
+    }
+  }
 
   /// 读取系统媒体音量，返回 0 – 100（百分比），失败返回 null
   static Future<double?> getSystemVolume() async {

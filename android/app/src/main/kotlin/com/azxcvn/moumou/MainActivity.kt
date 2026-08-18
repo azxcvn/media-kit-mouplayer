@@ -1,14 +1,20 @@
 package com.azxcvn.moumou
 
+import android.app.PictureInPictureParams
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
 import android.os.Build
+import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
 import android.util.LruCache
+import android.util.Rational
+import android.view.View
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -25,6 +31,64 @@ class MainActivity : FlutterActivity() {
      */
     private val frameCache = object : LruCache<String, ByteArray>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // Flutter 首帧前按 App 主题设置系统导航栏（三大金刚键区域）颜色，
+        // 避免深色/AMOLED 下启动阶段露出白底；首帧后由 Dart 侧 SystemChrome 接管
+        applySystemBarStyle()
+    }
+
+    // ── 系统导航栏颜色（三大金刚键区域）────────────
+
+    /**
+     * 按 App 主题模式设置系统导航栏颜色：深色/AMOLED → 黑底白键；浅色 → 浅底深键。
+     *
+     * 主题模式读取 Dart 侧 ThemeController 持久化的 theme_mode
+     * （shared_preferences 在 Android 存于 FlutterSharedPreferences，
+     * 键带 `flutter.` 前缀；0=system 1=light 2=dark 3=amoled），
+     * system/未设置时跟随系统深色模式。
+     *
+     * 注意：targetSdk 35+ 强制 edge-to-edge 时该颜色被系统忽略（系统栏透明），
+     * 这里作为启动闪屏期与旧系统路径的兜底；实际可见效果由 Dart 侧
+     * SystemChrome.setSystemUIOverlayStyle 保证。
+     */
+    private fun applySystemBarStyle() {
+        // API 29+ 默认 isNavigationBarContrastEnforced=true：系统会在导航栏上
+        // 叠加半透明对比度 scrim，把纯黑底刷成灰白（深色/AMOLED 下三大金刚键
+        // 区域发灰的根因）。关闭后 navigationBarColor 精确生效（内联 SDK 判断
+        // 防 lint NewApi 报错）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        val mode = prefs.getInt("flutter.theme_mode", -1)
+        val isDark = when (mode) {
+            2, 3 -> true // dark / amoled
+            1 -> false // light
+            else -> { // system / 未设置：跟随系统
+                val night = resources.configuration.uiMode and
+                    Configuration.UI_MODE_NIGHT_MASK
+                night == Configuration.UI_MODE_NIGHT_YES
+            }
+        }
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = if (isDark) {
+            android.graphics.Color.BLACK
+        } else {
+            android.graphics.Color.WHITE
+        }
+        // 导航键图标亮度（API 26+；浅色主题用深色键，深色主题用浅色键）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val flags = window.decorView.systemUiVisibility
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = if (isDark) {
+                flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            } else {
+                flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+            }
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -136,6 +200,20 @@ class MainActivity : FlutterActivity() {
                         appendDartLog(content)
                         result.success(null)
                     }
+                    // ── 画中画（小窗播放）────────────────────
+                    "isPipSupported" -> result.success(isPipSupported())
+                    "enterPip" -> {
+                        // Dart 小整数经 MethodChannel 编码是 Integer 而非 Long，
+                        // 用 Number 兼容，避免 ClassCastException（与抓帧同一坑）
+                        val aspectWidth = call.argument<Number>("aspectWidth")?.toInt() ?: 16
+                        val aspectHeight = call.argument<Number>("aspectHeight")?.toInt() ?: 9
+                        result.success(enterPip(aspectWidth, aspectHeight))
+                    }
+                    "setAutoPipEnabled" -> {
+                        val enabled = call.argument<Boolean>("enabled") ?: false
+                        setAutoPipEnabled(enabled)
+                        result.success(true)
+                    }
                     // 包（video_thumbnail_plus）成功抓到的帧也写入磁盘缓存，
                     // 保证「进度条缩略图」磁盘占用非 0、重开视频零解码
                     "putVideoFrame" -> {
@@ -171,12 +249,16 @@ class MainActivity : FlutterActivity() {
     /** 日志目录：files/crash_logs/ */
     private fun logDir(): File = CrashHandler.logDir(this)
 
-    /** 列出全部日志文件（按修改时间倒序） */
+    /** 日志文件判定：原生崩溃日志 *.txt 与 Dart 侧 flutter_*.log 均计入 */
+    private fun isLogFile(name: String): Boolean =
+        name.endsWith(".txt") || name.endsWith(".log")
+
+    /** 列出全部日志文件（按修改时间倒序；.txt 与 .log 都算） */
     private fun listLogs(): List<Map<String, Any>> {
         val dir = logDir()
         if (!dir.exists() || !dir.isDirectory) return emptyList()
         return dir.listFiles()
-            ?.filter { it.isFile && it.name.endsWith(".txt") }
+            ?.filter { it.isFile && isLogFile(it.name) }
             ?.sortedByDescending { it.lastModified() }
             ?.map { f ->
                 mapOf(
@@ -207,14 +289,14 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /** 清空全部日志 */
+    /** 清空全部日志（与 listLogs 同一过滤规则：.txt 与 .log 都清） */
     private fun clearLogs(): Boolean {
         return try {
             val dir = logDir()
             if (!dir.exists() || !dir.isDirectory) return true
             var ok = true
             dir.listFiles()?.forEach { f ->
-                if (f.isFile && !f.delete()) ok = false
+                if (f.isFile && isLogFile(f.name) && !f.delete()) ok = false
             }
             ok
         } catch (e: Exception) {
@@ -259,6 +341,42 @@ class MainActivity : FlutterActivity() {
             file.appendText("\n$content\n")
         } catch (e: Exception) {
             Log.w("DartLog", "appendDartLog failed: ${e.message}")
+        }
+    }
+
+    // ── 画中画（小窗播放）────────────────────────
+
+    /** 设备是否支持画中画（API 26+ 且系统具备该特性） */
+    private fun isPipSupported(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
+
+    /**
+     * 进入画中画小窗；宽高比由调用方传入（默认 16:9）。
+     * 已在画中画时直接返回 true；不支持时返回 false。
+     * （内联 SDK 判断：让 lint NewApi 能识别 API 26+ 调用路径）
+     */
+    private fun enterPip(aspectWidth: Int, aspectHeight: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!isPipSupported()) return false
+        if (isInPictureInPictureMode) return true
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(aspectWidth.coerceAtLeast(1), aspectHeight.coerceAtLeast(1)))
+            .build()
+        return enterPictureInPictureMode(params)
+    }
+
+    /**
+     * 设置「返回桌面/上滑手势时自动进入画中画」（仅 API 31+ 生效，
+     * 旧系统静默忽略，返回桌面即为普通退后台）。
+     */
+    private fun setAutoPipEnabled(enabled: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && isPipSupported()) {
+            val params = PictureInPictureParams.Builder()
+                .setAutoEnterEnabled(enabled)
+                .build()
+            setPictureInPictureParams(params)
         }
     }
 

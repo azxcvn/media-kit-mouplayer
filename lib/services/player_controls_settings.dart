@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/player_action.dart';
+import 'package:moumou/models/player_loop.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 播放器控制设置：右上角「更多」面板的启用动作、双击手势、快进/快退时长、
 /// 常驻进度线、倍速记忆、自定义倍速预设、控制按钮背景、画面比例、
 /// 长按倍速（倍率/指示器开关/首次提示）、音量亮度手势（灵敏度/保存到系统）、
-/// 双指缩放。
+/// 双指缩放、已观看进度阈值、自动连播/自动退出/循环播放模式。
 ///
 /// 全局单例（同 [PlaybackProgressService] 模式），ChangeNotifier + shared_preferences
 /// 持久化；播放页与「播放器设置」子页共同监听。
@@ -35,6 +36,10 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyShowThumbnailPreview =
       'player_controls_show_thumbnail_preview';
   static const _keyWatchThreshold = 'player_controls_watch_threshold';
+  // v2：自动连播 / 播放完毕自动退出 / 循环播放模式
+  static const _keyAutoNext = 'player_controls_auto_next';
+  static const _keyAutoExit = 'player_controls_auto_exit';
+  static const _keyLoopMode = 'player_controls_loop_mode';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -65,6 +70,11 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const double minGestureSensitivity = 0.5;
   static const double maxGestureSensitivity = 2.0;
   static const double defaultGestureSensitivity = 1.0;
+
+  /// 「已观看」进度阈值范围与步进（5% – 100%，步进 5%，默认 95%）
+  static const double minWatchThreshold = 0.05;
+  static const double maxWatchThreshold = 1.0;
+  static const double watchThresholdStep = 0.05;
 
   List<PlayerTopAction> _topActions = const [];
   DoubleTapMode _doubleTapMode = DoubleTapMode.mixed;
@@ -106,9 +116,19 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 关闭后不再抓帧/预热，省后台解码与缓存占用）
   bool _showThumbnailPreview = false;
 
-  /// 「已观看」达成阈值（0.5 – 1.0，默认 0.95）：
+  /// 「已观看」达成阈值（5% – 100%，步进 5%，默认 95%）：
   /// 视频列表「进度」字段据此把视频判定为 未观看 / 观看中 / 已看完
   double _watchThreshold = 0.95;
+
+  /// 自动连播：当前视频播完后自动播放下一集（默认开启）
+  bool _autoNext = true;
+
+  /// 播放完毕自动退出：当前文件夹最后一个视频播完后自动退出播放页
+  /// （默认开启；关闭则播完自动暂停停在末尾）
+  bool _autoExit = true;
+
+  /// 循环播放模式（默认关闭）
+  LoopMode _loopMode = LoopMode.off;
 
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
@@ -129,6 +149,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   bool get enableShrinkVideo => _enableShrinkVideo;
   bool get showThumbnailPreview => _showThumbnailPreview;
   double get watchThreshold => _watchThreshold;
+  bool get autoNext => _autoNext;
+  bool get autoExit => _autoExit;
+  LoopMode get loopMode => _loopMode;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -178,8 +201,17 @@ class PlayerControlsSettings extends ChangeNotifier {
     // 进度条缩略图预览：默认关闭（降低后台解码与缓存占用）
     _showThumbnailPreview =
         prefs.getBool(_keyShowThumbnailPreview) ?? false;
-    _watchThreshold = (prefs.getDouble(_keyWatchThreshold) ?? 0.95)
-        .clamp(0.5, 1.0);
+    // 旧值迁移：老版本以 1% 粒度存（0.5 – 1.0），读入后钳制到 5% – 100%
+    // 并就近对齐到 5% 档位
+    _watchThreshold = _roundWatchThreshold(
+      prefs.getDouble(_keyWatchThreshold) ?? 0.95,
+    ).clamp(minWatchThreshold, maxWatchThreshold);
+    _autoNext = prefs.getBool(_keyAutoNext) ?? true;
+    _autoExit = prefs.getBool(_keyAutoExit) ?? true;
+    final loop = prefs.getInt(_keyLoopMode);
+    if (loop != null && loop >= 0 && loop < LoopMode.values.length) {
+      _loopMode = LoopMode.values[loop];
+    }
     notifyListeners();
   }
 
@@ -319,15 +351,53 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setBool(_keyShowThumbnailPreview, v);
   }
 
-  /// 「已观看」达成阈值（0.5 – 1.0，步进 0.01，默认 0.95）：
-  /// 进度 >= 阈值 → 已看完（列表灰色）；>0 且 < 阈值 → 观看中
+  /// 「已观看」达成阈值（5% – 100%，步进 5%，默认 95%）：
+  /// 进度 >= 阈值 → 已看完（列表灰色）；>0 且 < 阈值 → 观看中。
+  /// 任意输入就近对齐到 5% 档位并钳制范围（与 load 迁移同一对齐逻辑）。
   Future<void> setWatchThreshold(double v) async {
-    final clamped = ((v * 100).roundToDouble() / 100).clamp(0.5, 1.0);
+    final clamped = _roundWatchThreshold(v)
+        .clamp(minWatchThreshold, maxWatchThreshold);
     if ((_watchThreshold - clamped).abs() < 0.0001) return;
     _watchThreshold = clamped;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_keyWatchThreshold, clamped);
+  }
+
+  /// 按 5%（0.05）步进取整到最近档位：
+  /// 百分数除以 5 取整后乘回，避免浮点误差（如 0.95 不偏移成 0.9500000000000001）
+  static double _roundWatchThreshold(double v) {
+    final percent = v * 100;
+    final steps = (percent / 5).round();
+    return steps * 5 / 100;
+  }
+
+  /// 自动连播：当前视频播完后自动播放下一集（默认开启）
+  Future<void> setAutoNext(bool v) async {
+    if (_autoNext == v) return;
+    _autoNext = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyAutoNext, v);
+  }
+
+  /// 播放完毕自动退出：当前文件夹最后一个视频播完后自动退出播放页
+  /// （默认开启；关闭则播完自动暂停停在末尾）
+  Future<void> setAutoExit(bool v) async {
+    if (_autoExit == v) return;
+    _autoExit = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyAutoExit, v);
+  }
+
+  /// 循环播放模式（默认关闭；off / 列表循环 / 单集循环）
+  Future<void> setLoopMode(LoopMode v) async {
+    if (_loopMode == v) return;
+    _loopMode = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyLoopMode, v.index);
   }
 
   /// 添加自定义倍速预设（去重、限制范围与数量）
@@ -431,6 +501,9 @@ class PlayerControlsSettings extends ChangeNotifier {
     _enableShrinkVideo = true;
     _showThumbnailPreview = false;
     _watchThreshold = 0.95;
+    _autoNext = true;
+    _autoExit = true;
+    _loopMode = LoopMode.off;
     notifyListeners();
   }
 }
