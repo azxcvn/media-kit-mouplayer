@@ -242,16 +242,9 @@ class _PlayerPageState extends State<PlayerPage>
     _subs.add(
       _player.stream.duration.listen((d) {
         if (mounted) setState(() => _duration = d);
-        // 时长就绪后启动整段缩略图预热（换集后再次触发；设置关闭则跳过）
-        if (d > Duration.zero &&
-            _settings.showThumbnailPreview &&
-            !_preload.isActiveFor(_path)) {
-          _preload.start(
-            _path,
-            d.inMilliseconds,
-            fromMs: _position.inMilliseconds,
-          );
-        }
+        // 缩略图预热不再进入播放即触发：改为「用户第一次拖动进度条时」
+        // 才从当前位置向外预热（见 _requestThumbnail），省去不拖动用户的
+        // 后台解码与缓存占用。
       }),
     );
 
@@ -630,7 +623,8 @@ class _PlayerPageState extends State<PlayerPage>
   void _onZoomUpdate(ScaleUpdateDetails d) {
     if (_locked || _zoomStartScale == null) return;
     final minScale = _settings.enableShrinkVideo ? 0.75 : 1.0;
-    final newScale = (_zoomStartScale! * d.scale).clamp(minScale, 2.0);
+    // 双指最大放大倍率：4.0（原 2.0，用户要求增加；最小仍受设置控制）
+    final newScale = (_zoomStartScale! * d.scale).clamp(minScale, 4.0);
     final ratio = newScale / _zoomScale;
     final focal = d.localFocalPoint;
     // 以双指焦点为中心缩放，再跟随焦点移动平移（PiliPlus 同款）
@@ -695,6 +689,16 @@ class _PlayerPageState extends State<PlayerPage>
     _thumbFraction = _duration.inMilliseconds > 0
         ? clamped / _duration.inMilliseconds
         : 0;
+
+    // 拖动进度条才启动整段缩略图后台预热（从当前位置向外扩散，先近后远）。
+    // 只有真正拖动过的用户才产生后台解码与磁盘缓存开销。
+    if (!_preload.isActiveFor(_path)) {
+      _preload.start(
+        _path,
+        _duration.inMilliseconds,
+        fromMs: clamped,
+      );
+    }
 
     // 1) 最近预生成帧即时显示
     final nearest = DeviceServices.peekNearestFrame(
@@ -795,6 +799,8 @@ class _PlayerPageState extends State<PlayerPage>
         _swipeSeekData = null;
         _clearThumbnail();
       });
+      // 切集：取消旧视频的缩略图预热（新视频拖动进度条时才重新预热）
+      _preload.cancel();
     }
     _resetHideTimer();
   }
@@ -1363,11 +1369,11 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                   ),
                 // 双指缩放后显示「还原画面」入口（播放/暂停按钮下方，
-                // 与中央簇保持一定间距）
+                // 与中央簇保持一定间距；比原位置再往下移一些）
                 if (_zoomScale != 1.0 || _zoomOffset != Offset.zero)
                   Positioned.fill(
                     child: Align(
-                      alignment: const Alignment(0, 0.24),
+                      alignment: const Alignment(0, 0.34),
                       child: _ZoomRestoreChip(onTap: _resetZoom),
                     ),
                   ),

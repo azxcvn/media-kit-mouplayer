@@ -34,6 +34,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyEnableShrinkVideo = 'player_controls_enable_shrink_video';
   static const _keyShowThumbnailPreview =
       'player_controls_show_thumbnail_preview';
+  static const _keyWatchThreshold = 'player_controls_watch_threshold';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -101,8 +102,13 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 双指缩小视频（默认开启：最小缩放 0.75；关闭则最小 1.0）
   bool _enableShrinkVideo = true;
 
-  /// 进度条缩略图预览（默认开启：拖动进度条时预览画面 + 后台预热缓存）
-  bool _showThumbnailPreview = true;
+  /// 进度条缩略图预览（默认关闭：拖动进度条时预览画面 + 后台预热缓存；
+  /// 关闭后不再抓帧/预热，省后台解码与缓存占用）
+  bool _showThumbnailPreview = false;
+
+  /// 「已观看」达成阈值（0.5 – 1.0，默认 0.95）：
+  /// 视频列表「进度」字段据此把视频判定为 未观看 / 观看中 / 已看完
+  double _watchThreshold = 0.95;
 
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
@@ -122,6 +128,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   double get brightnessSensitivity => _brightnessSensitivity;
   bool get enableShrinkVideo => _enableShrinkVideo;
   bool get showThumbnailPreview => _showThumbnailPreview;
+  double get watchThreshold => _watchThreshold;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -168,8 +175,11 @@ class PlayerControlsSettings extends ChangeNotifier {
             defaultGestureSensitivity)
         .clamp(minGestureSensitivity, maxGestureSensitivity);
     _enableShrinkVideo = prefs.getBool(_keyEnableShrinkVideo) ?? true;
+    // 进度条缩略图预览：默认关闭（降低后台解码与缓存占用）
     _showThumbnailPreview =
-        prefs.getBool(_keyShowThumbnailPreview) ?? true;
+        prefs.getBool(_keyShowThumbnailPreview) ?? false;
+    _watchThreshold = (prefs.getDouble(_keyWatchThreshold) ?? 0.95)
+        .clamp(0.5, 1.0);
     notifyListeners();
   }
 
@@ -300,13 +310,24 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setBool(_keyEnableShrinkVideo, v);
   }
 
-  /// 进度条缩略图预览开关（默认开启；关闭后不再抓帧/预热，省后台解码与缓存）
+  /// 进度条缩略图预览开关（默认关闭；开启后拖动进度条才触发预热，省后台解码与缓存）
   Future<void> setShowThumbnailPreview(bool v) async {
     if (_showThumbnailPreview == v) return;
     _showThumbnailPreview = v;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyShowThumbnailPreview, v);
+  }
+
+  /// 「已观看」达成阈值（0.5 – 1.0，步进 0.01，默认 0.95）：
+  /// 进度 >= 阈值 → 已看完（列表灰色）；>0 且 < 阈值 → 观看中
+  Future<void> setWatchThreshold(double v) async {
+    final clamped = ((v * 100).roundToDouble() / 100).clamp(0.5, 1.0);
+    if ((_watchThreshold - clamped).abs() < 0.0001) return;
+    _watchThreshold = clamped;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_keyWatchThreshold, clamped);
   }
 
   /// 添加自定义倍速预设（去重、限制范围与数量）
@@ -408,7 +429,8 @@ class PlayerControlsSettings extends ChangeNotifier {
     _volumeSensitivity = defaultGestureSensitivity;
     _brightnessSensitivity = defaultGestureSensitivity;
     _enableShrinkVideo = true;
-    _showThumbnailPreview = true;
+    _showThumbnailPreview = false;
+    _watchThreshold = 0.95;
     notifyListeners();
   }
 }

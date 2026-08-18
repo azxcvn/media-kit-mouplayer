@@ -5,15 +5,19 @@ import 'package:moumou/pages/home/folder_detail_page.dart';
 import 'package:moumou/pages/home/tree_folder_page.dart';
 import 'package:moumou/pages/home/views/folder_list_view.dart';
 import 'package:moumou/pages/home/views/tree_list_view.dart';
+import 'package:moumou/pages/media_info/media_info_page.dart';
 import 'package:moumou/pages/player/player_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/video_scanner.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/options_sheet.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// 首页：展示视频库（列表视图 / 树状视图，两种视图共用同一棵目录树）
+/// 首页：展示视频库（列表视图 / 树状视图，两种视图共用同一棵目录树）。
+///
+/// 右上角从左到右：**搜索**（文件夹 + 视频文件名过滤）→ 排序与字段。
 class HomePage extends StatefulWidget {
   final ViewSettings viewSettings;
 
@@ -30,6 +34,11 @@ class _HomePageState extends State<HomePage>
   bool _loading = true;
   bool _permissionDenied = false;
 
+  /// 搜索状态：false = 正常标题栏；true = 显示搜索输入框
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
   @override
   bool get wantKeepAlive => true;
 
@@ -37,6 +46,12 @@ class _HomePageState extends State<HomePage>
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -105,13 +120,84 @@ class _HomePageState extends State<HomePage>
     );
   }
 
+  // ── 搜索 ──────────────────────────────────────────────
+
+  void _toggleSearch() {
+    setState(() {
+      _searching = !_searching;
+      if (!_searching) {
+        _query = '';
+        _searchController.clear();
+      }
+    });
+  }
+
+  void _onQueryChanged(String v) => setState(() => _query = v.trim().toLowerCase());
+
+  /// 按名称过滤（不区分大小写）
+  bool _matchName(String name) {
+    if (_query.isEmpty) return true;
+    return name.toLowerCase().contains(_query);
+  }
+
+  /// 树状模式过滤：递归过滤（文件夹名匹配保留整棵子树；视频名匹配保留自身）
+  List<TreeNode> _filterTree(List<TreeNode> nodes) {
+    final result = <TreeNode>[];
+    for (final n in nodes) {
+      if (n.isFolder) {
+        final children = _filterTree(n.children);
+        if (children.isNotEmpty || _matchName(n.name)) {
+          result.add(_rebuildFolder(n, children));
+        }
+      } else if (_matchName(n.name)) {
+        result.add(n);
+      }
+    }
+    return result;
+  }
+
+  TreeNode _rebuildFolder(TreeNode n, List<TreeNode> children) {
+    if (identical(children, n.children)) return n;
+    return TreeNode(
+      name: n.name,
+      path: n.path,
+      type: n.type,
+      children: children,
+      videoCount: n.videoCount,
+      totalSize: n.totalSize,
+      dateModified: n.dateModified,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
       appBar: AppBar(
-        title: const Text('小牛Player'),
+        title: _searching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '搜索文件夹与视频',
+                  border: InputBorder.none,
+                ),
+                onChanged: _onQueryChanged,
+              )
+            : const Text('小牛Player'),
         actions: [
+          if (_searching)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: '取消搜索',
+              onPressed: _toggleSearch,
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: '搜索',
+              onPressed: _toggleSearch,
+            ),
           IconButton(
             icon: const Icon(Icons.sort),
             tooltip: '排序与视图',
@@ -149,10 +235,15 @@ class _HomePageState extends State<HomePage>
       listenable: Listenable.merge([
         widget.viewSettings,
         PlaybackProgressService.instance,
+        PlayerControlsSettings.instance,
       ]),
       builder: (context, _) {
         if (widget.viewSettings.viewMode == ViewMode.tree) {
-          final roots = widget.viewSettings.sortTree(_roots);
+          var roots = widget.viewSettings.sortTree(_roots);
+          if (_query.isNotEmpty) roots = _filterTree(roots);
+          if (roots.isEmpty && _query.isNotEmpty) {
+            return const Center(child: Text('没有匹配的内容'));
+          }
           return RefreshIndicator(
             onRefresh: _load,
             child: TreeListView(
@@ -161,10 +252,17 @@ class _HomePageState extends State<HomePage>
               videoFields: widget.viewSettings.videoFields,
               onFolderTap: _openTreeFolder,
               onVideoTap: _openVideo,
+              onVideoInfoTap: _openMediaInfo,
             ),
           );
         }
-        final folders = widget.viewSettings.sortFolders(_folders);
+        var folders = widget.viewSettings.sortFolders(_folders);
+        if (_query.isNotEmpty) {
+          folders = folders.where((n) => _matchName(n.name)).toList();
+          if (folders.isEmpty) {
+            return const Center(child: Text('没有匹配的文件夹'));
+          }
+        }
         return RefreshIndicator(
           onRefresh: _load,
           child: FolderListView(
@@ -227,6 +325,15 @@ class _HomePageState extends State<HomePage>
     if (mounted) setState(() {});
   }
 
+  /// 打开媒体信息页（点击视频卡片最右侧的「i」）
+  void _openMediaInfo(VideoFile video) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MediaInfoPage(path: video.path, title: video.name),
+      ),
+    );
+  }
+
   Widget _buildMessage({
     required IconData icon,
     required String message,
@@ -252,5 +359,3 @@ class _HomePageState extends State<HomePage>
     );
   }
 }
-
-/// 排序弹窗：统一由 lib/widgets/options_sheet.dart 的 showSortOptionsSheet 提供

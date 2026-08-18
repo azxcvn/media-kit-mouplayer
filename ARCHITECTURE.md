@@ -25,7 +25,7 @@ Flutter 本地视频播放器（Android），核心能力：
 
 ```
 lib/
-├── main.dart                  # 入口：主题装配 + AppFrame + 路由观察者
+├── main.dart                  # 入口：主题装配 + AppFrame + 路由观察者 + 崩溃日志钩子（FlutterError/Zone → 崩溃日志目录）
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         #   目录树节点（folder/video）
 │   ├── video_file.dart        #   视频文件信息
@@ -34,11 +34,12 @@ lib/
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     #   排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     #   扫描 + 建树 + 建文件夹列表
-│   ├── video_info_service.dart#   缩略图生成（跨进程，磁盘缓存）
+│   ├── video_info_service.dart#   缩略图生成（跨进程，磁盘缓存）+ 基本元数据（帧率/字幕，MediaInfoLib）+ 完整媒体信息
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化）
-│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设/按钮背景/进度条样式/长按倍速/音量亮度灵敏度/保存音量到系统/双指缩放/进度条缩略图开关，单例 + 持久化）
+│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设/按钮背景/进度条样式/长按倍速/音量亮度灵敏度/保存音量到系统/双指缩放/进度条缩略图/已观看进度阈值，单例 + 持久化）
 │   ├── device_services.dart   #   设备能力：系统音量 / 窗口亮度 / 任意时刻抓帧（video_thumbnail_plus 包优先 + MethodChannel 兜底 + 磁盘缓存 + 最近帧内存查询，原生见 MainActivity.kt）
-│   ├── thumbnail_preload_service.dart # 缩略图预生成：进入播放后按自适应间隔从当前位置向外预热整段缩略图（页面局部实例，切集/退出 cancel）
+│   ├── thumbnail_preload_service.dart # 缩略图预生成：**用户第一次拖动进度条时**才从当前位置向外预热整段缩略图（页面局部实例，切集/退出 cancel）
+│   ├── crash_log_service.dart #   崩溃日志：列表/读取/删除/清空/导出/追加 Dart 日志（原生 CrashHandler 自动记录）
 │   ├── cache_manager_service.dart # 缓存管理：各类别缓存大小查询 / 逐类清除 / 一键清除（原生 getCacheSizes/clearCache/clearAllCaches）
 │   ├── super_resolution_service.dart   # 超分：模式+质量持久化、着色器 assets→目录拷贝、mpv glsl-shaders 应用与生效查询
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
@@ -48,20 +49,20 @@ lib/
 │   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/超分/更多/编辑控制栏共用）
 │   ├── player_option_chip.dart#   面板选项胶囊（倍速预设/超分模式共用，保证视觉一致）
 │   ├── options_sheet.dart     #   showSortOptionsSheet（统一排序弹窗）
-│   ├── folder_card.dart       #   文件夹卡片（列表/树状共用）
-│   ├── video_card.dart        #   视频卡片（列表/树状/详情共用）
+│   ├── folder_card.dart       #   文件夹卡片（列表/树状共用；路径字段完整显示不省略）
+│   ├── video_card.dart        #   视频卡片（列表/树状/详情共用；时长右下+大小左下缩略图标签自动避让进度条，其余字段标签行，最右侧「i」媒体信息入口）
 │   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/Kazumi 滑杆主题）
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
 │   └── marquee_text.dart      #   无缝循环跑马灯
 ├── pages/                     # 页面（每页一个目录）
 │   ├── home/
-│   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发）
+│   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发 + 搜索入口：右上角搜索在排序左侧）
 │   │   ├── views/             #   首页专属视图组件
 │   │   │   ├── folder_list_view.dart  # 列表视图
 │   │   │   └── tree_list_view.dart    # 树状一级视图
-│   │   ├── folder_detail_page.dart    # 列表模式详情页（纯视频）
-│   │   └── tree_folder_page.dart      # 树状目录页（混合内容 + 面包屑）
+│   │   ├── folder_detail_page.dart    # 列表模式详情页（纯视频；搜索 + 媒体信息入口）
+│   │   └── tree_folder_page.dart      # 树状目录页（混合内容 + 面包屑；搜索 + 媒体信息入口）
 │   ├── player/
 │   │   ├── player_page.dart   #   播放页（横屏沉浸式；控制层 Kazumi 风格滑入动画；锁定后左右解锁按钮；截图；全套手势）
 │   │   └── views/             #   播放页专属控制组件
@@ -79,11 +80,14 @@ lib/
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（顶部：速度胶囊 + 首次提示 + 动态倍速条，倍速条 3 秒自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层（目标时间 + 偏移量）
 │   │       └── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（本地视频任意时刻抓帧，16:9 + 时间胶囊）
+│   ├── media_info/
+│   │   └── media_info_page.dart # 媒体信息页（MediaInfoLib 解析：通用/视频流/音频流/字幕流 + 一键复制）
 │   └── settings/
 │       ├── settings_page.dart #   设置主页（分组结构，可扩展；「其他」组 → 关于）
 │       ├── appearance_page.dart      # 外观设置子页
-│       ├── player_settings_page.dart # 播放器设置子页（手势/时长原地编辑/进度线/倍速记忆/按钮背景/长按倍速/灵敏度/保存音量/双指缩放/进度条缩略图；超分在播放界面调）
-│       ├── about_page.dart           # 关于页（应用信息 + 「工具」组，工具后续扩展）
+│       ├── player_settings_page.dart # 播放器设置子页（手势组：双击/时长/灵敏度/长按倍速滑杆；播放行为组：进度线/缩略图/倍速记忆/保存音量/双指缩放/按钮背景/指示器 + 已观看阈值）
+│       ├── about_page.dart           # 关于页（顶部卡片式软件信息：icon+名称版本+邮箱/GitHub；工具组：缓存管理/错误日志；信息组：许可证书）
+│       ├── error_log_page.dart       # 错误日志页（崩溃日志列表竖向排列 + 实时查看 + 一键复制 + 导出 + 保存路径 + 清空）
 │       └── cache_management_page.dart# 缓存管理页（各类缓存大小/逐类清除/一键清除二次确认/刷新）
 ├── theme/                     # 主题
 │   ├── app_theme.dart         #   ThemeData 生成（light/dark/amoled）
@@ -92,6 +96,7 @@ lib/
     ├── app_dialog.dart        #   （见 widgets/app_dialog.dart 说明）
     ├── formatters.dart        #   文件大小/日期/时长/倍速格式化
     ├── natural_compare.dart   #   自然序（数字感知）比较：名称排序用
+    ├── watch_state.dart       #   观看状态纯函数：classifyWatchState（未观看/观看中/已看完）+ watchPercent
     └── player_gestures.dart   #   双击手势判定 + 滑动手势数学（seek 灵敏度/音量·亮度增量/动态倍速档位，纯函数，可单测）
 ```
 
@@ -118,7 +123,7 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启）** 属 `PlayerControlsSettings`
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认关闭）、已观看进度阈值（默认 95%）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
 - **禁止**：新增全局 `ValueNotifier` hack / 全局可变单例来跨页面通信
@@ -157,14 +162,19 @@ models（模型）     → 无依赖（纯数据）
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
   - `hasFolders` / `hasVideos` 按页面内容动态传（纯文件夹页、纯视频页、混合页自动区分区块）
   - `showViewMode` 仅首页传 true
+  - 视频字段共 7 个（时长/大小/日期/分辨率/进度/字幕指示器/帧率），弹窗按三行胶囊展示（第一行 时长/大小/日期，第二行 进度/帧率/分辨率，第三行 字幕指示器独占整行）
+- 搜索入口：首页/目录页/详情页 AppBar 右上角「搜索」在「排序」左侧，点击切换为内嵌搜索框，按名称（不区分大小写）过滤当前列表
 - 弹窗类命名为 `_XxxSheet`，放页面文件内或公共 `widgets/`（跨页共用时）
 
 ### 4.6 卡片复用（树状/列表视觉一致的根基）
 
 - 文件夹 → `FolderCard`（`widgets/folder_card.dart`），参数：`node / fields / onTap`
-- 视频 → `VideoCard`（`widgets/video_card.dart`），参数：`video / fields / onTap`
+- 视频 → `VideoCard`（`widgets/video_card.dart`），参数：`video / fields / onTap / onInfoTap`
 - **任何新视图/新页面显示文件夹或视频时，必须复用这两个卡片**，禁止另写一套样式
 - 字段由 `ViewSettings.fields`（FolderField）和 `viewSettings.videoFields`（VideoField）驱动
+- VideoCard 字段布局：**时长** = 缩略图右下角标签、**大小** = 缩略图左下角标签（两者自动避让底部进度条，有进度条时上移）；其余字段（日期/分辨率/进度/帧率/字幕指示器）为名称下方标签行；最右侧「i」媒体信息入口（`onInfoTap`，点击打开 `MediaInfoPage`）
+- 「排序与字段」弹窗的视频显示字段区为**三行胶囊**布局（7 字段 = 3 + 3 + 1，行内等宽均分）：第一行 **时长/大小/日期**、第二行 **进度/帧率/分辨率**、第三行 **字幕指示器独占整行**（长度与上方两行整体一致）——见 `options_sheet.dart` 的 `_videoFieldChips`（显式指定行序，不依赖枚举顺序）
+- 观看状态：`classifyWatchState`（`utils/watch_state.dart`）按「已观看进度阈值」（`PlayerControlsSettings.watchThreshold`，默认 95%）判定 未观看/观看中/已看完，已看完的卡片置灰
 
 ### 4.7 主题
 
@@ -187,7 +197,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 | 长按 + 左右滑动 | 动态调速 1.5–4x（间隔 0.5，离散），出现倍速条 | 倍速条在指示器下方，停在某档 3 秒自动隐藏；首次完成该操作后提示不再出现（`speedHintShown` 持久化） |
 | 单指垂直滑动 | 左半屏亮度、右半屏音量 | 顶部/底部 8% 死区（避系统手势）；音量 0–100、亮度 0–1，带浮点累加器；**方向确认延迟 80ms**（给第二根手指加入时间，防捏合误触滑动） |
 | 单指水平滑动 | 实时 seek（满屏 = 90 秒，40ms 节流），居中浮层显示目标时间 | 右侧 8% 死区（避系统返回手势）；若滑动中途加入第二指，先撤销 seek（`onSwipeCancel`）再进缩放 |
-| 双指 | 缩放（0.75–2x，设置可禁缩小）+ 平移 | 以双指焦点为锚缩放 + 焦点位移平移；缩放后「还原画面」胶囊出现在播放/暂停按钮下方 |
+| 双指 | 缩放（0.75–4x，设置可禁缩小）+ 平移 | 以双指焦点为锚缩放 + 焦点位移平移；缩放后「还原画面」胶囊出现在播放/暂停按钮下方（Alignment 0.34） |
 
 音量/亮度与系统交互约定（原生在 `MainActivity.kt`，走 `DeviceServices`）：
 - 进入播放：读系统音量作为播放音量起点（如 20%）；亮度读系统值并**应用到窗口**
@@ -224,6 +234,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 1. 设置主页 `settings_page.dart` 已有分组结构：`SettingsGroupTitle(title: '分组名')` + `SettingsCard(child: SettingsTile(...))`
 2. 新分组直接追加；新设置子页参考 `appearance_page.dart`（`AppBar` + 分组列表）
 3. 设置项 UI 组件复用 `lib/widgets/settings_ui.dart`（`SettingsGroupTitle / SettingsCard / SettingsTile / SettingsRadioTile`）
+4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/倍速播放指示器；「已观看进度阈值」独立滑杆组（默认 95%）
 
 ### 5.4 新增模型字段
 
@@ -262,6 +273,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
   - `test/player_speed_panel_test.dart` — 倍速面板（「我的预设」✕ 删除 / 「添加到预设」随滑杆联动）
   - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位/时长/倍速预设/按钮背景/进度条样式/长按倍速/灵敏度/保存音量到系统/指示器开关/首次提示/双指缩放/旧数据迁移）
   - `test/thumbnail_cache_test.dart` — 缩略图预生成间隔（intervalFor）+ 设备帧缓存查询（peekFrame/peekNearestFrame）+ 预生成服务状态流转
+  - `test/watch_state_test.dart` — 观看状态纯函数（未观看/观看中/已看完判定 + 自定义阈值 + 百分比）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -301,6 +313,13 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 | 缩略图缓存自动清理 | 缓存无上限会持续增长（每视频 ~2.5-4MB） | 原生 `maybeAutoCleanCache`：每写入 30 帧检查总量，**>200MB 时按文件修改时间从旧到新删到 50MB**；手动清理走设置 → 关于 → 工具 → 缓存管理（`CacheManagerService`），支持逐类清除与一键清除（二次确认） |
 | 缓存文件分类 | `cacheDir/thumbs/` 混放列表封面与进度条缩略图 | 按文件名下划线分段区分：≥3 段（`hash_mod_bucket_width.jpg`）为进度条缩略图，否则为列表封面；`clearCache/clearAllCaches` 按此分类删除（未来弹幕/字幕类别预留 `other`） |
 | 缩略图预览只对本地文件 | PiliPlus 的进度条缩略图走 B 站服务端 videoshot 接口（仅网络视频）；本地视频无现成算法 | 本项目用 MediaMetadataRetriever 任意时刻抓帧实现（MainActivity `getVideoFrameAt`），进度条拖动时按秒分桶请求 |
+| 缩略图预加载时机 | 进入播放即全片预热：不拖进度条的用户也会产生后台解码与缓存开销 | **改为「用户第一次拖动进度条」才启动预热**（`ThumbnailPreloadService.start` 在 `_requestThumbnail` 内首次触发，从拖动位置向外扩散）；切集/退出 cancel |
+| 缩略图体积偏大 | 进度条缩略图 q80/320px、列表封面全尺寸 q80 压缩（未缩放） | 进度条缩略图降为 **q60**；列表封面 **等比缩放 + 16:9 居中裁剪到 384×216 + q70**（参考 fam4k007 `ThumbnailCacheManager`）；Dart 包兜底同步降质 |
+| 封面缩略图横屏拉伸 | 封面裁剪算法算错目标尺寸（`scaledWidth` 用了 `srcHeight×ratio`），横屏视频被压缩变形 | `cropCover` 按参考算法修正：**以被填满的维度为基准等比缩放**（横屏按高度填满→宽度等比→居中裁剪；竖屏按宽度填满→高度等比→居中裁剪）；封面缓存文件名加 `_v2` 后缀使旧拉伸封面自动失效重建 |
+| MediaInfoLib 依赖 | 官方库以 JitPack 分发（`com.github.marlboro-advance:mediainfoAndroid:v1.1.0`，包 `net.mediaarea.mediainfo.lib.MediaInfo`） | 在 `android/build.gradle.kts` 的 `allprojects.repositories` 加 `maven(url = "https://jitpack.io")`，app 模块 `implementation` 引入；解析放后台线程（`MediaInfoHelper.kt`） |
+| 媒体信息页数据 | MediaInfoLib 解析可能为空（个别文件解析失败/无流信息） | `getMediaInfo` 失败返回 null → 页面显示「获取失败」；字段级数据（帧率/字幕）单独走 `getVideoBasicMetadata` + 磁盘 JSON 缓存（`cacheDir/metainfo/`） |
+| 崩溃日志目录 | 原生 CrashHandler 与 Dart 钩子写同一目录 `files/crash_logs/` | 原生 `CrashHandler.kt`（未捕获 Java/Kotlin 异常 → `crash_*.txt`）；Dart `FlutterError.onError` / `runZonedGuarded` → `flutter_*.log`（`appendDartLog` 通道）；导出复制到公共 `Download/moumou_logs/`（App 已有「管理所有文件」权限） |
+| 关于页跳转邮件/GitHub | Android 11+ 包可见性：未声明 `<queries>` 时 `canLaunchUrl` 恒 false | AndroidManifest 声明 `mailto`（ACTION_SENDTO）与 `https`（ACTION_VIEW）查询；GitHub 地址留空时点击提示「待接入」 |
 
 ---
 
@@ -308,4 +327,6 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 
 - `参考项目/mpvRx-master/` — 树状模式（逐级导航 + 面包屑）的设计来源
 - `参考项目/PiliPlus-main/` — 设置体系、配色规模、弹窗交互参考
-- `参考项目/对话.txt` / `修复.txt` — 历史修复记录（勿删，排查回归时查阅）
+- `参考项目/src/` — fam4k007 小牛播放器源码：缩略图 384×216 裁剪算法（`ThumbnailCacheManager`）、MediaInfo 接入（`MediaInfoHelper` + `MediaInfoActivity`）、崩溃日志（`CrashHandler` + `LogViewerScreen`）、许可证书（AboutLibraries）均参考自它
+- `参考项目/Kazumi-main/` — 关于页 LicensePage（Flutter 内置自动收集许可）与日志页交互参考
+- `参考项目/对话.txt` / `修复.txt` / `1.txt` — 历史修复记录与诊断日志（勿删，排查回归时查阅）

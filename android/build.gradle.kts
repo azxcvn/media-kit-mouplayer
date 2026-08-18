@@ -2,6 +2,8 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // MediaInfoLib（net.mediaarea.mediainfo.lib.MediaInfo）通过 JitPack 分发
+        maven(url = "https://jitpack.io")
     }
 }
 

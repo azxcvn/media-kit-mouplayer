@@ -49,6 +49,10 @@ dependencies:
   video_thumbnail_plus: ^0.0.2
   # 关于页显示应用版本号
   package_info_plus: ^9.0.1
+  # 关于页图标（邮箱 / GitHub，SVG 素材来自参考项目图标素材）
+  flutter_svg: ^2.2.3
+  # 关于页跳转（写邮件 / 打开浏览器）
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:
@@ -77,6 +81,7 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/shaders/
+    - assets/icons/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

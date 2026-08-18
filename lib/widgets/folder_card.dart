@@ -71,7 +71,7 @@ class FolderCard extends StatelessWidget {
   List<Widget> _buildFields(ColorScheme scheme) {
     final widgets = <Widget>[];
 
-    // 路径：单独一行（长文本，超长省略不换行）
+    // 路径：单独一行（完整显示，不省略；长路径自动换行）
     if (fields.contains(FolderField.path)) {
       widgets.add(_fieldRow(scheme, Icons.folder_open, node.path));
     }
@@ -117,14 +117,17 @@ class FolderCard extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+          Padding(
+            padding: const EdgeInsets.only(top: 1),
+            child: Icon(icon, size: 14, color: scheme.onSurfaceVariant),
+          ),
           const SizedBox(width: 6),
+          // 完整显示路径（不省略不截断；多行换行）
           Expanded(
             child: Text(
               text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
             ),
           ),

@@ -34,8 +34,10 @@ void main() {
     expect(s.volumeSensitivity, 1.0);
     expect(s.brightnessSensitivity, 1.0);
     expect(s.enableShrinkVideo, isTrue);
-    // 进度条缩略图默认开启
-    expect(s.showThumbnailPreview, isTrue);
+    // 进度条缩略图默认关闭（省后台解码与缓存占用）
+    expect(s.showThumbnailPreview, isFalse);
+    // 「已观看」进度阈值默认 95%
+    expect(s.watchThreshold, 0.95);
   });
 
   test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
@@ -112,14 +114,28 @@ void main() {
     expect(s.enableShrinkVideo, isTrue);
   });
 
-  test('进度条缩略图：默认开启，可关闭并持久化', () async {
+  test('进度条缩略图：默认关闭，可开启并持久化', () async {
     final s = PlayerControlsSettings.instance;
-    await s.setShowThumbnailPreview(false);
-    expect(s.showThumbnailPreview, isFalse);
-    await s.load();
-    expect(s.showThumbnailPreview, isFalse);
     await s.setShowThumbnailPreview(true);
     expect(s.showThumbnailPreview, isTrue);
+    await s.load();
+    expect(s.showThumbnailPreview, isTrue);
+    await s.setShowThumbnailPreview(false);
+    expect(s.showThumbnailPreview, isFalse);
+  });
+
+  test('「已观看」进度阈值：默认 95%，可设置/持久化/范围钳制', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.watchThreshold, 0.95);
+    await s.setWatchThreshold(0.8);
+    expect(s.watchThreshold, 0.8);
+    await s.load(); // 模拟重启
+    expect(s.watchThreshold, 0.8);
+    // 越界钳制到 0.5 – 1.0
+    await s.setWatchThreshold(0.1);
+    expect(s.watchThreshold, 0.5);
+    await s.setWatchThreshold(1.5);
+    expect(s.watchThreshold, 1.0);
   });
 
   test('按钮背景：默认关闭，可开关并持久化', () async {

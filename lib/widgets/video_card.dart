@@ -3,21 +3,35 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/video_info_service.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/utils/watch_state.dart';
 
-/// 视频卡片：缩略图 + 名称 + 字段（列表视图与目录详情页共用）
+/// 视频卡片：缩略图 + 名称 + 字段（列表视图与目录详情页共用）。
+///
+/// 字段共 7 个（由 [fields] 控制显隐）：
+/// - **时长**：缩略图右下角标签；**大小**：缩略图左下角标签——
+///   两者自动避让缩略图底部进度条（有进度条时上移）；
+/// - 其余字段（日期 / 分辨率 / 进度 / 帧率 / 字幕指示器）以标签行展示。
+///
+/// 进度字段自动计算观看百分比，并驱动卡片状态：
+/// 未观看 / 观看中 / 已看完（达到「已观看」阈值，卡片置灰）。
 class VideoCard extends StatefulWidget {
   final VideoFile video;
   final Set<VideoField> fields;
   final VoidCallback onTap;
+
+  /// 点击最右侧「i」图标（打开媒体信息页）；null 时显示播放图标
+  final VoidCallback? onInfoTap;
 
   const VideoCard({
     super.key,
     required this.video,
     required this.fields,
     required this.onTap,
+    this.onInfoTap,
   });
 
   @override
@@ -26,11 +40,24 @@ class VideoCard extends StatefulWidget {
 
 class _VideoCardState extends State<VideoCard> {
   String? _thumbPath;
+  VideoBasicMetadata? _meta;
+
+  /// 是否需要加载基本元数据（帧率 / 字幕指示器字段启用时）
+  bool get _needMeta =>
+      widget.fields.contains(VideoField.frameRate) ||
+      widget.fields.contains(VideoField.subtitle);
 
   @override
   void initState() {
     super.initState();
     _loadThumb();
+    if (_needMeta) _loadMeta();
+  }
+
+  @override
+  void didUpdateWidget(VideoCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_needMeta && _meta == null) _loadMeta();
   }
 
   Future<void> _loadThumb() async {
@@ -41,6 +68,12 @@ class _VideoCardState extends State<VideoCard> {
     });
   }
 
+  Future<void> _loadMeta() async {
+    final meta = await VideoInfoService.getBasicMetadata(widget.video.path);
+    if (!mounted) return;
+    setState(() => _meta = meta);
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -49,41 +82,102 @@ class _VideoCardState extends State<VideoCard> {
     final progress =
         PlaybackProgressService.instance.getProgress(widget.video.path);
 
-    // 缩略图上的标签
-    final sizeText = fields.contains(VideoField.size)
-        ? formatFileSize(widget.video.size)
-        : null;
-    final durationText =
-        fields.contains(VideoField.duration) && widget.video.durationMs > 0
-        ? formatDuration(widget.video.durationMs)
-        : null;
+    // ── 观看状态：未观看 / 观看中 / 已看完（看完置灰）────────
+    final durationMs = widget.video.durationMs;
+    final threshold = PlayerControlsSettings.instance.watchThreshold;
+    final state = classifyWatchState(
+      durationMs: durationMs,
+      progress: progress,
+      threshold: threshold,
+    );
+    final watched = state == WatchState.watched;
+    final watching = state == WatchState.watching;
+    final progressPercent = watchPercent(
+      durationMs: durationMs,
+      progress: progress,
+    );
 
-    // 右侧字段
-    final rightTags = <Widget>[];
+    // 缩略图标签：时长右下角、大小左下角（自动避让底部进度条）
+    final sizeText =
+        fields.contains(VideoField.size) ? formatFileSize(widget.video.size) : null;
+    final durationText = fields.contains(VideoField.duration) && durationMs > 0
+        ? formatDuration(durationMs)
+        : null;
+    // 底部是否有进度条：有则标签上移（进度条 3px + 间隙），无则贴底
+    final hasProgressBar = progress != null && durationMs > 0;
+    final labelBottom = hasProgressBar ? 8.0 : 6.0;
+
+    // 其余字段标签（日期/分辨率/进度/帧率/字幕指示器）
+    final tags = <Widget>[];
     if (fields.contains(VideoField.date)) {
-      rightTags.add(
-        _tag(
-          scheme,
-          Icons.calendar_today_outlined,
-          formatDate(widget.video.dateModified),
-        ),
-      );
+      tags.add(_tag(
+        scheme,
+        Icons.calendar_today_outlined,
+        formatDate(widget.video.dateModified),
+      ));
     }
     if (fields.contains(VideoField.resolution) &&
         widget.video.width > 0 &&
         widget.video.height > 0) {
-      rightTags.add(
-        _tag(
-          scheme,
-          Icons.aspect_ratio,
-          '${widget.video.width}x${widget.video.height}',
-        ),
-      );
+      tags.add(_tag(
+        scheme,
+        Icons.aspect_ratio,
+        '${widget.video.width}x${widget.video.height}',
+      ));
     }
+    if (fields.contains(VideoField.progress)) {
+      tags.add(_tag(
+        scheme,
+        watched
+            ? Icons.check_circle
+            : (watching
+                ? Icons.play_circle_outline
+                : Icons.radio_button_unchecked),
+        watched
+            ? '已看完'
+            : (watching ? '$progressPercent%' : '未观看'),
+        emphasize: watched,
+      ));
+    }
+    if (fields.contains(VideoField.frameRate)) {
+      final fps = _meta?.frameRate ?? 0;
+      if (fps > 0) {
+        tags.add(_tag(
+          scheme,
+          Icons.speed,
+          '${fps.toStringAsFixed(fps % 1 == 0 ? 0 : 2)} fps',
+        ));
+      }
+    }
+    if (fields.contains(VideoField.subtitle)) {
+      final meta = _meta;
+      final hasSub = meta?.hasEmbeddedSubtitles ?? false;
+      final codec = meta?.subtitleCodec ?? '';
+      final text = meta == null
+          ? '字幕检测中…'
+          : hasSub
+              ? (codec.isEmpty ? '含字幕' : '字幕 · $codec')
+              : '无字幕';
+      tags.add(_tag(
+        scheme,
+        meta == null
+            ? Icons.hourglass_top
+            : (hasSub
+                ? Icons.subtitles_outlined
+                : Icons.subtitles_off_outlined),
+        text,
+      ));
+    }
+
+    // 看完置灰：卡片底色换灰 + 名称变灰
+    final cardColor = watched
+        ? scheme.surfaceContainerHighest
+        : scheme.surfaceContainerLow;
+    final nameColor = watched ? scheme.onSurfaceVariant : null;
 
     return Card(
       elevation: 0,
-      color: scheme.surfaceContainerLow,
+      color: cardColor,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         onTap: widget.onTap,
@@ -111,24 +205,27 @@ class _VideoCardState extends State<VideoCard> {
                                 color: scheme.onSurfaceVariant,
                               ),
                             ),
-                      if (sizeText != null && sizeText.isNotEmpty)
-                        Positioned(
-                          left: 4,
-                          bottom: 6,
-                          child: _thumbLabel(sizeText),
-                        ),
-                      if (durationText != null)
-                        Positioned(
-                          right: 4,
-                          bottom: 6,
-                          child: _thumbLabel(durationText),
-                        ),
-                      if (progress != null && widget.video.durationMs > 0)
+                      // 底部进度条（最底层，标签在其上方避让）
+                      if (hasProgressBar)
                         Positioned(
                           left: 0,
                           right: 0,
                           bottom: 0,
                           child: _buildProgressBar(scheme, progress),
+                        ),
+                      // 大小：左下角
+                      if (sizeText != null && sizeText.isNotEmpty)
+                        Positioned(
+                          left: 4,
+                          bottom: labelBottom,
+                          child: _thumbLabel(sizeText),
+                        ),
+                      // 时长：右下角
+                      if (durationText != null)
+                        Positioned(
+                          right: 4,
+                          bottom: labelBottom,
+                          child: _thumbLabel(durationText),
                         ),
                     ],
                   ),
@@ -143,19 +240,33 @@ class _VideoCardState extends State<VideoCard> {
                       widget.video.name,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
+                        color: nameColor,
                       ),
                     ),
-                    if (rightTags.isNotEmpty) ...[
+                    if (tags.isNotEmpty) ...[
                       const SizedBox(height: 6),
-                      Wrap(spacing: 12, runSpacing: 4, children: rightTags),
+                      Wrap(spacing: 12, runSpacing: 4, children: tags),
                     ],
                   ],
                 ),
               ),
-              Icon(Icons.play_circle_outline, color: scheme.onSurfaceVariant),
+              // 最右侧：媒体信息「i」入口（替换原播放图标）
+              if (widget.onInfoTap != null)
+                IconButton(
+                  icon: Icon(
+                    Icons.info_outline,
+                    size: 20,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  tooltip: '媒体信息',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: widget.onInfoTap,
+                )
+              else
+                Icon(Icons.play_circle_outline, color: scheme.onSurfaceVariant),
             ],
           ),
         ),
@@ -199,15 +310,21 @@ class _VideoCardState extends State<VideoCard> {
     );
   }
 
-  Widget _tag(ColorScheme scheme, IconData icon, String text) {
+  Widget _tag(
+    ColorScheme scheme,
+    IconData icon,
+    String text, {
+    bool emphasize = false,
+  }) {
+    final color = emphasize ? scheme.primary : scheme.onSurfaceVariant;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 13, color: scheme.onSurfaceVariant),
+        Icon(icon, size: 13, color: color),
         const SizedBox(width: 4),
         Text(
           text,
-          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          style: TextStyle(fontSize: 12, color: color),
         ),
       ],
     );

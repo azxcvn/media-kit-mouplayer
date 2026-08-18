@@ -29,6 +29,8 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // 崩溃日志自动记录（未捕获异常 → files/crash_logs/）
+        CrashHandler.init(this)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -40,6 +42,30 @@ class MainActivity : FlutterActivity() {
                             // 耗时解码放到后台线程，避免阻塞 UI 线程
                             Thread {
                                 val info = getVideoInfo(path)
+                                runOnUiThread { result.success(info) }
+                            }.start()
+                        }
+                    }
+                    // 列表字段「帧率 / 字幕指示器」：MediaInfoLib 快速解析 + 磁盘缓存
+                    "getVideoBasicMetadata" -> {
+                        val path = call.argument<String>("path")
+                        if (path == null) {
+                            result.error("INVALID_ARG", "path is null", null)
+                        } else {
+                            Thread {
+                                val meta = getVideoBasicMetadata(path)
+                                runOnUiThread { result.success(meta) }
+                            }.start()
+                        }
+                    }
+                    // 媒体信息页：MediaInfoLib 完整解析（通用/视频/音频/字幕流）
+                    "getMediaInfo" -> {
+                        val path = call.argument<String>("path")
+                        if (path == null) {
+                            result.error("INVALID_ARG", "path is null", null)
+                        } else {
+                            Thread {
+                                val info = MediaInfoHelper.getMediaInfo(this, path)
                                 runOnUiThread { result.success(info) }
                             }.start()
                         }
@@ -92,6 +118,24 @@ class MainActivity : FlutterActivity() {
                         clearAllCaches()
                         result.success(null)
                     }
+                    "getCrashLogDir" -> result.success(logDir().absolutePath)
+                    "listCrashLogs" -> result.success(listLogs())
+                    "readCrashLog" -> {
+                        result.success(readLog(call.argument<String>("path") ?: ""))
+                    }
+                    "deleteCrashLog" -> {
+                        result.success(deleteLog(call.argument<String>("path") ?: ""))
+                    }
+                    "clearCrashLogs" -> result.success(clearLogs())
+                    "exportCrashLog" -> {
+                        result.success(exportLog(call.argument<String>("path") ?: ""))
+                    }
+                    // Dart 侧未捕获异常 → 追加到崩溃日志目录（flutter_*.log）
+                    "appendDartLog" -> {
+                        val content = call.argument<String>("content") ?: ""
+                        appendDartLog(content)
+                        result.success(null)
+                    }
                     // 包（video_thumbnail_plus）成功抓到的帧也写入磁盘缓存，
                     // 保证「进度条缩略图」磁盘占用非 0、重开视频零解码
                     "putVideoFrame" -> {
@@ -120,6 +164,102 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    // ── 错误日志（崩溃日志自动记录）────────────────────────
+
+    /** 日志目录：files/crash_logs/ */
+    private fun logDir(): File = CrashHandler.logDir(this)
+
+    /** 列出全部日志文件（按修改时间倒序） */
+    private fun listLogs(): List<Map<String, Any>> {
+        val dir = logDir()
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        return dir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".txt") }
+            ?.sortedByDescending { it.lastModified() }
+            ?.map { f ->
+                mapOf(
+                    "name" to f.name,
+                    "path" to f.absolutePath,
+                    "size" to f.length(),
+                    "lastModified" to f.lastModified(),
+                )
+            }
+            ?: emptyList()
+    }
+
+    /** 读取日志文件内容（UTF-8，失败返回错误信息） */
+    private fun readLog(path: String): String {
+        return try {
+            File(path).readText()
+        } catch (e: Exception) {
+            "读取日志失败：${e.message}"
+        }
+    }
+
+    /** 删除单个日志文件 */
+    private fun deleteLog(path: String): Boolean {
+        return try {
+            File(path).delete()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 清空全部日志 */
+    private fun clearLogs(): Boolean {
+        return try {
+            val dir = logDir()
+            if (!dir.exists() || !dir.isDirectory) return true
+            var ok = true
+            dir.listFiles()?.forEach { f ->
+                if (f.isFile && !f.delete()) ok = false
+            }
+            ok
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 导出日志到系统公共 Download 目录（App 有「管理所有文件」权限，
+     * 可直写 /storage/emulated/0/Download/moumou_logs/），返回新路径。
+     */
+    private fun exportLog(path: String): String? {
+        return try {
+            val src = File(path)
+            if (!src.exists()) return null
+            val downloads =
+                android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_DOWNLOADS
+                )
+            val outDir = File(downloads, "moumou_logs")
+            if (!outDir.exists()) outDir.mkdirs()
+            val dst = File(outDir, src.name)
+            src.copyTo(dst, overwrite = true)
+            dst.absolutePath
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * Dart 侧未捕获异常日志：写入 `files/crash_logs/flutter_yyyy-MM-dd.log`，
+     * 与原生崩溃日志同一目录（错误日志页统一展示）。
+     */
+    private fun appendDartLog(content: String) {
+        try {
+            val dir = logDir()
+            if (!dir.exists()) dir.mkdirs()
+            val timestamp = java.text.SimpleDateFormat(
+                "yyyy-MM-dd", java.util.Locale.getDefault()
+            ).format(java.util.Date())
+            val file = File(dir, "flutter_$timestamp.log")
+            file.appendText("\n$content\n")
+        } catch (e: Exception) {
+            Log.w("DartLog", "appendDartLog failed: ${e.message}")
+        }
     }
 
     // ── 音量（系统媒体音量，0 – 100 百分比）────────────────
@@ -201,7 +341,9 @@ class MainActivity : FlutterActivity() {
         }
 
         val out = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+        // 压缩质量 60：进度条缩略图只用于拖动预览（宽 160 显示），
+        // 降质后单帧更小（约 40%），缓存体积随之缩小（参考项目为 384×216 + q85）
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 60, out)
         val bytes = out.toByteArray()
         bitmap.recycle()
         writeThumbToDisk(cacheFile, bytes)
@@ -345,13 +487,78 @@ class MainActivity : FlutterActivity() {
         frameCache.evictAll()
     }
 
-    // ── 列表缩略图（原有逻辑，未改动）──────────────────────
+    // ── 列表基本元数据（帧率 / 字幕，MediaInfoLib + 磁盘缓存）───────
+
+    /** 基本元数据磁盘缓存目录（JSON 按 path+lastModified 分文件） */
+    private fun metaCacheFile(path: String): File {
+        val dir = File(cacheDir, "metainfo")
+        if (!dir.exists()) dir.mkdirs()
+        return File(dir, "${path.hashCode()}_${File(path).lastModified()}.json")
+    }
+
+    /**
+     * 列表字段「帧率 / 字幕指示器」数据：MediaInfoLib 快速解析，
+     * 结果落盘缓存（重开视频零解析）。失败返回空 Map（字段不显示）。
+     */
+    private fun getVideoBasicMetadata(path: String): Map<String, Any> {
+        val cacheFile = metaCacheFile(path)
+        if (cacheFile.exists()) {
+            val cached = runCatching { cacheFile.readText() }.getOrNull()
+            if (cached != null && cached.isNotEmpty()) {
+                // 缓存是 JSON：反序列化为 Map
+                val parsed = runCatching {
+                    org.json.JSONObject(cached)
+                }.getOrNull()
+                if (parsed != null) {
+                    return mapOf(
+                        "frameRate" to parsed.optDouble("frameRate", 0.0),
+                        "hasSubtitles" to parsed.optBoolean("hasSubtitles", false),
+                        "subtitleCodec" to parsed.optString("subtitleCodec", ""),
+                    )
+                }
+            }
+        }
+
+        val meta = MediaInfoHelper.extractBasicMetadata(this, path)
+        if (meta.isNotEmpty()) {
+            runCatching {
+                val obj = org.json.JSONObject()
+                obj.put("frameRate", meta["frameRate"] as? Number ?: 0.0)
+                obj.put("hasSubtitles", meta["hasSubtitles"] as? Boolean ?: false)
+                obj.put("subtitleCodec", meta["subtitleCodec"] as? String ?: "")
+                // 原子写入：先写临时文件再改名
+                val tmp = File(cacheFile.parentFile, cacheFile.name + ".tmp")
+                java.io.FileOutputStream(tmp).use { o ->
+                    o.write(obj.toString().toByteArray())
+                    o.flush()
+                }
+                if (!tmp.renameTo(cacheFile)) {
+                    tmp.delete()
+                    java.io.FileOutputStream(cacheFile).use { o ->
+                        o.write(obj.toString().toByteArray())
+                        o.flush()
+                    }
+                }
+            }
+        }
+        return meta
+    }
+
+    // ── 列表缩略图（优化：等比缩放 + 16:9 居中裁剪 + 低质量 JPEG）──────
+
+    /**
+     * 列表封面缩略图目标尺寸（参考项目 ThumbnailCacheManager 的 384×216，
+     * 等比缩放填满后居中裁剪为 16:9，宽高比一致的卡片封面观感统一）。
+     */
+    private val coverThumbWidth = 384
+    private val coverThumbHeight = 216
 
     private fun getVideoInfo(path: String): Map<String, Any?> {
         val dir = File(cacheDir, "thumbs")
         if (!dir.exists()) dir.mkdirs()
-        // 以 path + lastModified 作为缓存 key：文件被替换/修改后自动失效
-        val cacheFile = File(dir, "${path.hashCode()}_${File(path).lastModified()}.jpg")
+        // 以 path + lastModified 作为缓存 key：文件被替换/修改后自动失效。
+        // 带 `_v2` 标记：v2 起封面改为 等比缩放+居中裁剪，旧版拉伸封面自动失效重建
+        val cacheFile = File(dir, "${path.hashCode()}_${File(path).lastModified()}_v2.jpg")
         // 磁盘缓存命中：直接返回，完全跳过 MediaMetadataRetriever 解码
         // （时长由 MediaStore 提供，列表不需要这里的 duration）
         if (cacheFile.exists()) {
@@ -371,10 +578,12 @@ class MainActivity : FlutterActivity() {
                 MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
             )
             val thumbPath = if (bitmap != null) {
+                val cover = cropCover(bitmap)
+                if (cover !== bitmap) bitmap.recycle()
                 FileOutputStream(cacheFile).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                    cover.compress(Bitmap.CompressFormat.JPEG, 70, out)
                 }
-                bitmap.recycle()
+                cover.recycle()
                 cacheFile.absolutePath
             } else {
                 null
@@ -389,6 +598,43 @@ class MainActivity : FlutterActivity() {
         } finally {
             retriever.release()
         }
+    }
+
+    /**
+     * 等比缩放填满 16:9 目标区后居中裁剪（与参考项目封面算法一致）。
+     *
+     * 关键：先按「被填满的那个维度」等比缩放（高度填满或宽度填满），
+     * 再居中裁剪超出部分——保证画面不变形（横屏/竖屏/超宽屏均不失真）。
+     */
+    private fun cropCover(src: Bitmap): Bitmap {
+        val srcWidth = src.width
+        val srcHeight = src.height
+        if (srcWidth <= 0 || srcHeight <= 0) return src
+        val targetRatio = coverThumbWidth.toFloat() / coverThumbHeight // 384/216 ≈ 1.7778
+        val srcRatio = srcWidth.toFloat() / srcHeight
+
+        val scaledWidth: Int
+        val scaledHeight: Int
+        if (srcRatio > targetRatio) {
+            // 源更宽（横屏/超宽屏）：按高度填满，宽度等比放大后居中裁剪
+            scaledHeight = coverThumbHeight
+            scaledWidth = (srcWidth * coverThumbHeight.toFloat() / srcHeight).toInt()
+        } else {
+            // 源更高（竖屏/方屏）：按宽度填满，高度等比放大后居中裁剪
+            scaledWidth = coverThumbWidth
+            scaledHeight = (srcHeight * coverThumbWidth.toFloat() / srcWidth).toInt()
+        }
+
+        val scaled = Bitmap.createScaledBitmap(src, scaledWidth, scaledHeight, true)
+        val x = ((scaledWidth - coverThumbWidth) / 2).coerceAtLeast(0)
+        val y = ((scaledHeight - coverThumbHeight) / 2).coerceAtLeast(0)
+        val final = Bitmap.createBitmap(
+            scaled, x, y,
+            minOf(coverThumbWidth, scaledWidth),
+            minOf(coverThumbHeight, scaledHeight),
+        )
+        if (scaled !== final) scaled.recycle()
+        return final
     }
 
     /** 通过 MediaStore 查询所有本地视频（快，系统索引） */

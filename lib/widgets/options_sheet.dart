@@ -131,16 +131,10 @@ class _SortOptionsSheet extends StatelessWidget {
                 ),
                 const SizedBox(height: 16),
                 _sectionTitle(context, '视频显示字段'),
-                _fieldChips(
-                  VideoField.values.map((f) {
-                    final selected = viewSettings.videoFields.contains(f);
-                    return (
-                      label: f.label,
-                      selected: selected,
-                      onToggle: () => viewSettings.toggleVideoField(f),
-                    );
-                  }).toList(),
-                ),
+                // 7 字段三行胶囊（等宽均分）：
+                // 第一行 时长/大小/日期，第二行 进度/帧率/分辨率，
+                // 第三行 字幕指示器独占整行（长度与上方两行整体一致）
+                _videoFieldChips(viewSettings),
               ]);
             }
             if (showViewMode) {
@@ -206,6 +200,76 @@ class _SortOptionsSheet extends StatelessWidget {
             )
             .toList(),
       ),
+    );
+  }
+
+  /// 视频显示字段：三行胶囊布局（7 字段 = 3 + 3 + 1），**行内等宽均分**。
+  ///
+  /// - 第一行：时长 / 大小 / 日期（3 个胶囊，各占 1/3 行宽）；
+  /// - 第二行：进度 / 帧率 / 分辨率（3 个胶囊，各占 1/3 行宽）；
+  /// - 第三行：字幕指示器独占整行（长度与上方两行整体一致）。
+  Widget _videoFieldChips(ViewSettings viewSettings) {
+    ({String label, bool selected, VoidCallback onToggle}) chip(
+      VideoField f,
+    ) {
+      return (
+        label: f.label,
+        selected: viewSettings.videoFields.contains(f),
+        onToggle: () => viewSettings.toggleVideoField(f),
+      );
+    }
+
+    // 显式指定每行字段（不依赖枚举顺序）
+    final row1 = [
+      chip(VideoField.duration),
+      chip(VideoField.size),
+      chip(VideoField.date),
+    ];
+    final row2 = [
+      chip(VideoField.progress),
+      chip(VideoField.frameRate),
+      chip(VideoField.resolution),
+    ];
+    final row3 = [chip(VideoField.subtitle)];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _chipRow(row1),
+        const SizedBox(height: 6),
+        _chipRow(row2),
+        const SizedBox(height: 6),
+        _chipRow(row3),
+      ],
+    );
+  }
+
+  Widget _chipRow(
+    List<({String label, bool selected, VoidCallback onToggle})> items,
+  ) {
+    return Row(
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) const SizedBox(width: 6),
+          // 等宽均分：每个胶囊占 1/N 行宽，内容水平居中
+          Expanded(
+            child: FilterChip(
+              label: Center(
+                child: Text(
+                  items[i].label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              selected: items[i].selected,
+              showCheckmark: false,
+              visualDensity: VisualDensity.compact,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              onSelected: (_) => items[i].onToggle(),
+            ),
+          ),
+        ],
+      ],
     );
   }
 

@@ -14,6 +14,7 @@ class TreeListView extends StatelessWidget {
   final Set<VideoField> videoFields;
   final void Function(TreeNode) onFolderTap;
   final void Function(VideoFile) onVideoTap;
+  final void Function(VideoFile)? onVideoInfoTap;
 
   const TreeListView({
     super.key,
@@ -22,6 +23,7 @@ class TreeListView extends StatelessWidget {
     required this.videoFields,
     required this.onFolderTap,
     required this.onVideoTap,
+    this.onVideoInfoTap,
   });
 
   @override
@@ -43,6 +45,9 @@ class TreeListView extends StatelessWidget {
           video: node.video!,
           fields: videoFields,
           onTap: () => onVideoTap(node.video!),
+          onInfoTap: onVideoInfoTap == null
+              ? null
+              : () => onVideoInfoTap!(node.video!),
         );
       },
     );

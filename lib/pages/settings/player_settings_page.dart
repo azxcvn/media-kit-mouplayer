@@ -4,8 +4,14 @@ import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
 /// 播放器设置子页：双击手势、快进/快退时长（固定档位 + 点数值原地自定义）、
-/// 音量/亮度手势灵敏度、长按倍速（倍率滑杆/指示器开关）、保存音量到系统、
-/// 常驻进度线、倍速记忆、按钮背景、双指缩放。
+/// 音量/亮度手势灵敏度、长按倍速（倍率滑杆，归「手势」组）、
+/// 倍速播放指示器（归「播放行为」组）、保存音量到系统、
+/// 常驻进度线、倍速记忆、按钮背景、双指缩放、已观看进度阈值。
+///
+/// 分组结构（各组别内的设置项连为一体）：
+/// - **手势**：双击手势、快进/快退时长、音量/亮度灵敏度、长按倍速滑杆；
+/// - **播放行为**：常驻进度线、进度条缩略图、记住上次倍速、保存音量到系统、
+///   双指缩小视频、按钮背景、倍速播放指示器、已观看进度阈值。
 ///
 /// 超分辨率（模式/质量/记忆）在播放界面右下角入口直接调整，本页不提供；
 /// 控制栏（启用动作）的编辑只在播放器内进行（「更多 → 编辑控制栏」），本页不提供。
@@ -31,7 +37,7 @@ class PlayerSettingsPage extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
-              // ── 手势 ──────────────────────────────
+              // ── 手势（含长按倍速滑杆）─────────────────
               const SettingsGroupTitle(title: '手势'),
               SettingsCard(
                 child: Column(
@@ -75,32 +81,16 @@ class PlayerSettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              // ── 长按倍速 ──────────────────────────────
-              const SettingsGroupTitle(title: '长按倍速'),
+              const SizedBox(height: 16),
+              // 长按倍速滑杆（归入手势组别）
               SettingsCard(
                 child: _LongPressSpeedTile(
                   value: settings.longPressSpeed,
                   onChanged: settings.setLongPressSpeed,
                 ),
               ),
-              const SizedBox(height: 16),
-              SettingsCard(
-                child: Column(
-                  children: [
-                    SettingsTile(
-                      icon: Icons.speed_rounded,
-                      title: '倍速播放指示器',
-                      subtitle: const Text('长按时在屏幕顶部显示「正在 X.Xx 倍速播放」'),
-                      trailing: Switch(
-                        value: settings.showSpeedIndicator,
-                        onChanged: (v) => settings.setShowSpeedIndicator(v),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              // ── 播放 ──────────────────────────────
-              const SettingsGroupTitle(title: '播放'),
+              // ── 播放行为（原「播放」组别改名）────────────
+              const SettingsGroupTitle(title: '播放行为'),
               SettingsCard(
                 child: Column(
                   children: [
@@ -116,7 +106,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.image_outlined,
                       title: '进度条缩略图',
-                      subtitle: const Text('拖动进度条时预览画面；关闭可省后台解码与缓存占用'),
+                      subtitle: const Text('拖动进度条时预览画面；默认关闭，开启后仅在拖动时后台预热'),
                       trailing: Switch(
                         value: settings.showThumbnailPreview,
                         onChanged: (v) => settings.setShowThumbnailPreview(v),
@@ -143,7 +133,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.pinch_outlined,
                       title: '双指缩小视频',
-                      subtitle: const Text('双指可缩放画面（最小 0.75 倍）；关闭则最小回到原始大小'),
+                      subtitle: const Text('双指可缩放画面（最小 0.75 倍，最大 4 倍）；关闭则最小回到原始大小'),
                       trailing: Switch(
                         value: settings.enableShrinkVideo,
                         onChanged: (v) => settings.setEnableShrinkVideo(v),
@@ -158,7 +148,25 @@ class PlayerSettingsPage extends StatelessWidget {
                         onChanged: (v) => settings.setShowButtonBackground(v),
                       ),
                     ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsTile(
+                      icon: Icons.speed_rounded,
+                      title: '倍速播放指示器',
+                      subtitle: const Text('长按时在屏幕顶部显示「正在 X.Xx 倍速播放」'),
+                      trailing: Switch(
+                        value: settings.showSpeedIndicator,
+                        onChanged: (v) => settings.setShowSpeedIndicator(v),
+                      ),
+                    ),
                   ],
+                ),
+              ),
+              // 已观看进度阈值（视频列表「进度」字段的完成判定）
+              const SettingsGroupTitle(title: '已观看进度阈值'),
+              SettingsCard(
+                child: _WatchThresholdTile(
+                  value: settings.watchThreshold,
+                  onChanged: settings.setWatchThreshold,
                 ),
               ),
             ],
@@ -455,6 +463,80 @@ class _SeekSettingTileState extends State<_SeekSettingTile> {
           ),
           Text(
             '点击右侧数值可自定义 1 – ${PlayerControlsSettings.maxSeekSeconds} 秒',
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「已观看」进度阈值设置项（滑杆式，50% – 100%，默认 95%）：
+/// 视频列表「进度」字段据此判定 未观看 / 观看中 / 已看完（看完的卡片置灰）。
+class _WatchThresholdTile extends StatelessWidget {
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  const _WatchThresholdTile({
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final percent = (value * 100).round();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.check_circle_outline,
+                  size: 22, color: scheme.onSurfaceVariant),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  '「已观看」进度阈值',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.secondaryContainer,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '$percent%',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: scheme.onSecondaryContainer,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          SliderTheme(
+            data: kazumiSliderTheme(scheme).copyWith(
+              tickMarkShape: const DenseSliderTickMarkShape(),
+            ),
+            child: Slider(
+              min: 0.5,
+              max: 1.0,
+              divisions: 50,
+              value: value,
+              onChanged: onChanged,
+            ),
+          ),
+          Text(
+            '播放进度达到该比例即视为「已看完」（列表置灰）。默认 95%。',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],

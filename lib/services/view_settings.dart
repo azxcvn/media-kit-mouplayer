@@ -45,11 +45,16 @@ enum FolderField {
 }
 
 /// 视频列表可显示的字段（名称固定显示，不在此列）
+/// 一共 7 个字段：时长 / 大小 / 日期 / 分辨率 / 进度 / 字幕指示器 / 帧率。
+/// 卡片内按三行胶囊布局：第一行 3 个、第二行 3 个、第三行 1 个（字幕指示器，全宽）。
 enum VideoField {
   duration('时长'),
   size('大小'),
   date('日期'),
-  resolution('分辨率');
+  resolution('分辨率'),
+  progress('进度'),
+  subtitle('字幕指示器'),
+  frameRate('帧率');
 
   final String label;
   const VideoField(this.label);

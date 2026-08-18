@@ -57,6 +57,11 @@ kotlin {
     }
 }
 
+dependencies {
+    // MediaInfoLib（Android 绑定）：媒体文件详细信息解析（参考 fam4k007 项目）
+    implementation("com.github.marlboro-advance:mediainfoAndroid:v1.1.0")
+}
+
 flutter {
     source = "../.."
 }

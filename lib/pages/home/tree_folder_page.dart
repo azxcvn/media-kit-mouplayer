@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/tree_node.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/pages/media_info/media_info_page.dart';
 import 'package:moumou/pages/player/player_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/folder_card.dart';
@@ -17,6 +19,8 @@ import 'package:moumou/widgets/video_card.dart';
 ///
 /// [path] 为从顶层到当前节点的完整路径链（不含首页），用于面包屑导航：
 /// 点击任意上级层级可 popUntil 跳回。
+///
+/// 右上角从左到右：**搜索**（文件夹 + 视频）→ 排序与字段。
 class TreeFolderPage extends StatefulWidget {
   final TreeNode node;
   final ViewSettings viewSettings;
@@ -34,6 +38,16 @@ class TreeFolderPage extends StatefulWidget {
 }
 
 class _TreeFolderPageState extends State<TreeFolderPage> {
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   /// 面包屑项：targetIndex 表示要跳回的路径层级（-1 = 首页）
   List<({String label, int targetIndex})> get _crumbs {
     final path = widget.path;
@@ -74,6 +88,16 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
     );
   }
 
+  void _toggleSearch() {
+    setState(() {
+      _searching = !_searching;
+      if (!_searching) {
+        _query = '';
+        _searchController.clear();
+      }
+    });
+  }
+
   Future<void> _openFolder(TreeNode node) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -109,12 +133,42 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
     if (mounted) setState(() {});
   }
 
+  void _openMediaInfo(VideoFile video) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MediaInfoPage(path: video.path, title: video.name),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.node.name),
+        title: _searching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '搜索文件夹与视频',
+                  border: InputBorder.none,
+                ),
+                onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+              )
+            : Text(widget.node.name),
         actions: [
+          if (_searching)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: '取消搜索',
+              onPressed: _toggleSearch,
+            )
+          else if (widget.node.children.isNotEmpty)
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: '搜索',
+              onPressed: _toggleSearch,
+            ),
           // 目录为空时没有可排序内容，不显示排序入口
           if (widget.node.children.isNotEmpty)
             IconButton(
@@ -141,9 +195,19 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
       listenable: Listenable.merge([
         widget.viewSettings,
         PlaybackProgressService.instance,
+        PlayerControlsSettings.instance,
       ]),
       builder: (context, _) {
-        final children = widget.viewSettings.sortTree(widget.node.children);
+        var children = widget.viewSettings.sortTree(widget.node.children);
+        if (_query.isNotEmpty) {
+          children = children.where((c) {
+            if (c.isFolder) return c.name.toLowerCase().contains(_query);
+            return c.video!.name.toLowerCase().contains(_query);
+          }).toList();
+        }
+        if (children.isEmpty && _query.isNotEmpty) {
+          return const Center(child: Text('没有匹配的内容'));
+        }
         // 底部安全区已由全局 SafeArea 处理
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -161,6 +225,7 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
               video: child.video!,
               fields: widget.viewSettings.videoFields,
               onTap: () => _openVideo(child.video!),
+              onInfoTap: () => _openMediaInfo(child.video!),
             );
           },
         );
@@ -265,4 +330,3 @@ class _BreadcrumbBarState extends State<_BreadcrumbBar> {
     return widgets;
   }
 }
-

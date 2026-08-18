@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/pages/media_info/media_info_page.dart';
 import 'package:moumou/pages/player/player_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/options_sheet.dart';
 import 'package:moumou/widgets/video_card.dart';
 
-/// 文件夹视频列表页：列表模式下点击文件夹进入，只显示该文件夹内的视频
+/// 文件夹视频列表页：列表模式下点击文件夹进入，只显示该文件夹内的视频。
+/// 右上角从左到右：**搜索** → 排序与字段。
 class FolderDetailPage extends StatefulWidget {
   final String title;
   final List<VideoFile> videos;
@@ -25,6 +28,16 @@ class FolderDetailPage extends StatefulWidget {
 }
 
 class _FolderDetailPageState extends State<FolderDetailPage> {
+  bool _searching = false;
+  final TextEditingController _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   void _showVideoOptions() {
     showSortOptionsSheet(
       context,
@@ -32,6 +45,16 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       hasFolders: false,
       hasVideos: true,
     );
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _searching = !_searching;
+      if (!_searching) {
+        _query = '';
+        _searchController.clear();
+      }
+    });
   }
 
   Future<void> _openPlayer(VideoFile video) async {
@@ -51,12 +74,42 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
     if (mounted) setState(() {});
   }
 
+  void _openMediaInfo(VideoFile video) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MediaInfoPage(path: video.path, title: video.name),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.title),
+        title: _searching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: '搜索视频',
+                  border: InputBorder.none,
+                ),
+                onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+              )
+            : Text(widget.title),
         actions: [
+          if (_searching)
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: '取消搜索',
+              onPressed: _toggleSearch,
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.search),
+              tooltip: '搜索',
+              onPressed: _toggleSearch,
+            ),
           IconButton(
             icon: const Icon(Icons.sort),
             tooltip: '排序与字段',
@@ -76,9 +129,18 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
       listenable: Listenable.merge([
         widget.viewSettings,
         PlaybackProgressService.instance,
+        PlayerControlsSettings.instance,
       ]),
       builder: (context, _) {
-        final videos = widget.viewSettings.sortVideos(widget.videos);
+        var videos = widget.viewSettings.sortVideos(widget.videos);
+        if (_query.isNotEmpty) {
+          videos = videos
+              .where((v) => v.name.toLowerCase().contains(_query))
+              .toList();
+        }
+        if (videos.isEmpty && _query.isNotEmpty) {
+          return const Center(child: Text('没有匹配的视频'));
+        }
         // 底部安全区已由全局 SafeArea 处理
         return ListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -89,6 +151,7 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
               video: video,
               fields: widget.viewSettings.videoFields,
               onTap: () => _openPlayer(video),
+              onInfoTap: () => _openMediaInfo(video),
             );
           },
         );
@@ -96,4 +159,3 @@ class _FolderDetailPageState extends State<FolderDetailPage> {
     );
   }
 }
-

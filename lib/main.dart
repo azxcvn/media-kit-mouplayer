@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
+import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
@@ -14,8 +17,28 @@ import 'package:moumou/widgets/main_scaffold.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // 崩溃缓存机制：Dart 侧未捕获异常也写入崩溃日志目录（原生 CrashHandler
+  // 负责 Java/Kotlin 崩溃；两者同目录，错误日志页统一查看/导出/复制）
   MediaKit.ensureInitialized();
-  runApp(const MoumouApp());
+  // FlutterError（框架层）异常也写日志 —— 必须先于 runApp 挂钩子
+  final oldError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    oldError?.call(details);
+    CrashLogService.appendDartLog(
+      '━━━ Flutter 异常 ${DateTime.now()} ━━━\n'
+      '${details.exception}\n${details.stack ?? ''}\n'
+      '━━━━━━━━━━━━━━━━━━━━━━━━',
+    );
+  };
+  // Zone 层兜底：异步未捕获异常也写日志
+  runZonedGuarded(
+    () => runApp(const MoumouApp()),
+    (error, stack) {
+      CrashLogService.appendDartLog(
+        '━━━ Zone 异常 ${DateTime.now()} ━━━\n$error\n$stack\n━━━━━━━━━━━━━━━━━━━━━━━━',
+      );
+    },
+  );
 }
 
 class MoumouApp extends StatefulWidget {

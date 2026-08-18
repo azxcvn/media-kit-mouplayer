@@ -193,7 +193,7 @@ class DeviceServices {
         video: path,
         imageFormat: ImageFormat.JPEG,
         maxWidth: maxWidth,
-        quality: 80,
+        quality: 60,
         timeMs: timeMs,
       ).timeout(
         const Duration(seconds: 4),
