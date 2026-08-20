@@ -1,0 +1,9 @@
+# GitHub 语言统计配置（linguist / .gitattributes）
+# ---------------------------------------------------------------------------
+# 第三方 Anime4K 着色器（assets/shaders/*.glsl，MIT，Copyright (c) 2019-2021
+# bloc97）是随仓库分发的 vendored 第三方资源。标记为 linguist-vendored 后，
+# GitHub 不再把 GLSL 计入仓库语言统计，Dart 即可正确显示为仓库主语言。
+assets/shaders/*.glsl linguist-vendored
+
+# 其他生成/第三方文件可按需追加，例如：
+# *.lock linguist-vendored
