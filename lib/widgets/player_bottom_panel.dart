@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/player_panel.dart' show PlayerPanelPage;
 
@@ -69,11 +70,15 @@ class PlayerBottomPanel extends StatefulWidget {
   /// 面板最大高度占屏幕比例（竖屏下避免盖满画面）
   final double maxHeightFactor;
 
+  /// 是否启用进出场/页内切换动画（工作.md 第 7 点）
+  final bool animate;
+
   const PlayerBottomPanel({
     super.key,
     required this.pages,
     required this.onClose,
     this.maxHeightFactor = 0.62,
+    this.animate = true,
   });
 
   @override
@@ -133,9 +138,14 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
                 Flexible(
                   child: AnimatedSwitcher(
                     // 进场 200ms；退场仅 80ms（reverseDuration），
-                    // 避免切换瞬间看到旧页面被点击时的水波纹残留
-                    duration: const Duration(milliseconds: 200),
-                    reverseDuration: const Duration(milliseconds: 80),
+                    // 避免切换瞬间看到旧页面被点击时的水波纹残留；
+                    // 工作.md 第 7 点：关闭播放界面动画后直接切换
+                    duration: widget.animate
+                        ? const Duration(milliseconds: 200)
+                        : Duration.zero,
+                    reverseDuration: widget.animate
+                        ? const Duration(milliseconds: 80)
+                        : Duration.zero,
                     switchInCurve: Curves.easeOutCubic,
                     switchOutCurve: Curves.easeInCubic,
                     layoutBuilder: (currentChild, previousChildren) {
@@ -214,18 +224,24 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
 /// - 底部上滑 + 淡入动画（260ms easeOutCubic）；
 /// - 遮罩点击关闭；
 /// - 路由标记为播放页（[playerRouteName]），保证播放页全屏安全区不被破坏；
-/// - 返回的 Future 在面板关闭时完成。
+/// - 返回的 Future 在面板关闭时完成；
+/// - [animate] 为 null 时跟随「播放器设置 → 启用播放界面动画」开关
+///   （工作.md 第 7 点：关闭后面板直接出现/消失）。
 Future<void> showPlayerBottomPanel(
   BuildContext context, {
   required List<PlayerPanelPage> pages,
   double maxHeightFactor = 0.62,
+  bool? animate,
 }) {
+  final withAnimation = animate ?? PlayerControlsSettings.instance.playerAnimations;
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: Colors.black.withValues(alpha: 0.45),
-    transitionDuration: const Duration(milliseconds: 260),
+    transitionDuration: withAnimation
+        ? const Duration(milliseconds: 260)
+        : Duration.zero,
     // 竖屏播放页弹出面板时仍视为播放页路由，避免 AppFrame 退出全屏（§4.3）
     routeSettings: const RouteSettings(name: playerRouteName),
     pageBuilder: (context, animation, secondaryAnimation) => Align(
@@ -233,10 +249,12 @@ Future<void> showPlayerBottomPanel(
       child: PlayerBottomPanel(
         pages: pages,
         maxHeightFactor: maxHeightFactor,
+        animate: withAnimation,
         onClose: () => Navigator.of(context).pop(),
       ),
     ),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
+      if (!withAnimation) return child;
       final curved = CurvedAnimation(
         parent: animation,
         curve: Curves.easeOutCubic,

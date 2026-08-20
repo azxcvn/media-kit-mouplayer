@@ -43,6 +43,9 @@ void main() {
     expect(s.autoNext, isTrue);
     expect(s.autoExit, isTrue);
     expect(s.loopMode, LoopMode.off);
+    // 视频方向默认自动；播放界面动画默认开启（工作.md 第 5/7 点）
+    expect(s.videoOrientation, VideoOrientationMode.auto);
+    expect(s.playerAnimations, isTrue);
   });
 
   test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
@@ -205,6 +208,32 @@ void main() {
     expect(s.loopMode, LoopMode.repeatOne);
     await s.setLoopMode(LoopMode.off);
     expect(s.loopMode, LoopMode.off);
+  });
+
+  test('视频方向：默认自动，可切换并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.videoOrientation, VideoOrientationMode.auto);
+    await s.setVideoOrientation(VideoOrientationMode.portrait);
+    expect(s.videoOrientation, VideoOrientationMode.portrait);
+    await s.load(); // 模拟重启
+    expect(s.videoOrientation, VideoOrientationMode.portrait);
+    await s.setVideoOrientation(VideoOrientationMode.landscape);
+    expect(s.videoOrientation, VideoOrientationMode.landscape);
+    await s.load();
+    expect(s.videoOrientation, VideoOrientationMode.landscape);
+    await s.setVideoOrientation(VideoOrientationMode.auto);
+    expect(s.videoOrientation, VideoOrientationMode.auto);
+  });
+
+  test('播放界面动画：默认开启，可关闭并持久化', () async {
+    final s = PlayerControlsSettings.instance;
+    expect(s.playerAnimations, isTrue);
+    await s.setPlayerAnimations(false);
+    expect(s.playerAnimations, isFalse);
+    await s.load(); // 模拟重启
+    expect(s.playerAnimations, isFalse);
+    await s.setPlayerAnimations(true);
+    expect(s.playerAnimations, isTrue);
   });
 
   test('按钮背景：默认关闭，可开关并持久化', () async {

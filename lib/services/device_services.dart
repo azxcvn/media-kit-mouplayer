@@ -122,7 +122,13 @@ class DeviceServices {
     final bucketMs = (timeMs ~/ 1000) * 1000;
     final key = '$path|$bucketMs|$maxWidth';
     final cached = _frameCache[key];
-    if (cached != null) return cached;
+    if (cached != null) {
+      // LRU（risk_audit #7）：读取时移到尾部 = 最近使用，淘汰时删头部最久未用
+      _frameCache
+        ..remove(key)
+        ..[key] = cached;
+      return cached;
+    }
     final inflight = _inflight[key];
     if (inflight != null) return inflight;
 
@@ -261,8 +267,13 @@ class DeviceServices {
   }
 
   /// Dart 侧缩略图 LRU（约 24 MB）
+  /// LinkedHashMap 按插入序维护：新帧插尾部，命中时 remove+put 移到尾部，
+  /// 淘汰时删头部（最久未用，risk_audit #7 修复——原先按「最早插入」删，
+  /// 快速来回拖动时可能淘汰掉马上要用的帧）。
   static const int _frameCacheMaxBytes = 24 * 1024 * 1024;
-  static final Map<String, Uint8List> _frameCache = {};
+  // Dart 的 Map 字面量即 LinkedHashMap（插入序）：新帧插尾部，命中时
+  // remove+put 移到尾部，淘汰时删头部（最久未用）——见上方说明。
+  static final Map<String, Uint8List> _frameCache = <String, Uint8List>{};
   static final Map<String, Future<Uint8List?>> _inflight = {};
   static int _frameCacheBytes = 0;
 

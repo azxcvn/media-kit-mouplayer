@@ -75,7 +75,10 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: HomePage(viewSettings: ViewSettings())),
     );
-    await tester.pumpAndSettle();
+    // 建树/建文件夹列表在后台 isolate（compute，risk_audit #6）执行：
+    // widget 测试的 FakeAsync 不驱动真实 isolate 通信，需 runAsync 让出
+    // 事件循环等待其完成，再 pumpAndSettle 渲染结果。
+    await _waitScan(tester);
 
     expect(find.text('授予权限'), findsNothing);
     expect(find.text('没有找到视频'), findsOneWidget);
@@ -96,10 +99,28 @@ void main() {
     mock.statuses[Permission.manageExternalStorage] = PermissionStatus.granted;
 
     await tester.tap(find.text('授予权限'));
-    await tester.pumpAndSettle();
+    await _waitScan(tester);
 
     // 授权后重新加载 → 空视频库 → 显示无视频
     expect(find.text('没有找到视频'), findsOneWidget);
     expect(find.text('授予权限'), findsNothing);
   });
+}
+
+/// 等待首页后台 isolate（compute）建树完成：
+/// 轮询（真实异步）直到出现结果或无视频提示，避免 FakeAsync 下
+/// pumpAndSettle 对未完成的 compute 永远 settle 不下来而超时。
+Future<void> _waitScan(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await tester.pump();
+      if (find.text('没有找到视频').evaluate().isNotEmpty ||
+          find.text('需要授予存储权限才能扫描视频').evaluate().isNotEmpty) {
+        break;
+      }
+    }
+  });
+  await tester.pumpAndSettle();
 }

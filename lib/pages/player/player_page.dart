@@ -72,9 +72,28 @@ class _PlayerPageState extends State<PlayerPage>
   bool _controlsVisible = true;
   Timer? _hideTimer;
   bool _playing = false;
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  Duration? _dragPosition;
+
+  // ── 播放位置/时长（risk_audit #1）────────────────────────
+  // 位置流几十毫秒来一次事件。整页 setState 会重建整棵 Stack（视频层/手势层/
+  // 顶栏/底栏/右侧按钮/中央簇…），而实际只有进度条、时间文本、常驻进度线
+  // 需要跟随。改为页面级 ValueNotifier：进度条/时间/进度线用
+  // [_progressListenable] 局部订阅只重建自身；页面级 setState 只留给低频状态
+  // （播放/暂停、控制层显隐、锁定、切集等）。
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> _durationNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration?> _dragPositionNotifier = ValueNotifier(null);
+
+  Duration get _position => _positionNotifier.value;
+  Duration get _duration => _durationNotifier.value;
+  Duration? get _dragPosition => _dragPositionNotifier.value;
+
+  /// 进度相关监听合并：底栏（进度条/时间文本）与常驻进度线局部订阅用
+  late final Listenable _progressListenable = Listenable.merge([
+    _positionNotifier,
+    _durationNotifier,
+    _dragPositionNotifier,
+  ]);
+
   double _speed = 1.0;
 
   /// 控制层显隐动画（Kazumi 风格：顶部下落 / 底部上升 / 右侧滑入 / 中央淡入）
@@ -217,6 +236,22 @@ class _PlayerPageState extends State<PlayerPage>
   /// （两者共享同一 [Player]，若都处理 completed 会重复切集）
   bool _portraitActive = false;
 
+  /// 已开始退出播放页（异步退出流程中禁止再自动 push 竖屏页，防栈错乱）
+  bool _exiting = false;
+
+  /// 页面已销毁（risk_audit #2）：dispose 置位，异步恢复/打开流程的每个
+  /// await 之后先查它，播放器销毁后的后续操作直接放弃——
+  /// 防止快速「退出→进入」循环里恢复流程继续 seek 抛
+  /// `AssertionError: [Player] has been disposed` 被全局兜底写成假崩溃日志。
+  bool _disposed = false;
+
+  /// 进入播放界面的时刻（恢复进度指示器延迟出现的基准，工作.md 第 9 点）
+  late final DateTime _entryTime = DateTime.now();
+
+  /// 恢复进度成功后的复核定时器（防 mpv 加载期把已确认的 seek 重置回开头）
+  Timer? _restoreWatchdogTimer;
+  int _restoreWatchdogAttempts = 0;
+
   @override
   void initState() {
     super.initState();
@@ -225,6 +260,13 @@ class _PlayerPageState extends State<PlayerPage>
     _title = widget.title;
     _player = Player();
     _controller = VideoController(_player);
+
+    // 工作.md 第 7 点：关闭「启用播放界面动画」后，控制层/解锁按钮
+    // 的进出场动画时长归零（forward/reverse 立即完成，直接出现/消失）
+    if (!_settings.playerAnimations) {
+      _controlsController.duration = Duration.zero;
+      _unlockController.duration = Duration.zero;
+    }
 
     // 倍速记忆：启用时恢复上次倍速
     _speed = _settings.rememberSpeed ? _settings.lastSpeed : 1.0;
@@ -236,11 +278,17 @@ class _PlayerPageState extends State<PlayerPage>
     _initDeviceState();
     _openAndSetRate();
 
-    // 默认强制横屏 + 沉浸式全屏
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    // 初始方向（工作.md 第 5 点：视频方向设置）：
+    // 锁定竖屏 → 直接竖屏；其余（自动/锁定横屏）先横屏，
+    // 「自动」会在 open 完成后按视频方向决定是否切竖屏
+    final lockPortrait =
+        _settings.videoOrientation == VideoOrientationMode.portrait;
+    SystemChrome.setPreferredOrientations(lockPortrait
+        ? [DeviceOrientation.portraitUp]
+        : [
+            DeviceOrientation.landscapeLeft,
+            DeviceOrientation.landscapeRight,
+          ]);
     _enterFullscreen();
 
     // 横屏旋转与路由转场是异步的，完成后系统栏可能被临时恢复显示；
@@ -263,14 +311,15 @@ class _PlayerPageState extends State<PlayerPage>
         });
       }),
     );
+    // 位置/时长：只更新 ValueNotifier，不再整页 setState（risk_audit #1）
     _subs.add(
       _player.stream.position.listen((p) {
-        if (mounted) setState(() => _position = p);
+        if (!_disposed && mounted) _positionNotifier.value = p;
       }),
     );
     _subs.add(
       _player.stream.duration.listen((d) {
-        if (mounted) setState(() => _duration = d);
+        if (!_disposed && mounted) _durationNotifier.value = d;
         // 恢复进度改由 _openAndSetRate（open 完成后）统一触发，
         // 避免 mpv 加载期 seek 被丢弃（历史 bug：指示器出现但进度不回位）。
         // 缩略图预热不再进入播放即触发：改为「用户第一次拖动进度条时」
@@ -291,9 +340,20 @@ class _PlayerPageState extends State<PlayerPage>
 
   /// 打开媒体后再设置倍速（media_kit 在加载完成后生效）；
   /// 随后按当前超分模式重放着色器（切换文件后 mpv 的 glsl-shaders 需重新确认）。
-  /// open 完成后恢复上次播放进度（必须在加载完成后 seek，否则被 mpv 丢弃）。
+  /// open 完成后恢复上次播放进度（必须在加载完成后 seek，否则被 mpv 丢弃），
+  /// 最后按「视频方向」设置决定是否自动进入竖屏播放。
+  ///
+  /// 防销毁竞态（risk_audit #2）：initState 发起本流程但未 await，用户可能
+  /// 在其完成前退出——每个 await 之后先查 [_disposed]/mounted，播放器已
+  /// 销毁时静默返回，避免 AssertionError 写假崩溃日志。
   Future<void> _openAndSetRate() async {
-    await _player.open(Media(_path));
+    try {
+      await _player.open(Media(_path));
+    } on AssertionError {
+      // 播放器已在打开过程中被销毁（快速退出→进入循环）：静默返回
+      return;
+    }
+    if (_disposed || !mounted) return;
     _player.setRate(_speed);
     try {
       // 超分应用（冷启动首次需拷贝着色器，可能慢/失败）不阻塞恢复进度
@@ -301,7 +361,77 @@ class _PlayerPageState extends State<PlayerPage>
     } catch (_) {
       // 忽略：超分失败不影响播放与进度恢复
     }
+    if (_disposed || !mounted) return;
     await _restoreProgressIfNeeded();
+    if (_disposed || !mounted) return;
+    await _applyVideoOrientation();
+  }
+
+  /// 视频方向（工作.md 第 5 点）：
+  /// - 锁定横屏：保持横屏（不动作）；
+  /// - 锁定竖屏：自动进入竖屏播放页（共享同一 Player，音频零中断）；
+  /// - 自动：按视频方向（宽高比）决定横/竖屏。
+  ///
+  /// 防销毁竞态（risk_audit #2）：`_isPortraitVideo` 可能等待播放器
+  /// videoParams 流，期间用户退出则播放器已销毁——抛 AssertionError 时
+  /// 静默返回，不写假崩溃日志。
+  Future<void> _applyVideoOrientation() async {
+    if (_settings.videoOrientation == VideoOrientationMode.landscape) return;
+    try {
+      final portrait =
+          _settings.videoOrientation == VideoOrientationMode.portrait ||
+              await _isPortraitVideo();
+      if (!portrait) return;
+      // 已在竖屏页（用户手动切过）或已开始退出时不再自动 push
+      if (!mounted || _portraitActive || _exiting || _disposed) return;
+      // 先切方向再进竖屏页，避免先横屏闪一下再旋转
+      await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+      await _openPortraitPlayer();
+    } on AssertionError {
+      // 播放器已被销毁（快速退出）：静默返回
+    }
+  }
+
+  /// 判断当前视频是否为竖屏（宽 < 高）。
+  /// 优先用播放列表里的分辨率（扫描时已从 MediaStore 拿到），
+  /// 缺失时等播放器上报画面尺寸（最多 2 秒），仍未知按横屏处理。
+  Future<bool> _isPortraitVideo() async {
+    final list = widget.playlist;
+    if (list != null) {
+      for (final v in list) {
+        if (v.path == _path && v.width > 0 && v.height > 0) {
+          return v.height > v.width;
+        }
+      }
+    }
+    final (w, h) = await _waitVideoSize();
+    return w > 0 && h > 0 && h > w;
+  }
+
+  /// 等待播放器上报视频尺寸（videoParams 流），最多 [timeout]。
+  /// 播放器已销毁时（快速退出）抛 AssertionError，由调用方捕获静默处理。
+  Future<(int, int)> _waitVideoSize({
+    Duration timeout = const Duration(seconds: 2),
+  }) async {
+    final w = _player.state.width;
+    final h = _player.state.height;
+    if (w != null && w > 0 && h != null && h > 0) return (w, h);
+    final completer = Completer<(int, int)>();
+    late final StreamSubscription<VideoParams> sub;
+    sub = _player.stream.videoParams.listen((p) {
+      // VideoParams 的宽高字段是 w / h（非 aspect 修正的原始尺寸）
+      if (p.w != null && p.w! > 0 && p.h != null && p.h! > 0 &&
+          !completer.isCompleted) {
+        completer.complete((p.w!, p.h!));
+      }
+    });
+    final timer = Timer(timeout, () {
+      if (!completer.isCompleted) completer.complete((0, 0));
+    });
+    final size = await completer.future;
+    timer.cancel();
+    await sub.cancel();
+    return size;
   }
 
   /// 读取系统音量/亮度作为本次会话起点：
@@ -317,14 +447,20 @@ class _PlayerPageState extends State<PlayerPage>
     _initialSystemVolume = vol;
     _volume = vol ?? 50;
     // mpv 音量固定满增益；手势改调系统音量（见 _onVerticalSwipe）
-    await _player.setVolume(100);
+    try {
+      await _player.setVolume(100);
+    } on AssertionError {
+      // 播放器已被销毁（快速退出）：后续操作放弃
+      return;
+    }
+    if (_disposed || !mounted) return;
     final brightness = await DeviceServices.getBrightness();
     if (brightness != null) {
       _brightness = brightness;
       // 锁到窗口，使屏幕显示与指示器一致（播放期间亮度不随自动亮度漂移）
       await DeviceServices.setWindowBrightness(brightness);
     }
-    if (mounted) setState(() {});
+    if (!_disposed && mounted) setState(() {});
   }
 
   /// 退出播放时恢复设备状态：
@@ -482,6 +618,7 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _togglePlay() async {
+    _cancelRestoreWatchdog();
     await _player.playOrPause();
     _resetHideTimer();
   }
@@ -877,6 +1014,7 @@ class _PlayerPageState extends State<PlayerPage>
   /// 4. 重置播放页状态与恢复指示器（新视频各自恢复自己的进度）。
   Future<void> _switchTo(String path, String title) async {
     _isSwitchingVideo = true;
+    _cancelRestoreWatchdog();
     if (mounted) {
       setState(() {
         _resumeVisible = false;
@@ -886,19 +1024,27 @@ class _PlayerPageState extends State<PlayerPage>
     _saveProgress();
     try {
       await _player.open(Media(path));
-      _player.setRate(_speed);
-      // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
-      await SuperResolutionService.instance.apply(_player);
+    } on AssertionError {
+      // 播放器已被销毁（切集过程中退出）：静默返回，不写假崩溃日志
+      return;
     } finally {
       _isSwitchingVideo = false;
+    }
+    if (_disposed || !mounted) return;
+    _player.setRate(_speed);
+    try {
+      // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
+      await SuperResolutionService.instance.apply(_player);
+    } catch (_) {
+      // 忽略：超分失败不影响播放
     }
     if (mounted) {
       setState(() {
         _path = path;
         _title = title;
-        _position = Duration.zero;
-        _duration = Duration.zero;
-        _dragPosition = null;
+        _positionNotifier.value = Duration.zero;
+        _durationNotifier.value = Duration.zero;
+        _dragPositionNotifier.value = null;
         _zoomScale = 1.0;
         _zoomOffset = Offset.zero;
         _indicator = null;
@@ -908,6 +1054,7 @@ class _PlayerPageState extends State<PlayerPage>
       // 切集：取消旧视频的缩略图预热（新视频拖动进度条时才重新预热）
       _preload.cancel();
     }
+    if (_disposed || !mounted) return;
     // 新集恢复其记忆进度（open 已完成后调用，带等待与重试兜底）
     await _restoreProgressIfNeeded();
     _resetHideTimer();
@@ -1268,9 +1415,9 @@ class _PlayerPageState extends State<PlayerPage>
             setState(() {
               _path = path;
               _title = title;
-              _position = Duration.zero;
-              _duration = Duration.zero;
-              _dragPosition = null;
+              _positionNotifier.value = Duration.zero;
+              _durationNotifier.value = Duration.zero;
+              _dragPositionNotifier.value = null;
             });
           },
           onExitPlayer: _exitWithPortrait,
@@ -1334,24 +1481,76 @@ class _PlayerPageState extends State<PlayerPage>
   /// 存在已保存进度（>0 且 < 时长）→ 恢复并显示顶部指示器。
   ///
   /// 可靠性（历史 bug：重启后"读到进度但跳不过去"）：等时长就绪 → 等播放
-  /// 真正开始（mpv 时间线激活后才接受 seek）→ seek 并用位置流确认（失败重试），
+  /// 稳定开始（mpv 时间线激活后才接受 seek）→ seek 并用位置流确认（失败重试），
   /// 见 [restorePlaybackPosition]。**只有真正恢复成功才显示指示器**。
+  ///
+  /// 工作.md 第 9 点：
+  /// - 先 await [PlaybackProgressService.ensureLoaded]，防止重启后
+  ///   进度 map 尚未从磁盘加载就读取（读到空缓存 → 不恢复）；
+  /// - 指示器在**进入播放界面 1.5 秒后**才出现（从进入时刻起算，
+  ///   恢复耗时已超过 1.5s 则恢复完成即显示）；
+  /// - 恢复成功后加一道复核防线（[_scheduleRestoreWatchdog]），
+  ///   防 mpv 加载期把已确认的 seek 重置回开头。
   Future<void> _restoreProgressIfNeeded() async {
     if (_resumeChecked) return;
     _resumeChecked = true;
-    final saved = PlaybackProgressService.instance.getProgress(_path);
+    // 记录本次恢复针对的视频：恢复流程是异步的，期间可能切集
+    //（_switchTo 会重置 _resumeChecked 并为新视频再跑一次），
+    // 用 path 区分，防止旧视频的恢复结果串到新视频上。
+    final restorePath = _path;
+    await PlaybackProgressService.instance.ensureLoaded();
+    if (_disposed || !mounted) return;
+    final saved = PlaybackProgressService.instance.getProgress(restorePath);
     if (saved == null || saved <= Duration.zero) return;
     final restored = await restorePlaybackPosition(
       _player,
       saved,
       // 看完阈值用设置（默认 95%）：达到即视为已看完，不恢复
       maxRestoreRatio: _settings.watchThreshold,
+      // dispose 后立即取消剩余重试，避免对已销毁播放器 seek
+      isCancelled: () => _disposed || !mounted,
     );
-    if (!mounted || !restored) return;
+    if (_disposed || !mounted || !restored) return;
+    // 指示器延迟出现：进入播放界面 1.5 秒后（不足则补齐等待）
+    final elapsed = DateTime.now().difference(_entryTime);
+    final wait = const Duration(milliseconds: 1500) - elapsed;
+    if (wait > Duration.zero) {
+      await Future.delayed(wait);
+    }
+    // 等待期间可能切集/退出：已切走（path 变化）或已退出（unmount）则放弃
+    if (_disposed || !mounted || !_resumeChecked || _path != restorePath) {
+      return;
+    }
     setState(() {
-      _position = saved;
+      _positionNotifier.value = saved;
       _resumeVisible = true;
     });
+    _scheduleRestoreWatchdog(saved);
+  }
+
+  /// 恢复成功后的复核防线（工作.md 第 9 点）：
+  /// 现象「指示器弹出、进度条闪到目标又回到 0」= mpv 加载期把已确认的
+  /// seek 重置回开头。1.2 秒后复核位置，若仍停留在开头（< 目标 - 3s）
+  /// 则再 seek 一次（最多 2 次）；用户手动 seek / 暂停会取消复核。
+  void _scheduleRestoreWatchdog(Duration saved) {
+    _restoreWatchdogTimer?.cancel();
+    _restoreWatchdogAttempts = 0;
+    _restoreWatchdogTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (!mounted || !_resumeVisible) return;
+      final p = _position;
+      if (p <= Duration.zero || p < saved - const Duration(seconds: 3)) {
+        if (_restoreWatchdogAttempts >= 2) return;
+        _restoreWatchdogAttempts++;
+        _player.seek(saved);
+        _scheduleRestoreWatchdog(saved); // 再复核一轮
+      }
+    });
+  }
+
+  /// 用户手动干预（拖动进度条/暂停）时取消恢复复核，避免误跳回
+  void _cancelRestoreWatchdog() {
+    _restoreWatchdogTimer?.cancel();
+    _restoreWatchdogTimer = null;
   }
 
   /// 指示器「重头开始」：seek 0 并继续播放（指示器随后自行关闭）
@@ -1422,6 +1621,8 @@ class _PlayerPageState extends State<PlayerPage>
 
   /// 退出播放器：保存进度、恢复设备状态（音量/亮度）、恢复竖屏，再返回
   Future<void> _exitPlayer() async {
+    _exiting = true;
+    _cancelRestoreWatchdog();
     _saveProgress();
     await _restoreDeviceState();
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -1440,7 +1641,11 @@ class _PlayerPageState extends State<PlayerPage>
 
   @override
   void dispose() {
+    // 先置销毁标志：异步打开/恢复/方向流程的每个 await 之后查它并放弃
+    //（risk_audit #2，防止恢复流程对已销毁播放器 seek 抛异常写假崩溃日志）
+    _disposed = true;
     WidgetsBinding.instance.removeObserver(this);
+    _cancelRestoreWatchdog();
     _hideTimer?.cancel();
     _seekFeedbackTimer?.cancel();
     _indicatorHideTimer?.cancel();
@@ -1452,6 +1657,9 @@ class _PlayerPageState extends State<PlayerPage>
     _controlsController.dispose();
     _unlockController.dispose();
     _speedNotifier.dispose();
+    _positionNotifier.dispose();
+    _durationNotifier.dispose();
+    _dragPositionNotifier.dispose();
     _preload.cancel();
     _saveProgress();
     // 兜底恢复设备状态（正常退出已走 _exitPlayer，这里防异常路径泄漏）
@@ -1460,7 +1668,10 @@ class _PlayerPageState extends State<PlayerPage>
     // 退出时强制恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _player.dispose();
+    // 异步销毁并保持引用（risk_audit #4）：Player.dispose() 是异步的，
+    // 快速「退出→进入」循环时新实例创建与旧实例销毁并行，不 await 阻塞
+    // UI 线程；Future 本身持有播放器内部引用直到销毁完成，不会被 GC 提前回收。
+    unawaited(_player.dispose());
     super.dispose();
   }
 
@@ -1565,42 +1776,47 @@ class _PlayerPageState extends State<PlayerPage>
                     position: _bottomSlide,
                     child: Align(
                       alignment: Alignment.bottomCenter,
-                      child: PlayerBottomBar(
-                        valueMs: (_dragPosition ?? _position)
-                            .inMilliseconds
-                            .toDouble(),
-                        maxMs: _duration.inMilliseconds > 0
-                            ? _duration.inMilliseconds.toDouble()
-                            : 1.0,
-                        onSeekChanged: (v) {
-                          setState(
-                            () => _dragPosition =
-                                Duration(milliseconds: v.round()),
-                          );
-                          _requestThumbnail(v.round());
-                          _resetHideTimer();
-                        },
-                        onSeekEnd: (v) {
-                          _player.seek(Duration(milliseconds: v.round()));
-                          setState(() {
-                            _dragPosition = null;
+                      // 局部订阅进度：位置/时长/拖动位置变化只重建底栏
+                      //（进度条 + 时间文本），不重建整页（risk_audit #1）
+                      child: ListenableBuilder(
+                        listenable: _progressListenable,
+                        builder: (context, _) => PlayerBottomBar(
+                          valueMs: (_dragPosition ?? _position)
+                              .inMilliseconds
+                              .toDouble(),
+                          maxMs: _duration.inMilliseconds > 0
+                              ? _duration.inMilliseconds.toDouble()
+                              : 1.0,
+                          onSeekChanged: (v) {
+                            _dragPositionNotifier.value =
+                                Duration(milliseconds: v.round());
+                            _requestThumbnail(v.round());
+                            _resetHideTimer();
+                          },
+                          onSeekEnd: (v) {
+                            _cancelRestoreWatchdog();
+                            _player.seek(Duration(milliseconds: v.round()));
+                            _dragPositionNotifier.value = null;
                             _clearThumbnail();
-                          });
-                          _resetHideTimer();
-                        },
-                        hasNext: _hasNext,
-                        onNext: _playNext,
-                        timeText: _timeText,
-                        onTimeTap: _toggleTimeMode,
-                        onSpeedTap: _openSpeedPanel,
-                        showSpeedButtonBackground:
-                            _settings.showButtonBackground,
-                        superResolutionLabel: '超分辨率',
-                        onSuperResolutionTap: _openSuperResolutionPanel,
-                        onScreenSwitchTap: _openPortraitPlayer,
-                        showScreenSwitchBackground:
-                            _settings.showButtonBackground,
-                        onPlaylistTap: _openPlaylistPanel,
+                            _resetHideTimer();
+                          },
+                          hasNext: _hasNext,
+                          onNext: _playNext,
+                          timeText: _timeText,
+                          onTimeTap: _toggleTimeMode,
+                          onSpeedTap: _openSpeedPanel,
+                          showSpeedButtonBackground:
+                              _settings.showButtonBackground,
+                          superResolutionLabel: '超分辨率',
+                          onSuperResolutionTap: _openSuperResolutionPanel,
+                          onScreenSwitchTap: _openPortraitPlayer,
+                          showScreenSwitchBackground:
+                              _settings.showButtonBackground,
+                          // 工作.md 第 4 点：列表按钮背景与倍速按钮同开关
+                          showListButtonBackground:
+                              _settings.showButtonBackground,
+                          onPlaylistTap: _openPlaylistPanel,
+                        ),
                       ),
                     ),
                   ),
@@ -1813,32 +2029,39 @@ class _PlayerPageState extends State<PlayerPage>
                       child: _ZoomRestoreChip(onTap: _resetZoom),
                     ),
                   ),
-                // 常驻进度线（设置开启且控制层隐藏时显示；锁定后不显示）
-                if (_settings.showProgressLine &&
-                    !_controlsVisible &&
-                    !_locked &&
-                    _duration > Duration.zero)
+                // 常驻进度线（设置开启且控制层隐藏时显示；锁定后不显示）。
+                // 内部局部订阅进度（risk_audit #1）：位置变化只重画这条线，
+                // 不重建整页；时长未知时先渲染空位（时长就绪后自动出现）。
+                if (_settings.showProgressLine && !_controlsVisible && !_locked)
                   Positioned(
                     left: 0,
                     right: 0,
                     bottom: 0,
                     height: 2.5,
                     child: IgnorePointer(
-                      child: Align(
-                        alignment: Alignment.bottomCenter,
-                        child: Container(
-                          height: 2.5,
-                          color: Colors.white.withValues(alpha: 0.25),
-                          alignment: Alignment.centerLeft,
-                          child: FractionallySizedBox(
-                            widthFactor: (_position.inMilliseconds /
-                                    _duration.inMilliseconds)
-                                .clamp(0.0, 1.0),
+                      child: ListenableBuilder(
+                        listenable: _progressListenable,
+                        builder: (context, _) {
+                          if (_duration <= Duration.zero) {
+                            return const SizedBox.shrink();
+                          }
+                          return Align(
+                            alignment: Alignment.bottomCenter,
                             child: Container(
-                              color: Colors.white.withValues(alpha: 0.8),
+                              height: 2.5,
+                              color: Colors.white.withValues(alpha: 0.25),
+                              alignment: Alignment.centerLeft,
+                              child: FractionallySizedBox(
+                                widthFactor: (_position.inMilliseconds /
+                                        _duration.inMilliseconds)
+                                    .clamp(0.0, 1.0),
+                                child: Container(
+                                  color: Colors.white.withValues(alpha: 0.8),
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
+                          );
+                        },
                       ),
                     ),
                   ),

@@ -31,7 +31,10 @@ class PortraitPlayerBottomBar extends StatelessWidget {
   /// 选择屏幕图标是否显示半透明圆角背景（与倍速按钮同设置）
   final bool showScreenSwitchBackground;
 
-  /// 「列表」：底部弹出播放列表面板（倍速按钮左侧，恒纯图标无背景）
+  /// 「列表」图标是否显示半透明圆角背景（工作.md 第 4 点：与倍速按钮同设置）
+  final bool showListButtonBackground;
+
+  /// 「列表」：底部弹出播放列表面板（倍速按钮左侧）
   final VoidCallback onPlaylistTap;
 
   const PortraitPlayerBottomBar({
@@ -51,6 +54,7 @@ class PortraitPlayerBottomBar extends StatelessWidget {
     required this.onScreenSwitchTap,
     required this.showScreenSwitchBackground,
     required this.onPlaylistTap,
+    this.showListButtonBackground = false,
   });
 
   @override
@@ -134,7 +138,7 @@ class PortraitPlayerBottomBar extends StatelessWidget {
                   const SizedBox(width: 6),
                   _PortraitBottomIconButton(
                     icon: Icons.playlist_play,
-                    showBackground: false,
+                    showBackground: showListButtonBackground,
                     tooltip: '播放列表',
                     onTap: onPlaylistTap,
                   ),

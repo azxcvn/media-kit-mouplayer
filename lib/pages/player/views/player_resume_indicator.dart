@@ -29,7 +29,8 @@ class PlayerResumeIndicator extends StatefulWidget {
 
 class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
     with SingleTickerProviderStateMixin {
-  static const _autoHideDelay = Duration(seconds: 5);
+  // 工作.md 第 9 点：退场时间由 5 秒缩减到 2.5 秒
+  static const _autoHideDelay = Duration(milliseconds: 2500);
 
   late final AnimationController _controller = AnimationController(
     vsync: this,

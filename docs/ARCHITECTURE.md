@@ -29,7 +29,7 @@ lib/
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         #   目录树节点（folder/video）
 │   ├── video_file.dart        #   视频文件信息
-│   ├── player_action.dart     #   播放器按钮动作（含占位入口）/ 双击手势模式枚举（倍速不在顶栏动作之列）
+│   ├── player_action.dart     #   播放器按钮动作（含占位入口）/ 双击手势模式枚举（倍速不在顶栏动作之列）/ 视频方向模式枚举（自动/锁定竖屏/锁定横屏）
 │   ├── player_loop.dart       #   循环播放模式枚举（off/列表循环/单集循环，持久化按 index）
 │   ├── playlist_sort.dart     #   播放列表排序工具：PlaylistSortMode（名称/日期 × 升/降序）+ sortVideosForPlaylist 纯函数 + folderOfPath/filterVideosInFolder 目录过滤
 │   └── super_resolution_mode.dart  # 超分模型：模式枚举（关闭+A/B/C/A+/B+/C+）+ 质量枚举（流畅/均衡/高清）+ buildAnime4KChain 纯函数
@@ -37,8 +37,8 @@ lib/
 │   ├── view_settings.dart     #   排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     #   扫描 + 建树 + 建文件夹列表
 │   ├── video_info_service.dart#   缩略图生成（跨进程，磁盘缓存）+ 基本元数据（帧率/字幕，MediaInfoLib）+ 完整媒体信息
-│   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化）
-│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设/按钮背景/进度条样式/长按倍速/音量亮度灵敏度/保存音量到系统/双指缩放/进度条缩略图/已观看进度阈值 5% 步进/自动连播/自动退出/循环播放模式，单例 + 持久化）
+│   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化；ensureLoaded 防加载竞态 + 写入串行化，见 §7）
+│   ├── player_controls_settings.dart   # 播放器控制设置（右上角槽位/手势/时长/倍速预设/按钮背景/进度条样式/长按倍速/音量亮度灵敏度/保存音量到系统/双指缩放/进度条缩略图/已观看进度阈值 5% 步进/自动连播/自动退出/循环播放模式/视频方向/播放界面动画开关，单例 + 持久化）
 │   ├── device_services.dart   #   设备能力：系统音量 / 窗口亮度 / 任意时刻抓帧（video_thumbnail_plus 包优先 + MethodChannel 兜底 + 磁盘缓存 + 最近帧内存查询）+ 画中画（isPipSupported/enterPip/setAutoPipEnabled，原生见 MainActivity.kt）
 │   ├── thumbnail_preload_service.dart # 缩略图预生成：**用户第一次拖动进度条时**才从当前位置向外预热整段缩略图（页面局部实例，切集/退出 cancel）
 │   ├── crash_log_service.dart #   崩溃日志：列表/读取/删除/清空/导出/追加 Dart 日志（原生 CrashHandler 自动记录）
@@ -48,10 +48,10 @@ lib/
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
 │   ├── app_dialog.dart        #   showAppDialog（统一弹窗动画）
-│   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/超分/更多/编辑控制栏共用）
-│   ├── player_bottom_panel.dart # ★ 竖屏播放页底部弹出面板壳 + showPlayerBottomPanel 公用入口（同 PlayerPanel 的页面栈导航，二级页就地切换）
+│   ├── player_panel.dart      #   ★ 右侧滑入面板壳 + showPlayerPanel 公用入口（倍速/超分/更多/编辑控制栏共用；animate 跟随「启用播放界面动画」开关）
+│   ├── player_bottom_panel.dart # ★ 竖屏播放页底部弹出面板壳 + showPlayerBottomPanel 公用入口（同 PlayerPanel 的页面栈导航，二级页就地切换；animate 跟随「启用播放界面动画」开关）
 │   ├── player_option_chip.dart#   面板选项胶囊（倍速预设/超分模式共用，保证视觉一致）
-│   ├── options_sheet.dart     #   showSortOptionsSheet（统一排序弹窗）
+│   ├── options_sheet.dart     #   showSortOptionsSheet（统一排序弹窗；字段选择为胶囊样式，选中主题色填充）
 │   ├── folder_card.dart       #   文件夹卡片（列表/树状共用；路径字段完整显示不省略）
 │   ├── video_card.dart        #   视频卡片（列表/树状/详情共用；时长右下+大小左下缩略图标签自动避让进度条，其余字段标签行，最右侧「i」媒体信息入口）
 │   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/Kazumi 滑杆主题）
@@ -67,14 +67,14 @@ lib/
 │   │   ├── folder_detail_page.dart    # 列表模式详情页（纯视频；搜索 + 媒体信息入口）
 │   │   └── tree_folder_page.dart      # 树状目录页（混合内容 + 面包屑；搜索 + 媒体信息入口）
 │   ├── player/
-│   │   ├── player_page.dart   #   播放页（横屏沉浸式；控制层 Kazumi 风格滑入动画；锁定后左右解锁按钮；截图；全套手势；恢复进度/自动连播/循环/退出；画中画；播放列表/更多面板（未放置功能入口）；底栏时间文本（下一集右侧，已播/总⇄已播/剩余切换）；音量手势直控系统音量；横竖屏**共享同一 Player/VideoController**（切换零中断））
+│   │   ├── player_page.dart   #   播放页（横屏沉浸式；控制层 Kazumi 风格滑入动画（可关闭）；锁定后左右解锁按钮；截图；全套手势；恢复进度/自动连播/循环/退出；画中画；播放列表/更多面板（未放置功能入口）；底栏时间文本（下一集右侧，已播/总⇄已播/剩余切换）；音量手势直控系统音量；横竖屏**共享同一 Player/VideoController**（切换零中断）；视频方向：按设置/视频方向自动进竖屏或横屏）
 │   │   ├── player_metrics.dart #  播放页人体工学对齐常量 kPlayerLeftInset（返回箭头/进度条开端/下一集/时间文本同一 x，横竖屏共用）
-│   │   ├── player_portrait_page.dart # 竖屏播放页（独立文件；**共享横屏的 Player/VideoController**——不建播放器、不 open、不恢复进度，切换只是换布局渲染同一路画面，音频零中断；顶栏返回+标题+槽位（最多 4 个）+更多 / 中央播放簇 / 底部进度条+下一集+时间；二级界面底部弹出 showPlayerBottomPanel；全套手势 PlayerGestureLayer；EOF 由本页处理（横屏 _portraitActive 让位）；退出只保存进度+pop）
+│   │   ├── player_portrait_page.dart # 竖屏播放页（独立文件；**共享横屏的 Player/VideoController**——不建播放器、不 open、不恢复进度，切换只是换布局渲染同一路画面，音频零中断；顶栏返回+标题+槽位（最多 4 个）+更多 / 中央播放簇 / 底部进度条+下一集+时间；二级界面底部弹出 showPlayerBottomPanel；全套手势 PlayerGestureLayer（锁定时仅放行单击）；EOF 由本页处理（横屏 _portraitActive 让位）；退出只保存进度+pop；锁定/解锁按钮动画与横屏一致）
 │   │   └── views/             #   播放页专属控制组件
 │   │       ├── player_top_bar.dart        # 顶栏：返回（左移 kPlayerLeftInset）+ 标题 + 5 槽位（空槽隐藏）+ 固定「更多」（图标背景可开关）
 │   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进（双三角图标）
-│   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间文本（下一集右侧，已播/总⇄已播/剩余）+ 右下角（从右到左）选择屏幕/倍速/列表/超分辨率
-│   │       ├── player_seek_bar.dart       # 自定义绘制进度条（替代 Material Slider：轨道起点精确对齐 kPlayerLeftInset，点击即跳转/拖动跟手，规避 Slider 轨道内缩与手势不稳定）
+│   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间文本（下一集右侧，已播/总⇄已播/剩余）+ 右下角（从右到左）选择屏幕/倍速/列表/超分辨率（列表按钮背景与倍速同开关）
+│   │       ├── player_seek_bar.dart       # 自定义绘制进度条（替代 Material Slider：轨道起点精确对齐 kPlayerLeftInset，点击即跳转/拖动跟手，规避 Slider 轨道内缩与手势不稳定；拇指被触摸/拖动时外圈放大反馈）
 │   │       ├── player_loop_panel.dart     # 循环播放模式面板内容（关闭/列表循环/单集循环，横屏右侧面板与竖屏底部面板共用）
 │   │       ├── player_right_actions.dart  # 右侧竖排：截图 + 锁定（固定灰黑圆角背景，不受按钮背景设置控制）
 │   │       ├── player_fit_panel.dart      # 画面比例面板（PiliPlus 同款选项：拉伸/自动/裁剪/等宽/等高/原始/限制/4:3/16:9）
@@ -85,18 +85,18 @@ lib/
 │   │       ├── player_gesture_indicator.dart  # 音量/亮度手势指示器（左侧区域，kazumi 风格垂直胶囊 + 图标 Crossfade + 缓动填充）
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（顶部：速度胶囊 + 首次提示 + 动态倍速条，倍速条 3 秒自动隐藏）
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容（4 排序胶囊一行 + 序号/文件名列表 + 当前项主题色高亮与滚动定位；排序为面板局部状态，点击项回调切集）
-│   │       ├── player_resume_indicator.dart   # 恢复进度指示器（顶部弹出：已恢复上次播放进度｜重头开始｜关闭；5 秒自动隐藏，自管理进出场动画）
+│   │       ├── player_resume_indicator.dart   # 恢复进度指示器（顶部弹出：已恢复上次播放进度｜重头开始｜关闭；2.5 秒自动隐藏，自管理进出场动画；由页面控制延迟出现）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层（目标时间 + 偏移量）
 │   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（本地视频任意时刻抓帧，16:9 + 时间胶囊）
 │   │       ├── portrait_player_top_bar.dart   # 竖屏顶栏：返回 + 标题 + 固定「更多」（返回左缘与底栏进度条/时间/下一集对齐）
-│   │       ├── portrait_player_bottom_bar.dart # 竖屏底栏（v3）：进度条 + 下一集 + 时间（下一集右侧，点击切换已播/总⇄已播/剩余）+ 右侧簇（左到右：超分→列表→倍速→选择屏幕）
+│   │       ├── portrait_player_bottom_bar.dart # 竖屏底栏（v3）：进度条 + 下一集 + 时间（下一集右侧，点击切换已播/总⇄已播/剩余）+ 右侧簇（左到右：超分→列表→倍速→选择屏幕；列表按钮背景与倍速同开关）
 │   │       └── portrait_edit_panel.dart       # 竖屏「编辑控制栏」页 + 面板动作行/小节标题（拖拽 proxyDecorator 深色高亮修复）
 │   ├── media_info/
 │   │   └── media_info_page.dart # 媒体信息页（MediaInfoLib 解析：通用/视频流/音频流/字幕流 + 一键复制）
 │   └── settings/
-│       ├── settings_page.dart #   设置主页（分组结构，可扩展；「其他」组 → 关于）
+│       ├── settings_page.dart #   设置主页（分组结构，可扩展；「播放设置」组 → 播放器设置子页；「其他」组 → 关于）
 │       ├── appearance_page.dart      # 外观设置子页
-│       ├── player_settings_page.dart # 播放器设置子页（手势组：双击/时长/灵敏度/长按倍速滑杆；播放行为组：进度线/缩略图/倍速记忆/保存音量/双指缩放/按钮背景/指示器 + 已观看阈值）
+│       ├── player_settings_page.dart # 播放器设置子页（手势组单卡片：双击/时长/灵敏度/长按倍速滑杆；视频方向组：自动/锁定竖屏/锁定横屏；播放行为组：进度线/缩略图/倍速记忆/保存音量/双指缩放/按钮背景/指示器/播放界面动画开关 + 已观看阈值）
 │       ├── about_page.dart           # 关于页（顶部卡片式软件信息：icon+名称版本+邮箱/GitHub；工具组：缓存管理/错误日志；信息组：许可证书→自定义 LicensePage）
 │       ├── license_page.dart         # 自定义许可证书页（紧凑卡片式头部：小图标+名称+版本横向排列 + LicenseRegistry 许可列表，可展开复制；替代 Flutter 内置 showLicensePage）
 │       ├── error_log_page.dart       # 错误日志页（崩溃日志列表竖向排列 + 实时查看 + 一键复制 + 导出 + 保存路径 + 清空）
@@ -110,7 +110,7 @@ lib/
     ├── natural_compare.dart   #   自然序（数字感知）比较：名称排序用
     ├── watch_state.dart       #   观看状态纯函数：classifyWatchState（未观看/观看中/已看完）+ watchPercent
     ├── playback_completion.dart # 播放完成（EOF）动作解析纯函数：单集循环/自动连播/列表循环/自动退出/自动暂停优先级链（resolveEndOfFileAction）
-    ├── playback_restore.dart  #   恢复进度可靠性工具（横竖屏共用）：等时长就绪 → 等播放开始（mpv 时间线激活才接受 seek）→ seek 并用位置流确认（waitForPlaybackStart / waitForPositionReaching / restorePlaybackPosition）
+    ├── playback_restore.dart  #   恢复进度可靠性工具（横竖屏共用）：等时长就绪 → 等播放稳定开始（mpv 时间线激活才接受 seek）→ seek 并用位置流确认 + 稳定复查（waitForPlaybackStart / waitForPositionReaching / restorePlaybackPosition）
     ├── pip_aspect.dart         #   画中画宽高比纯函数：pipAspectRatio（gcd 约分 + 0.5–2.39 钳制，未知尺寸回退 16:9）
     └── player_gestures.dart   #   双击手势判定 + 滑动手势数学（seek 灵敏度/音量·亮度增量/动态倍速档位，纯函数，可单测）
 ```
@@ -138,8 +138,9 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认关闭）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）** 属 `PlayerControlsSettings`
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认关闭）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
+- 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
 - **禁止**：新增全局 `ValueNotifier` hack / 全局可变单例来跨页面通信
   - 反例教训：曾经的 `fullscreen_state.dart` 全局 `playerActive`，靠页面手动置位影响全局布局，引发连锁补丁 → 已重构为 `AppFrameObserver`（§4.3）
@@ -172,7 +173,7 @@ models（模型）     → 无依赖（纯数据）
 ### 4.5 弹窗 / 面板
 
 - **所有弹窗统一用** `showAppDialog`（`lib/utils/app_dialog.dart`，缩放 + 淡入动画），**不要**直接 `showDialog`
-- **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 超分 / 画面比例 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context
+- **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 超分 / 画面比例 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context。`showPlayerPanel` / `showPlayerBottomPanel` 的 `animate` 参数（默认 null = 跟随「播放器设置 → 启用播放界面动画」开关）控制进出场与页内切换动画
 - **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音轨等后续功能）的，**横屏一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；**竖屏播放页（`player_portrait_page.dart`）一律使用 `showPlayerBottomPanel` 底部弹出外壳**（`lib/widgets/player_bottom_panel.dart`，底部上滑 + 淡入，Material 外壳，面板内页面栈 `PlayerBottomPanelNavigator`）。两种外壳的面板内容组件（倍速/超分/画面比例/编辑控制栏）共用同一份数据与交互逻辑，只换容器。面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
   - `hasFolders` / `hasVideos` 按页面内容动态传（纯文件夹页、纯视频页、混合页自动区分区块）
@@ -249,7 +250,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 1. 设置主页 `settings_page.dart` 已有分组结构：`SettingsGroupTitle(title: '分组名')` + `SettingsCard(child: SettingsTile(...))`
 2. 新分组直接追加；新设置子页参考 `appearance_page.dart`（`AppBar` + 分组列表）
 3. 设置项 UI 组件复用 `lib/widgets/settings_ui.dart`（`SettingsGroupTitle / SettingsCard / SettingsTile / SettingsRadioTile`）
-4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/自动连播/播放完毕自动退出/循环播放模式（RadioTile 三选一：关闭/列表循环/单集循环）/倍速播放指示器（组内每项之间用 `Divider(height:1, indent:16, endIndent:16)` 分隔）；「已观看进度阈值」独立滑杆组（5% – 100%，步进 5%，默认 95%）
+4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆（**全部归为一张卡片**，项间 `Divider(height:1, indent:16, endIndent:16)` 分隔）；**视频方向**组 = 自动/锁定竖屏/锁定横屏（RadioTile 三选一）；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/自动连播/播放完毕自动退出/循环播放模式（RadioTile 三选一：关闭/列表循环/单集循环）/倍速播放指示器/启用播放界面动画（组内每项之间用 `Divider(height:1, indent:16, endIndent:16)` 分隔）；「已观看进度阈值」独立滑杆组（5% – 100%，步进 5%，默认 95%）
 
 ### 5.4 新增模型字段
 
@@ -282,7 +283,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
   - `test/super_resolution_service_test.dart` — 超分服务状态/持久化（模式、质量、记忆开关的开启/关闭/load 恢复）
   - `test/app_frame_test.dart` — AppFrame 安全区行为 + 播放页路由检测（**安全区/播放页回归测试，改 AppFrame 必须跑**）
   - `test/home_page_permission_test.dart` — 权限流程（未授权 → 授予权限 → 授权扫描）
-  - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位增删/排序/上限/时长档位/倍速预设/按钮背景/进度条样式/长按倍速/灵敏度/保存音量到系统/指示器开关/首次提示/双指缩放/自动连播/自动退出/循环模式/已观看阈值 5% 档位/旧数据迁移；倍速不在顶栏动作之列）
+  - `test/player_controls_settings_test.dart` — 播放器控制设置（槽位增删/排序/上限/时长档位/倍速预设/按钮背景/进度条样式/长按倍速/灵敏度/保存音量到系统/指示器开关/首次提示/双指缩放/自动连播/自动退出/循环模式/已观看阈值 5% 档位/视频方向/播放界面动画开关/旧数据迁移；倍速不在顶栏动作之列）
   - `test/player_gestures_test.dart` — 双击手势三模式判定（含边界）+ 滑动手势数学（seek 灵敏度/音量·亮度增量/动态倍速档位与索引/最近档位）
   - `test/player_panel_test.dart` — 右侧面板打开/面板内导航不崩溃（**改 PlayerPanel 必须跑**）
   - `test/player_bottom_panel_test.dart` — 竖屏底部面板打开/面板内二级导航/返回/关闭不崩溃（**改 PlayerBottomPanel 必须跑**）
@@ -347,10 +348,22 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 | 关于页跳转邮件/GitHub | Android 11+ 包可见性：未声明 `<queries>` 时 `canLaunchUrl` 恒 false | AndroidManifest 声明 `mailto`（ACTION_SENDTO）与 `https`（ACTION_VIEW）查询；GitHub 地址留空时点击提示「待接入」 |
 | 音量手势被系统音量"封顶" | 进入播放把系统音量（如 20%）设为 mpv 起始音量 → 手势调到 100% 实际输出仍只有系统 20%（mpv 增益受系统上限约束），用户感知"音量调不上去" | **v3 改语义：音量手势直控系统媒体音量（真实响度），mpv 音量固定 100（0dB）**；退出时「保存到系统」开=保持、关=恢复进入前值（`_initDeviceState` / `_onVerticalSwipe` / `_restoreDeviceState`，横竖屏一致） |
 | Material Slider 轨道起点无法精确对齐 | Slider 轨道默认内缩（thumb/overlay 半径，约 14px），`Slider.padding` 只移整体不修正轨道起点 → 进度条起点比时间/下一集/返回靠右，且内缩区点击被钳制到 0（"拖动没反应"） | **自绘进度条 `player_seek_bar.dart`（替代 Slider）**：轨道起点精确落在 `kPlayerLeftInset`，点击即跳转、拖动跟手；勿改回 Slider |
-| 恢复进度重启后失效 | 冷启动 mpv 初始化慢（时长未及时就绪）/ 超分着色器首次拷贝失败 → 恢复逻辑提前返回；**加载窗口内 seek 被 mpv 静默丢弃**（"读到进度但跳不过去"） | `restorePlaybackPosition`（`utils/playback_restore.dart`）：超分 apply 包 try/catch 不阻塞；等时长就绪（15s）→ **等播放开始（首个 position>0 事件，时间线激活 mpv 才接受 seek）** → seek 并用位置流确认（失败重试 3 次）；**只有真正恢复成功才显示指示器**（横竖屏/切集统一） |
+| 恢复进度重启后失效 | 冷启动 mpv 初始化慢（时长未及时就绪）/ 超分着色器首次拷贝失败 → 恢复逻辑提前返回；**加载窗口内 seek 被 mpv 静默丢弃**（"读到进度但跳不过去"） | `restorePlaybackPosition`（`utils/playback_restore.dart`）：超分 apply 包 try/catch 不阻塞；等时长就绪（15s）→ **等播放稳定开始（位置推进 ≥0.5s，时间线激活 mpv 才接受 seek）** → seek 并用位置流确认（失败重试 3 次）→ **稳定复查（seek 后再等 600ms 确认位置仍停留在目标附近，防加载期重置）**；**只有真正恢复成功才显示指示器**（横竖屏/切集统一） |
 | 循环播放"无限恢复已看完视频" | loopAll 循环回已播完的视频时，恢复逻辑读到 EOF 时 `_markCompleted` 存的 100% 进度 → seek 到结尾 → 立即触发 EOF → 无限跳集 | 恢复阈值 `shouldRestorePosition`（`utils/playback_restore.dart`）：进度 <5% 或 ≥「已观看进度阈值」（默认 95%）不恢复；EOF 循环回的视频从 0 开始（测试 `playback_restore_test.dart`） |
 | 横竖屏切换"卡顿/黑屏/音频断" | 旧方案竖屏页**自建第二个 Player**：切换即暂停旧播放器 + 新建播放器 open + 重新加载 → 黑屏、音频断裂、重载布局 | **v3 重构：横竖屏共享同一 Player/VideoController**（KT 项目同款）——竖屏页只换布局渲染同一路画面，不建播放器、不 open、不恢复进度；切换音频零中断、无黑屏；竖屏页 EOF 处理 completed（横屏 `_portraitActive` 让位防重复切集）；退出只保存进度+pop，方向/系统 UI/设备状态由横屏页统一恢复 |
 | 竖屏顶栏槽位溢出 | 5 个槽位 + 返回 + 更多在竖屏窄屏放不下 | 竖屏顶栏最多渲染 4 个（`PortraitPlayerTopBar.maxPortraitSlots`），竖屏编辑面板添加上限同步为 4；多余的仍在「更多 → 已启用动作」可触发 |
+| 恢复进度"跳到又跳回" | 快速"退出→进入"循环或重启后：指示器弹出、进度条闪到目标又回到 0——mpv 加载期把**已确认的 seek** 重置回开头（时间线未真正稳定）；另：`PlaybackProgressService` 的 `load()` 是异步的，播放页早读进度会读到空缓存；多次 `save()` 的 prefs 写入可能乱序，最后一次保存被旧快照覆盖 | 恢复流程三重加固（`playback_restore.dart`）：等位置推进 ≥0.5s 才 seek → seek 确认后再等 600ms 复查位置仍停留目标附近（被重置则重试）→ 播放页 `_scheduleRestoreWatchdog` 在指示器出现 1.2s 后再复核一次；`PlaybackProgressService`：`ensureLoaded()`（get/save 前等待加载完成）+ `_writeChain` 串行化写入；指示器改为**进入播放界面 1.5s 后**出现、2.5s 自动隐藏 |
+| 竖屏锁定不生效 | 竖屏页 `PlayerGestureLayer` 硬编码 `locked: false`，且手势回调无锁定拦截 → 锁定后双击/滑动/长按仍可用 | 竖屏页传 `locked: _locked` 给手势层，各手势回调补 `if (_locked) return`；解锁按钮进出场动画改为与横屏一致的 `_unlockController` 左右滑入滑出 |
+| 底栏列表按钮无背景 | 「按钮背景」开关只作用于倍速/选择屏幕，列表按钮恒纯图标（视觉不一致） | 底栏/竖屏底栏的列表按钮新增 `showListButtonBackground`，与倍速按钮同设置（横竖屏播放页均传 `showButtonBackground`） |
+| 播放页整页随位置流高频重建 | 位置流几十毫秒来一次事件，每次 `setState` 重建整棵 Stack（视频层/手势层/控制层…），低端机+开超分时掉帧 | 横竖屏播放页 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏（进度条/时间文本）与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面 `setState` 只留给低频状态（§4.1，risk_audit #1） |
+| 快速"退出→进入"循环刷假崩溃日志 | 播放器销毁后异步恢复流程继续 seek → `AssertionError: [Player] has been disposed`（media_kit 销毁后一切方法都抛，debug/release 一致）→ 被 runZonedGuarded 兜底写进崩溃日志 | 播放页加 `_disposed` 标志（dispose 置位），`_openAndSetRate`/`_switchTo`/`_initDeviceState`/`_applyVideoOrientation`/`_restoreProgressIfNeeded` 每个 await 后查 `_disposed`/`mounted` 放弃；`restorePlaybackPosition` 加 `isCancelled` 回调 + 整体 `on AssertionError` 兜底静默返回 false（risk_audit #2） |
+| 播放进度表每次全量序列化 | 每退出/切集一次就整表 jsonEncode + 全量写盘（视频库几千条后数 MB） | `PlaybackProgressService.save` 节流：同一视频 30 秒内只落盘一次（内存照常更新，`_lastPersistedAt` 记录），写入仍走 `_writeChain` 串行化（risk_audit #3） |
+| 列表卡片并发拉媒体元数据 | 列表首屏每张卡片独立跨进程请求帧率/字幕（MediaInfoLib），无去重 | `VideoInfoService.get`/`getBasicMetadata` 在飞去重：同 path 共享同一 Future（参考 `DeviceServices._inflight`）（risk_audit #5） |
+| 扫描/建树 UI 线程卡顿 | MediaStore 查询异步，但排序/建树/聚合同步在 UI 线程跑，几千条视频首屏卡顿 | `home_page._load` 的 `buildTree`/`buildFolderList` 改 `compute()` 后台 isolate 并行；widget 测试（FakeAsync）不驱动真实 isolate 通信，权限测试扫描用例需 `runAsync` 等待（risk_audit #6） |
+| 崩溃日志无限累积 | 原生 CrashHandler + Dart 钩子只增不减（配合假崩溃更严重） | 上限 50 条 / 10MB：Dart `appendDartLog` 后 `_trimLogsIfNeeded` 删最旧；原生 `CrashHandler.saveCrashLog` 写完后 `trimLogs()` 同上限裁剪（risk_audit #8） |
+| 设置单例 load 竞态 | 启动 `load()` 异步读盘，加载完成前改设置理论上会被 load 覆盖 | `PlayerControlsSettings.ensureLoaded()`（`_loadFuture ??= load()`），main 改调 `ensureLoaded()`，全部 setter 首行 `await ensureLoaded()`（在早退判断之前）；`load()` 不做永久 `_loaded` 门禁（测试模拟重启需重复读盘）（risk_audit #9） |
+| 播放界面动画无法关闭 | 控制层/面板进出场动画写死时长，用户无法关闭 | 「启用播放界面动画」设置（默认开）：横屏置 `_controlsController/_unlockController.duration = 0`，竖屏 AnimatedSlide/AnimatedOpacity 时长归零，`showPlayerPanel/showPlayerBottomPanel` 的 `animate=false` 时转场与页内切换零时长 |
+| 排序字段胶囊 | 排序弹窗字段选择原用 FilterChip（正方形圆角背景），与倍速面板胶囊视觉不一致 | `options_sheet.dart` 字段选择改为胶囊样式（选中主题色填充、未选中表面色、圆角 18）；文件夹字段 Wrap 内自适应宽度，视频字段行内等宽撑满（`_capsuleChip` 的 `fillWidth`） |
 
 ---
 

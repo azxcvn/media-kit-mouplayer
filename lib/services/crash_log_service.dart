@@ -102,8 +102,14 @@ class CrashLogService {
     }
   }
 
+  /// 日志上限（risk_audit #8）：数量 ≤ [maxLogCount] 且总大小 ≤
+  /// [maxLogBytes]，追加日志后超限自动删除最旧（防假崩溃/长期使用累积）。
+  static const int maxLogCount = 50;
+  static const int maxLogBytes = 10 * 1024 * 1024; // 10 MB
+
   /// Dart 侧未捕获异常 → 追加到崩溃日志目录（flutter_*.log）。
   /// 供 main() 的 FlutterError / Zone 钩子调用（失败静默，不影响运行）。
+  /// 追加后顺带做一次自动裁剪（删除最旧日志，见 [_trimLogsIfNeeded]）。
   static Future<void> appendDartLog(String content) async {
     try {
       await _channel.invokeMethod<void>(
@@ -112,6 +118,27 @@ class CrashLogService {
       );
     } catch (_) {
       // 静默：日志记录失败不阻塞应用
+    }
+    await _trimLogsIfNeeded();
+  }
+
+  /// 自动裁剪：日志数量/总大小超上限时删除最旧的。
+  /// [listLogs] 已按修改时间倒序（最新在前），从尾部删最旧即可。
+  static Future<void> _trimLogsIfNeeded() async {
+    try {
+      final logs = await listLogs();
+      if (logs.isEmpty) return;
+      var totalBytes = 0;
+      for (final l in logs) {
+        totalBytes += l.size;
+      }
+      while (logs.length > maxLogCount || totalBytes > maxLogBytes) {
+        final oldest = logs.removeLast();
+        totalBytes -= oldest.size;
+        await deleteLog(oldest.path);
+      }
+    } catch (_) {
+      // 静默：裁剪失败不影响运行
     }
   }
 }

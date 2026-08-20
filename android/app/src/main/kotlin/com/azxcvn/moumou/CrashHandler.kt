@@ -95,10 +95,39 @@ class CrashHandler private constructor(private val context: Context) :
             }
 
             Log.e(TAG, "崩溃日志已保存: ${logFile.absolutePath}")
+            trimLogs()
             logFile
         } catch (e: Exception) {
             Log.e(TAG, "保存崩溃日志失败", e)
             null
+        }
+    }
+
+    /**
+     * 自动裁剪（risk_audit #8）：日志数量 ≤ 50 且总大小 ≤ 10MB，
+     * 超过上限删除最旧的（按修改时间），防止日志无限累积。
+     * 与 Dart 侧 appendDartLog 后的裁剪共用同一上限语义。
+     */
+    private fun trimLogs() {
+        try {
+            val dir = logDir(context)
+            if (!dir.exists() || !dir.isDirectory) return
+            val files = dir.listFiles()
+                ?.filter { it.isFile && (it.name.endsWith(".txt") || it.name.endsWith(".log")) }
+                ?.sortedBy { it.lastModified() } // 最旧在前
+                ?: return
+            val maxCount = 50
+            val maxBytes = 10L * 1024 * 1024 // 10 MB
+            var total = files.sumOf { it.length() }
+            var i = 0
+            while (i < files.size && (files.size - i > maxCount || total > maxBytes)) {
+                val f = files[i]
+                val len = f.length()
+                if (f.delete()) total -= len
+                i++
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "裁剪崩溃日志失败", e)
         }
     }
 

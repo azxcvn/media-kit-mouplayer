@@ -34,10 +34,29 @@ class VideoInfoService {
   /// 基本元数据内存缓存（帧率 / 字幕）
   static final Map<String, VideoBasicMetadata> _metaCache = {};
 
+  /// 在飞去重：同 path 的并发请求共享同一个 Future（列表首屏几十张卡片
+  /// 同时发起时只发一次跨进程调用，见 risk_audit #5）
+  static final Map<String, Future<VideoInfo>> _inflight = {};
+
+  /// 基本元数据在飞去重（同上）
+  static final Map<String, Future<VideoBasicMetadata>> _metaInflight = {};
+
   static Future<VideoInfo> get(String path) async {
     final cached = _cache[path];
     if (cached != null) return cached;
+    final inflight = _inflight[path];
+    if (inflight != null) return inflight;
 
+    final future = _fetchInfo(path);
+    _inflight[path] = future;
+    try {
+      return await future;
+    } finally {
+      _inflight.remove(path);
+    }
+  }
+
+  static Future<VideoInfo> _fetchInfo(String path) async {
     final result = await _channel
         .invokeMapMethod<String, dynamic>('getVideoInfo', {'path': path});
     final info = VideoInfo(
@@ -53,7 +72,19 @@ class VideoInfoService {
   static Future<VideoBasicMetadata> getBasicMetadata(String path) async {
     final cached = _metaCache[path];
     if (cached != null) return cached;
+    final inflight = _metaInflight[path];
+    if (inflight != null) return inflight;
 
+    final future = _fetchBasicMetadata(path);
+    _metaInflight[path] = future;
+    try {
+      return await future;
+    } finally {
+      _metaInflight.remove(path);
+    }
+  }
+
+  static Future<VideoBasicMetadata> _fetchBasicMetadata(String path) async {
     try {
       final result = await _channel
           .invokeMapMethod<String, dynamic>('getVideoBasicMetadata', {

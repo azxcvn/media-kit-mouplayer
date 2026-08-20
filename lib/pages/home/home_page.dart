@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:moumou/models/tree_node.dart';
 import 'package:moumou/models/video_file.dart';
@@ -73,8 +74,15 @@ class _HomePageState extends State<HomePage>
     // 刷新时清缓存，重新查询 MediaStore（否则新增/删除的视频不生效）
     VideoScanner.clearCache();
     final videos = await VideoScanner.scanVideos();
-    final roots = VideoScanner.buildTree(videos); // 树状模式：完整目录树
-    final folders = VideoScanner.buildFolderList(videos); // 列表模式：含直接视频的文件夹
+    // 建树 / 建文件夹列表移到后台 isolate（compute）执行：排序、建树、聚合
+    // 是同步纯函数，视频量几千条时在 UI 线程跑会有几十毫秒级卡顿
+    // （risk_audit #6）。TreeNode/VideoFile 均为纯数据（String/int/DateTime/
+    // List），可跨 isolate 传输；两条计算并行发起的独立 isolate。
+    final rootsFuture = compute(VideoScanner.buildTree, videos); // 树状模式：完整目录树
+    final foldersFuture =
+        compute(VideoScanner.buildFolderList, videos); // 列表模式：含直接视频的文件夹
+    final roots = await rootsFuture;
+    final folders = await foldersFuture;
     if (!mounted) return;
     setState(() {
       _roots = roots;

@@ -43,12 +43,12 @@ class SettingsPage extends StatelessWidget {
                   },
                 ),
               ),
-              // ── 播放器 ──────────────────────────────
-              const SettingsGroupTitle(title: '播放器'),
+              // ── 播放设置（工作.md 第 6 点：原「播放器」改名）──
+              const SettingsGroupTitle(title: '播放设置'),
               SettingsCard(
                 child: SettingsTile(
                   icon: Icons.play_circle_outline,
-                  title: '播放器',
+                  title: '播放设置',
                   subtitle: const Text('调整播放相关设置'),
                   onTap: () {
                     Navigator.of(context).push(

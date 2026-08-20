@@ -58,7 +58,10 @@ class _MoumouAppState extends State<MoumouApp> {
     _themeController.load();
     _viewSettings.load();
     PlaybackProgressService.instance.load();
-    PlayerControlsSettings.instance.load();
+    // 用 ensureLoaded 而非 load：setter 侧的 ensureLoaded 与这里共享同一
+    // load Future，防止「启动加载未完成、用户已改设置被 load 覆盖」的竞态
+    // （risk_audit #9）
+    PlayerControlsSettings.instance.ensureLoaded();
     SuperResolutionService.instance.load();
   }
 

@@ -89,7 +89,8 @@ class PlayerPortraitPage extends StatefulWidget {
   State<PlayerPortraitPage> createState() => _PlayerPortraitPageState();
 }
 
-class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
+class _PlayerPortraitPageState extends State<PlayerPortraitPage>
+    with TickerProviderStateMixin {
   late final Player _player;
   late final VideoController _controller;
   final PlayerControlsSettings _settings = PlayerControlsSettings.instance;
@@ -97,9 +98,26 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   late String _path;
   late String _title;
   bool _playing = false;
-  Duration _position = Duration.zero;
-  Duration _duration = Duration.zero;
-  Duration? _dragPosition;
+
+  // ── 播放位置/时长（risk_audit #1）────────────────────────
+  // 与横屏页同款：位置流高频更新只走 ValueNotifier，底栏（进度条/时间文本）
+  // 用 [_progressListenable] 局部订阅只重建自身，页面级 setState 只留给
+  // 低频状态（播放/暂停、控制层显隐、锁定、切集等）。
+  final ValueNotifier<Duration> _positionNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration> _durationNotifier = ValueNotifier(Duration.zero);
+  final ValueNotifier<Duration?> _dragPositionNotifier = ValueNotifier(null);
+
+  Duration get _position => _positionNotifier.value;
+  Duration get _duration => _durationNotifier.value;
+  Duration? get _dragPosition => _dragPositionNotifier.value;
+
+  /// 进度相关监听合并：底栏（进度条/时间文本）局部订阅用
+  late final Listenable _progressListenable = Listenable.merge([
+    _positionNotifier,
+    _durationNotifier,
+    _dragPositionNotifier,
+  ]);
+
   double _speed = 1.0;
 
   /// 实际倍速的监听器：倍速底部面板通过它实时刷新
@@ -148,7 +166,21 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   /// 控制层是否锁定（锁定后隐藏全部控制；左右两侧出现解锁按钮，
   /// 单击屏幕可呼出/隐藏解锁按钮——与横屏一致）
   bool _locked = false;
-  bool _unlockVisible = false;
+
+  /// 解锁按钮显隐动画（工作.md 第 8 点：与横屏一致——锁定后从左右两侧
+  /// 滑入，单击屏幕切换呼出/隐藏，解锁时滑出）
+  late final AnimationController _unlockController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 250),
+  );
+  late final Animation<Offset> _leftUnlockSlide = Tween<Offset>(
+    begin: const Offset(-1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _unlockController, curve: Curves.easeInOut));
+  late final Animation<Offset> _rightUnlockSlide = Tween<Offset>(
+    begin: const Offset(1, 0),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _unlockController, curve: Curves.easeInOut));
 
   /// 当前视口尺寸（手势计算用，build 时更新）
   double _viewportWidth = 0;
@@ -176,11 +208,17 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
     _path = widget.initialPath;
     _title = widget.initialTitle;
 
+    // 工作.md 第 7 点：关闭「启用播放界面动画」后，控制层/解锁按钮
+    // 的进出场动画时长归零（直接出现/消失）
+    if (!_settings.playerAnimations) {
+      _unlockController.duration = Duration.zero;
+    }
+
     // 从共享播放器**当前状态**初始化（media_kit 流是广播流，迟订阅不会重放
     // 当前值；暂停/静置时无新事件——必须读 state，否则位置/时长/播放态
     // 显示为 0/错误，进度条呈"已播完"样式）
-    _position = _player.state.position;
-    _duration = _player.state.duration;
+    _positionNotifier.value = _player.state.position;
+    _durationNotifier.value = _player.state.duration;
     _playing = _player.state.playing;
 
     // 倍速展示：跟随共享播放器当前设置（不 setRate，横屏已应用）
@@ -208,14 +246,15 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
         });
       }),
     );
+    // 位置/时长：只更新 ValueNotifier，不再整页 setState（risk_audit #1）
     _subs.add(
       _player.stream.position.listen((p) {
-        if (mounted) setState(() => _position = p);
+        if (mounted) _positionNotifier.value = p;
       }),
     );
     _subs.add(
       _player.stream.duration.listen((d) {
-        if (mounted) setState(() => _duration = d);
+        if (mounted) _durationNotifier.value = d;
       }),
     );
     // 播放完成（EOF）：共享播放器，本页在栈顶期间负责处理
@@ -265,9 +304,14 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   }
 
   void _toggleControls() {
-    // 锁定时单击：呼出/隐藏左右解锁按钮（与横屏一致）
+    // 锁定时单击：呼出/隐藏左右解锁按钮（与横屏一致，带滑入滑出动画）
     if (_locked) {
-      setState(() => _unlockVisible = !_unlockVisible);
+      if (_unlockController.status == AnimationStatus.forward ||
+          _unlockController.status == AnimationStatus.completed) {
+        _unlockController.reverse();
+      } else {
+        _unlockController.forward();
+      }
       return;
     }
     final visible = !_controlsVisible;
@@ -282,18 +326,18 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   // ── 锁定 / 解锁 ─────────────────────────────────────────
 
   void _toggleLock() {
-    setState(() {
-      _locked = !_locked;
-      if (_locked) {
-        _unlockVisible = false;
-        _controlsVisible = false;
-        _hideTimer?.cancel();
-      } else {
-        _unlockVisible = false;
-        _controlsVisible = true;
-        _resetHideTimer();
-      }
-    });
+    setState(() => _locked = !_locked);
+    if (_locked) {
+      // 锁定：隐藏全部控制，左右滑入解锁按钮（与横屏一致）
+      _hideTimer?.cancel();
+      _controlsVisible = false;
+      _unlockController.forward();
+    } else {
+      // 解锁：解锁按钮滑出，恢复控制层（与横屏一致）
+      _unlockController.reverse();
+      _controlsVisible = true;
+      _resetHideTimer();
+    }
   }
 
   void _unlock() => _toggleLock();
@@ -354,8 +398,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
     _resetHideTimer();
   }
 
-  /// 双击手势（暂停 / 左退右进 / 混合，跟随设置）
+  /// 双击手势（暂停 / 左退右进 / 混合，跟随设置；锁定时拦截）
   void _handleDoubleTap(double dx, double width) {
+    if (_locked) return; // 锁定状态拦截双击手势，防误触
     final gesture = classifyDoubleTap(dx, width, _settings.doubleTapMode);
     switch (gesture) {
       case DoubleTapGesture.pauseToggle:
@@ -393,6 +438,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   }
 
   void _onVerticalSwipe(double dyDelta, bool isLeftHalf) {
+    if (_locked) return; // 锁定时拦截手势（工作.md 第 8 点 bug 修复）
     if (_viewportHeight <= 0) return;
     if (isLeftHalf) {
       // 左侧：亮度（直控窗口亮度；退出恢复由横屏页统一处理）
@@ -435,6 +481,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   }
 
   void _onSwipeStart() {
+    if (_locked) return; // 锁定时拦截手势（工作.md 第 8 点 bug 修复）
     _swipeSeekStart = _position;
     _volumeAccum = 0;
     _brightnessAccum = 0;
@@ -442,7 +489,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   }
 
   void _onHorizontalSwipe(double totalDx) {
-    if (_duration <= Duration.zero) return;
+    if (_locked || _duration <= Duration.zero) return;
     final target = swipeSeekTarget(
       _swipeSeekStart,
       totalDx,
@@ -478,6 +525,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   // ── 长按倍速 ───────────────────────────────────────────
 
   void _onLongPressStart(Offset pos) {
+    if (_locked) return; // 锁定时拦截长按倍速（工作.md 第 8 点 bug 修复）
     _speedBeforeLongPress = _speed;
     _longPressStartPos = pos;
     _longPressSpeed = _settings.longPressSpeed;
@@ -495,7 +543,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
 
   void _onLongPressUpdate(Offset pos) {
     final start = _longPressStartPos;
-    if (start == null || !_longPressing) return;
+    if (start == null || !_longPressing || _locked) return;
     if (_viewportWidth <= 0) return;
     final presets = dynamicSpeedPresets();
     final dx = pos.dx - start.dx;
@@ -552,25 +600,34 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
     _saveProgress();
     try {
       await _player.open(Media(path));
-      _player.setRate(_speed);
-      // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
-      await SuperResolutionService.instance.apply(_player);
+    } on AssertionError {
+      // 共享播放器已被销毁（横屏页已退出）：静默返回，不写假崩溃日志
+      return;
     } finally {
       _isSwitchingVideo = false;
+    }
+    if (!mounted) return;
+    _player.setRate(_speed);
+    try {
+      // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
+      await SuperResolutionService.instance.apply(_player);
+    } catch (_) {
+      // 忽略：超分失败不影响播放
     }
     if (mounted) {
       setState(() {
         _path = path;
         _title = name;
-        _position = Duration.zero;
-        _duration = Duration.zero;
-        _dragPosition = null;
+        _positionNotifier.value = Duration.zero;
+        _durationNotifier.value = Duration.zero;
+        _dragPositionNotifier.value = null;
         _indicator = null;
         _swipeSeekData = null;
       });
     }
     // 通知横屏页同步最新 path/title（共享播放器，横屏侧状态必须跟随）
     widget.onVideoChanged?.call(path, name);
+    if (!mounted) return;
     // 新集恢复其记忆进度（<30s 短视频不恢复，与横屏语义一致）
     await _restoreProgressForNewVideo();
     _resetHideTimer();
@@ -579,6 +636,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
   /// 恢复新集记忆进度（仅切集时调用；进入竖屏页本身不恢复——同一会话）。
   /// 短视频（<30s）不恢复（参考 src loadVideo）；看完阈值用设置。
   Future<void> _restoreProgressForNewVideo() async {
+    await PlaybackProgressService.instance.ensureLoaded();
+    if (!mounted) return;
     final saved = PlaybackProgressService.instance.getProgress(_path);
     if (saved == null || saved <= Duration.zero) return;
     if (_player.state.duration > Duration.zero &&
@@ -589,6 +648,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
       _player,
       saved,
       maxRestoreRatio: _settings.watchThreshold,
+      // 页面销毁后取消剩余重试（risk_audit #2，共享播放器被横屏页销毁时防异常）
+      isCancelled: () => !mounted,
     );
   }
 
@@ -861,12 +922,24 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
       s.cancel();
     }
     _speedNotifier.dispose();
+    _unlockController.dispose();
+    _positionNotifier.dispose();
+    _durationNotifier.dispose();
+    _dragPositionNotifier.dispose();
     _saveProgress();
     // 注意：不 dispose 播放器/控制器、不恢复设备状态——横屏页持有
     super.dispose();
   }
 
   String _fmt(Duration d) => formatDuration(d.inMilliseconds);
+
+  /// 控制层滑入动画时长（工作.md 第 7 点：关闭「启用播放界面动画」后归零）
+  Duration get _controlsAnimDuration =>
+      _settings.playerAnimations ? const Duration(milliseconds: 250) : Duration.zero;
+
+  /// 控制层淡入动画时长（同上）
+  Duration get _controlsFadeDuration =>
+      _settings.playerAnimations ? const Duration(milliseconds: 200) : Duration.zero;
 
   /// 时间文本：「已播放/总时长」⇄「已播放/剩余时长」（点击切换）
   String get _timeText {
@@ -907,10 +980,11 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                 ),
                 // 手势层：单击显隐控制层 / 双击按设置 / 长按倍速 /
                 // 单指滑动（音量·亮度·水平 seek）。与横屏同一裸识别器
-                // 方案（PlayerGestureLayer）；竖屏无锁定/双指缩放。
+                // 方案（PlayerGestureLayer）；锁定时仅放行单击（呼出/隐藏
+                // 解锁按钮），其余手势全部拦截（工作.md 第 8 点 bug 修复）。
                 Positioned.fill(
                   child: PlayerGestureLayer(
-                    locked: false,
+                    locked: _locked,
                     onTap: _toggleControls,
                     onDoubleTap: (pos) => _handleDoubleTap(pos.dx, width),
                     onLongPressStart: _onLongPressStart,
@@ -938,11 +1012,11 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                       offset: _controlsVisible
                           ? Offset.zero
                           : const Offset(0, -1),
-                      duration: const Duration(milliseconds: 250),
+                      duration: _controlsAnimDuration,
                       curve: Curves.easeInOut,
                       child: AnimatedOpacity(
                         opacity: _controlsVisible ? 1 : 0,
-                        duration: const Duration(milliseconds: 200),
+                        duration: _controlsFadeDuration,
                         child: PortraitPlayerTopBar(
                           title: _title,
                           onBack: _exitPlayer,
@@ -959,7 +1033,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                     ignoring: !_controlsVisible,
                     child: AnimatedOpacity(
                       opacity: _controlsVisible ? 1 : 0,
-                      duration: const Duration(milliseconds: 200),
+                      duration: _controlsFadeDuration,
                       child: Center(
                         child: PlayerCenterCluster(
                           seekSeconds: _settings.seekSeconds,
@@ -981,47 +1055,53 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                     ignoring: !_controlsVisible,
                     child: AnimatedSlide(
                       offset: _controlsVisible ? Offset.zero : const Offset(0, 1),
-                      duration: const Duration(milliseconds: 250),
+                      duration: _controlsAnimDuration,
                       curve: Curves.easeInOut,
                       child: AnimatedOpacity(
                         opacity: _controlsVisible ? 1 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: PortraitPlayerBottomBar(
-                          valueMs: (_dragPosition ?? _position)
-                              .inMilliseconds
-                              .toDouble(),
-                          maxMs: _duration.inMilliseconds > 0
-                              ? _duration.inMilliseconds.toDouble()
-                              : 1.0,
-                          onSeekChanged: (v) {
-                            setState(
-                              () => _dragPosition =
-                                  Duration(milliseconds: v.round()),
-                            );
-                            _resetHideTimer();
-                          },
-                          onSeekEnd: (v) {
-                            _player.seek(Duration(milliseconds: v.round()));
-                            setState(() => _dragPosition = null);
-                            _resetHideTimer();
-                          },
-                          hasNext: _hasNext,
-                          onNext: _playNext,
-                          timeText: _timeText,
-                          onTimeTap: () =>
-                              setState(() => _showRemaining = !_showRemaining),
-                          onSpeedTap: () => _openBottomPanel(_speedPanelPage()),
-                          showSpeedButtonBackground:
-                              _settings.showButtonBackground,
-                          superResolutionLabel: '超分辨率',
-                          onSuperResolutionTap: () =>
-                              _openBottomPanel(_superResolutionPanelPage()),
-                          // 「选择屏幕」：退出本页返回横屏播放页
-                          // （横屏侧 await push 返回后自动恢复横屏方向并续播）
-                          onScreenSwitchTap: _exitPlayer,
-                          showScreenSwitchBackground:
-                              _settings.showButtonBackground,
-                          onPlaylistTap: _openPlaylistPanel,
+                        duration: _controlsFadeDuration,
+                        // 局部订阅进度：位置/时长/拖动位置变化只重建底栏
+                        //（进度条 + 时间文本），不重建整页（risk_audit #1）
+                        child: ListenableBuilder(
+                          listenable: _progressListenable,
+                          builder: (context, _) => PortraitPlayerBottomBar(
+                            valueMs: (_dragPosition ?? _position)
+                                .inMilliseconds
+                                .toDouble(),
+                            maxMs: _duration.inMilliseconds > 0
+                                ? _duration.inMilliseconds.toDouble()
+                                : 1.0,
+                            onSeekChanged: (v) {
+                              _dragPositionNotifier.value =
+                                  Duration(milliseconds: v.round());
+                              _resetHideTimer();
+                            },
+                            onSeekEnd: (v) {
+                              _player.seek(Duration(milliseconds: v.round()));
+                              _dragPositionNotifier.value = null;
+                              _resetHideTimer();
+                            },
+                            hasNext: _hasNext,
+                            onNext: _playNext,
+                            timeText: _timeText,
+                            onTimeTap: () => setState(
+                                () => _showRemaining = !_showRemaining),
+                            onSpeedTap: () => _openBottomPanel(_speedPanelPage()),
+                            showSpeedButtonBackground:
+                                _settings.showButtonBackground,
+                            superResolutionLabel: '超分辨率',
+                            onSuperResolutionTap: () =>
+                                _openBottomPanel(_superResolutionPanelPage()),
+                            // 「选择屏幕」：退出本页返回横屏播放页
+                            // （横屏侧 await push 返回后自动恢复横屏方向并续播）
+                            onScreenSwitchTap: _exitPlayer,
+                            showScreenSwitchBackground:
+                                _settings.showButtonBackground,
+                            // 工作.md 第 4 点：列表按钮背景与倍速按钮同开关
+                            showListButtonBackground:
+                                _settings.showButtonBackground,
+                            onPlaylistTap: _openPlaylistPanel,
+                          ),
                         ),
                       ),
                     ),
@@ -1036,7 +1116,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                     ignoring: !_controlsVisible || _locked,
                     child: AnimatedOpacity(
                       opacity: _controlsVisible ? 1 : 0,
-                      duration: const Duration(milliseconds: 200),
+                      duration: _controlsFadeDuration,
                       child: Center(
                         child: PlayerRightActions(
                           locked: _locked,
@@ -1047,25 +1127,30 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage> {
                     ),
                   ),
                 ),
-                // 锁定状态：左右两侧滑入解锁按钮（单击屏幕可呼出/隐藏）
-                if (_locked && _unlockVisible) ...[
-                  Positioned(
-                    left: 12,
-                    top: 0,
-                    bottom: 0,
-                    child: Center(
-                      child: _PortraitUnlockButton(onTap: _unlock),
+                // 锁定状态：左右两侧滑入解锁按钮（工作.md 第 8 点：
+                // 进出场动画与横屏一致——滑入滑出，单击屏幕可呼出/隐藏）
+                if (_locked)
+                  SlideTransition(
+                    position: _leftUnlockSlide,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: _PortraitUnlockButton(onTap: _unlock),
+                      ),
                     ),
                   ),
-                  Positioned(
-                    right: 12,
-                    top: 0,
-                    bottom: 0,
-                    child: Center(
-                      child: _PortraitUnlockButton(onTap: _unlock),
+                if (_locked)
+                  SlideTransition(
+                    position: _rightUnlockSlide,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 12),
+                        child: _PortraitUnlockButton(onTap: _unlock),
+                      ),
                     ),
                   ),
-                ],
                 // 音量/亮度手势指示器：音量在左侧、亮度在右侧（对称），
                 // kazumi 风格：从屏幕边缘滑入 + 淡入 + 缩放。
                 Positioned.fill(

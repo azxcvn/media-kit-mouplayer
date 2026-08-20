@@ -82,6 +82,7 @@ class _SortOptionsSheet extends StatelessWidget {
                 const SizedBox(height: 16),
                 _sectionTitle(context, '文件夹显示字段'),
                 _fieldChips(
+                  context,
                   FolderField.values.map((f) {
                     final selected = viewSettings.fields.contains(f);
                     return (
@@ -134,7 +135,7 @@ class _SortOptionsSheet extends StatelessWidget {
                 // 7 字段三行胶囊（等宽均分）：
                 // 第一行 时长/大小/日期，第二行 进度/帧率/分辨率，
                 // 第三行 字幕指示器独占整行（长度与上方两行整体一致）
-                _videoFieldChips(viewSettings),
+                _videoFieldChips(context, viewSettings),
               ]);
             }
             if (showViewMode) {
@@ -180,22 +181,23 @@ class _SortOptionsSheet extends StatelessWidget {
   }
 
   Widget _fieldChips(
+    BuildContext context,
     List<({String label, bool selected, VoidCallback onToggle})> items,
   ) {
     return Align(
       alignment: Alignment.center,
       child: Wrap(
-        spacing: 4,
-        runSpacing: 4,
+        spacing: 8,
+        runSpacing: 8,
         children: items
             .map(
-              (e) => FilterChip(
-                label: Text(e.label),
+              (e) => _capsuleChip(
+                context,
+                label: e.label,
                 selected: e.selected,
-                showCheckmark: false,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                onSelected: (_) => e.onToggle(),
+                onToggle: e.onToggle,
+                // Wrap 内按内容自适应宽度（不撑满整行）
+                fillWidth: false,
               ),
             )
             .toList(),
@@ -208,7 +210,7 @@ class _SortOptionsSheet extends StatelessWidget {
   /// - 第一行：时长 / 大小 / 日期（3 个胶囊，各占 1/3 行宽）；
   /// - 第二行：进度 / 帧率 / 分辨率（3 个胶囊，各占 1/3 行宽）；
   /// - 第三行：字幕指示器独占整行（长度与上方两行整体一致）。
-  Widget _videoFieldChips(ViewSettings viewSettings) {
+  Widget _videoFieldChips(BuildContext context, ViewSettings viewSettings) {
     ({String label, bool selected, VoidCallback onToggle}) chip(
       VideoField f,
     ) {
@@ -235,16 +237,17 @@ class _SortOptionsSheet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _chipRow(row1),
+        _chipRow(context, row1),
         const SizedBox(height: 6),
-        _chipRow(row2),
+        _chipRow(context, row2),
         const SizedBox(height: 6),
-        _chipRow(row3),
+        _chipRow(context, row3),
       ],
     );
   }
 
   Widget _chipRow(
+    BuildContext context,
     List<({String label, bool selected, VoidCallback onToggle})> items,
   ) {
     return Row(
@@ -253,23 +256,57 @@ class _SortOptionsSheet extends StatelessWidget {
           if (i > 0) const SizedBox(width: 6),
           // 等宽均分：每个胶囊占 1/N 行宽，内容水平居中
           Expanded(
-            child: FilterChip(
-              label: Center(
-                child: Text(
-                  items[i].label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+            child: _capsuleChip(
+              context,
+              label: items[i].label,
               selected: items[i].selected,
-              showCheckmark: false,
-              visualDensity: VisualDensity.compact,
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onSelected: (_) => items[i].onToggle(),
+              onToggle: items[i].onToggle,
+              // 行内等宽胶囊：撑满单元格宽度，内容居中
+              fillWidth: true,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             ),
           ),
         ],
       ],
+    );
+  }
+
+  /// 胶囊样式的字段选择项（工作.md 第 2 点：由 FilterChip 的正方形圆角
+  /// 背景改为胶囊样式，对齐播放界面-倍速面板的胶囊视觉）：
+  /// 选中 = 主题色填充 + 高亮文字；未选中 = 表面色胶囊 + 常规文字。
+  Widget _capsuleChip(
+    BuildContext context, {
+    required String label,
+    required bool selected,
+    required VoidCallback onToggle,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+    bool fillWidth = true,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onToggle,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        // Wrap 场景按内容自适应；等宽行场景撑满单元格
+        width: fillWidth ? double.infinity : null,
+        padding: padding,
+        decoration: BoxDecoration(
+          color: selected ? scheme.primary : scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: selected ? scheme.onPrimary : scheme.onSurfaceVariant,
+            fontSize: 13,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          ),
+        ),
+      ),
     );
   }
 

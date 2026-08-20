@@ -11,7 +11,11 @@ import 'package:moumou/pages/player/player_metrics.dart';
 ///
 /// 本实现直接绘制轨道与拇指，手势自管（点击轨道即跳转、拖动跟手），
 /// 轨道起点精确落在 [kPlayerLeftInset]、右缘留 20 与底栏对齐。
-class PlayerSeekBar extends StatelessWidget {
+///
+/// 触摸反馈（工作.md 第 1 点）：拇指被**触摸或拖动**时，在外面套一个
+/// 比拇指大一圈的同心圆（低透明度），让用户感知已命中进度条
+/// （轻微放大 + 外圈扩散效果）。
+class PlayerSeekBar extends StatefulWidget {
   final double valueMs;
   final double maxMs;
   final ValueChanged<double> onChanged;
@@ -32,49 +36,83 @@ class PlayerSeekBar extends StatelessWidget {
   static const double rightInset = 20;
 
   @override
+  State<PlayerSeekBar> createState() => _PlayerSeekBarState();
+}
+
+class _PlayerSeekBarState extends State<PlayerSeekBar> {
+  /// 是否正处于「触摸 / 拖动」状态：为 true 时拇指外圈放大显示
+  bool _interacting = false;
+
+  void _setInteracting(bool v) {
+    if (_interacting == v) return;
+    setState(() => _interacting = v);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final valueMs = widget.valueMs;
+    final maxMs = widget.maxMs;
     return SizedBox(
-      height: barHeight,
+      height: PlayerSeekBar.barHeight,
       width: double.infinity,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final trackLeft = kPlayerLeftInset;
-          final trackWidth =
-              (constraints.maxWidth - trackLeft - rightInset).clamp(0.0, double.infinity);
+          final trackWidth = (constraints.maxWidth -
+                  trackLeft -
+                  PlayerSeekBar.rightInset)
+              .clamp(0.0, double.infinity);
           final fraction =
               maxMs > 0 ? (valueMs / maxMs).clamp(0.0, 1.0) : 0.0;
           final thumbDx = trackLeft + trackWidth * fraction;
-          final centerY = barHeight / 2;
+          final centerY = PlayerSeekBar.barHeight / 2;
 
           void handleAt(double dx) {
             if (trackWidth <= 0 || maxMs <= 0) return;
             final f = ((dx - trackLeft) / trackWidth).clamp(0.0, 1.0);
-            onChanged(f * maxMs);
+            widget.onChanged(f * maxMs);
           }
 
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             // 点击轨道：预览（onChanged）→ 松手即跳转（onChangeEnd，用点击位置计算）
-            onTapDown: (d) => handleAt(d.localPosition.dx),
+            onTapDown: (d) {
+              _setInteracting(true);
+              handleAt(d.localPosition.dx);
+            },
             onTapUp: (d) {
+              _setInteracting(false);
               if (trackWidth <= 0 || maxMs <= 0) return;
               final f = ((d.localPosition.dx - trackLeft) / trackWidth)
                   .clamp(0.0, 1.0);
-              onChangeEnd(f * maxMs);
+              widget.onChangeEnd(f * maxMs);
             },
+            onTapCancel: () => _setInteracting(false),
             // 拖动：实时预览，松手跳转（与原有 onChanged/onChangeEnd 契约一致）
-            onHorizontalDragStart: (d) => handleAt(d.localPosition.dx),
-            onHorizontalDragUpdate: (d) => handleAt(d.localPosition.dx),
-            onHorizontalDragEnd: (_) => onChangeEnd(valueMs),
-            onHorizontalDragCancel: () => onChangeEnd(valueMs),
+            onHorizontalDragStart: (d) {
+              _setInteracting(true);
+              handleAt(d.localPosition.dx);
+            },
+            onHorizontalDragUpdate: (d) {
+              _setInteracting(true);
+              handleAt(d.localPosition.dx);
+            },
+            onHorizontalDragEnd: (_) {
+              _setInteracting(false);
+              widget.onChangeEnd(valueMs);
+            },
+            onHorizontalDragCancel: () {
+              _setInteracting(false);
+              widget.onChangeEnd(valueMs);
+            },
             child: Stack(
               clipBehavior: Clip.none,
               children: [
                 // 底轨（未播放部分）
                 Positioned(
                   left: trackLeft,
-                  right: rightInset,
+                  right: PlayerSeekBar.rightInset,
                   top: centerY - 1.25,
                   height: 2.5,
                   child: Container(
@@ -94,6 +132,32 @@ class PlayerSeekBar extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: scheme.primary,
                       borderRadius: BorderRadius.circular(1.25),
+                    ),
+                  ),
+                ),
+                // 触摸/拖动反馈外圈：比拇指大一圈、低透明度，放大 + 淡入
+                // （工作.md 第 1 点：被触摸时在小圆点外面套一个更大的圆形）
+                Positioned(
+                  left: thumbDx - 16,
+                  top: centerY - 16,
+                  child: IgnorePointer(
+                    child: AnimatedScale(
+                      scale: _interacting ? 1.0 : 0.6,
+                      duration: const Duration(milliseconds: 150),
+                      curve: Curves.easeOutCubic,
+                      child: AnimatedOpacity(
+                        opacity: _interacting ? 1 : 0,
+                        duration: const Duration(milliseconds: 150),
+                        curve: Curves.easeOutCubic,
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: scheme.primary.withValues(alpha: 0.28),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),

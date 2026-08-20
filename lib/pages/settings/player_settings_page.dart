@@ -9,9 +9,12 @@ import 'package:moumou/widgets/settings_ui.dart';
 /// 常驻进度线、倍速记忆、按钮背景、双指缩放、已观看进度阈值。
 ///
 /// 分组结构（各组别内的设置项以分割线分隔）：
-/// - **手势**：双击手势、快进/快退时长、音量/亮度灵敏度、长按倍速滑杆；
+/// - **手势**：双击手势、快进/快退时长、音量/亮度灵敏度、长按倍速滑杆
+///   （工作.md 第 3 点：全部归为**一张卡片**内，项间用分割线分隔）；
+/// - **视频方向**：自动 / 锁定竖屏 / 锁定横屏（工作.md 第 5 点）；
 /// - **播放行为**：常驻进度线、进度条缩略图、记住上次倍速、保存音量到系统、
-///   双指缩小视频、按钮背景、自动连播、播放完毕自动退出、倍速播放指示器；
+///   双指缩小视频、按钮背景、自动连播、播放完毕自动退出、倍速播放指示器、
+///   启用播放界面动画（工作.md 第 7 点）；
 /// - **已观看进度阈值**：滑杆设置（5% – 100%，步进 5%）。
 ///
 /// 循环播放模式（关闭/列表循环/单集循环）已移至播放界面内调整
@@ -29,6 +32,14 @@ class PlayerSettingsPage extends StatelessWidget {
     };
   }
 
+  IconData _orientationIcon(VideoOrientationMode mode) {
+    return switch (mode) {
+      VideoOrientationMode.auto => Icons.smartphone,
+      VideoOrientationMode.portrait => Icons.screen_lock_portrait,
+      VideoOrientationMode.landscape => Icons.screen_lock_landscape,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = PlayerControlsSettings.instance;
@@ -40,7 +51,7 @@ class PlayerSettingsPage extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
-              // ── 手势（含长按倍速滑杆）─────────────────
+              // ── 手势（工作.md 第 3 点：所有手势设置归为一张卡片）──
               const SettingsGroupTitle(title: '手势'),
               SettingsCard(
                 child: Column(
@@ -52,22 +63,14 @@ class PlayerSettingsPage extends StatelessWidget {
                         selected: settings.doubleTapMode == m,
                         onTap: () => settings.setDoubleTapMode(m),
                       ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              // 快进/快退时长（双击手势与中央按钮共用）
-              SettingsCard(
-                child: _SeekSettingTile(
-                  value: settings.seekSeconds,
-                  onChanged: settings.setSeekSeconds,
-                ),
-              ),
-              const SizedBox(height: 16),
-              // 音量/亮度灵敏度
-              SettingsCard(
-                child: Column(
-                  children: [
+                    // 快进/快退时长（双击手势与中央按钮共用）
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    _SeekSettingTile(
+                      value: settings.seekSeconds,
+                      onChanged: settings.setSeekSeconds,
+                    ),
+                    // 音量/亮度灵敏度
+                    const Divider(height: 1, indent: 16, endIndent: 16),
                     _SensitivityTile(
                       icon: Icons.volume_up_outlined,
                       title: '音量灵敏度',
@@ -81,18 +84,40 @@ class PlayerSettingsPage extends StatelessWidget {
                       value: settings.brightnessSensitivity,
                       onChanged: settings.setBrightnessSensitivity,
                     ),
+                    // 长按倍速滑杆（归入手势组别）
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    _LongPressSpeedTile(
+                      value: settings.longPressSpeed,
+                      onChanged: settings.setLongPressSpeed,
+                    ),
                   ],
                 ),
               ),
+              // ── 视频方向（工作.md 第 5 点）────────────────
               const SizedBox(height: 16),
-              // 长按倍速滑杆（归入手势组别）
+              const SettingsGroupTitle(title: '视频方向'),
               SettingsCard(
-                child: _LongPressSpeedTile(
-                  value: settings.longPressSpeed,
-                  onChanged: settings.setLongPressSpeed,
+                child: Column(
+                  children: [
+                    for (final m in VideoOrientationMode.values)
+                      SettingsRadioTile(
+                        icon: _orientationIcon(m),
+                        title: m.label,
+                        subtitle: switch (m) {
+                          VideoOrientationMode.auto => const Text('按视频方向自动横屏或竖屏播放'),
+                          VideoOrientationMode.portrait =>
+                            const Text('无论视频方向，统一竖屏播放'),
+                          VideoOrientationMode.landscape =>
+                            const Text('无论视频方向，统一横屏播放'),
+                        },
+                        selected: settings.videoOrientation == m,
+                        onTap: () => settings.setVideoOrientation(m),
+                      ),
+                  ],
                 ),
               ),
               // ── 播放行为（原「播放」组别改名）────────────
+              const SizedBox(height: 16),
               const SettingsGroupTitle(title: '播放行为'),
               SettingsCard(
                 child: Column(
@@ -184,6 +209,16 @@ class PlayerSettingsPage extends StatelessWidget {
                       trailing: Switch(
                         value: settings.showSpeedIndicator,
                         onChanged: (v) => settings.setShowSpeedIndicator(v),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsTile(
+                      icon: Icons.animation_outlined,
+                      title: '启用播放界面动画',
+                      subtitle: const Text('关闭后播放页控制层与各面板直接出现/消失，不再显示进出场动画'),
+                      trailing: Switch(
+                        value: settings.playerAnimations,
+                        onChanged: (v) => settings.setPlayerAnimations(v),
                       ),
                     ),
                   ],

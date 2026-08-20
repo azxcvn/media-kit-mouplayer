@@ -10,6 +10,19 @@ enum DoubleTapMode {
   const DoubleTapMode(this.label);
 }
 
+/// 视频方向模式（设置-播放器设置-视频方向，工作.md 第 5 点）：
+/// - [auto]：按视频本身的方向自动横屏/竖屏播放；
+/// - [portrait]：无论视频方向，统一竖屏播放；
+/// - [landscape]：无论视频方向，统一横屏播放。
+enum VideoOrientationMode {
+  auto('自动'),
+  portrait('锁定竖屏'),
+  landscape('锁定横屏');
+
+  final String label;
+  const VideoOrientationMode(this.label);
+}
+
 /// 画面比例（对齐 PiliPlus 的 VideoFitType）：
 /// 通过 Video 组件的 [BoxFit] 与 [aspectRatio] 实现，无需 mpv 属性。
 enum PlayerVideoFit {

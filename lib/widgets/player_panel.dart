@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 
 /// 面板内导航的一层页面
@@ -58,7 +59,16 @@ class PlayerPanel extends StatefulWidget {
   final List<PlayerPanelPage> pages;
   final VoidCallback onClose;
 
-  const PlayerPanel({super.key, required this.pages, required this.onClose});
+  /// 是否启用进出场/页内切换动画（工作.md 第 7 点：关闭「启用播放界面
+  /// 动画」后为 false，面板直接出现/消失、二级页直接切换）
+  final bool animate;
+
+  const PlayerPanel({
+    super.key,
+    required this.pages,
+    required this.onClose,
+    this.animate = true,
+  });
 
   @override
   State<PlayerPanel> createState() => _PlayerPanelState();
@@ -107,9 +117,14 @@ class _PlayerPanelState extends State<PlayerPanel> {
                 Expanded(
                   child: AnimatedSwitcher(
                     // 进场 200ms；退场仅 80ms（reverseDuration），
-                    // 避免切换瞬间看到旧页面被点击时的水波纹残留
-                    duration: const Duration(milliseconds: 200),
-                    reverseDuration: const Duration(milliseconds: 80),
+                    // 避免切换瞬间看到旧页面被点击时的水波纹残留；
+                    // 工作.md 第 7 点：关闭播放界面动画后直接切换
+                    duration: widget.animate
+                        ? const Duration(milliseconds: 200)
+                        : Duration.zero,
+                    reverseDuration: widget.animate
+                        ? const Duration(milliseconds: 80)
+                        : Duration.zero,
                     switchInCurve: Curves.easeOutCubic,
                     switchOutCurve: Curves.easeInCubic,
                     // 内容顶部对齐（默认 Stack 居中会让内容较短的面板
@@ -187,24 +202,32 @@ class _PlayerPanelState extends State<PlayerPanel> {
 ///
 /// - 遮罩点击关闭；滑入 + 淡入动画（220ms easeOutCubic）；
 /// - 路由标记为播放页（[playerRouteName]），保证播放页全屏安全区不被破坏；
-/// - 返回的 Future 在面板关闭时完成。
+/// - 返回的 Future 在面板关闭时完成；
+/// - [animate] 为 null 时跟随「播放器设置 → 启用播放界面动画」开关
+///   （工作.md 第 7 点：关闭后面板直接出现/消失）。
 Future<void> showPlayerPanel(
   BuildContext context, {
   required List<PlayerPanelPage> pages,
+  bool? animate,
 }) {
+  final withAnimation = animate ?? PlayerControlsSettings.instance.playerAnimations;
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
     barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
     barrierColor: Colors.black.withValues(alpha: 0.35),
-    transitionDuration: const Duration(milliseconds: 220),
+    transitionDuration: withAnimation
+        ? const Duration(milliseconds: 220)
+        : Duration.zero,
     // 播放页弹出面板时仍视为播放页路由，避免 AppFrame 退出全屏（§4.3）
     routeSettings: const RouteSettings(name: playerRouteName),
     pageBuilder: (context, animation, secondaryAnimation) => PlayerPanel(
       pages: pages,
+      animate: withAnimation,
       onClose: () => Navigator.of(context).pop(),
     ),
     transitionBuilder: (context, animation, secondaryAnimation, child) {
+      if (!withAnimation) return child;
       final curved = CurvedAnimation(
         parent: animation,
         curve: Curves.easeOutCubic,

@@ -15,6 +15,15 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   PlayerControlsSettings._();
 
+  /// 加载去重（risk_audit #9）：setter 在改设置前 await [ensureLoaded]，
+  /// 防止启动时异步 load 尚未完成、用户已改设置被 load 覆盖（与
+  /// [PlaybackProgressService.ensureLoaded] 同一防护；load 本身可重复调用，
+  /// 供测试模拟重启重新读盘）。
+  Future<void>? _loadFuture;
+
+  /// 确保已从磁盘加载完成（首次调用触发 load；并发调用共享同一 Future）
+  Future<void> ensureLoaded() => _loadFuture ??= load();
+
   static const _keyTopActions = 'player_controls_top_actions';
   static const _keyDoubleTapMode = 'player_controls_double_tap_mode';
   static const _keyProgressLine = 'player_controls_progress_line';
@@ -40,6 +49,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyAutoNext = 'player_controls_auto_next';
   static const _keyAutoExit = 'player_controls_auto_exit';
   static const _keyLoopMode = 'player_controls_loop_mode';
+  // 视频方向（自动/锁定竖屏/锁定横屏）+ 播放界面动画开关
+  static const _keyVideoOrientation = 'player_controls_video_orientation';
+  static const _keyPlayerAnimations = 'player_controls_player_animations';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -130,6 +142,12 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 循环播放模式（默认关闭）
   LoopMode _loopMode = LoopMode.off;
 
+  /// 视频方向（默认自动：按视频方向横/竖屏播放）
+  VideoOrientationMode _videoOrientation = VideoOrientationMode.auto;
+
+  /// 播放界面动画（默认开启）：关闭后控制层/面板等不再显示进出场动画
+  bool _playerAnimations = true;
+
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
   DoubleTapMode get doubleTapMode => _doubleTapMode;
@@ -152,6 +170,8 @@ class PlayerControlsSettings extends ChangeNotifier {
   bool get autoNext => _autoNext;
   bool get autoExit => _autoExit;
   LoopMode get loopMode => _loopMode;
+  VideoOrientationMode get videoOrientation => _videoOrientation;
+  bool get playerAnimations => _playerAnimations;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -212,10 +232,18 @@ class PlayerControlsSettings extends ChangeNotifier {
     if (loop != null && loop >= 0 && loop < LoopMode.values.length) {
       _loopMode = LoopMode.values[loop];
     }
+    final orientation = prefs.getInt(_keyVideoOrientation);
+    if (orientation != null &&
+        orientation >= 0 &&
+        orientation < VideoOrientationMode.values.length) {
+      _videoOrientation = VideoOrientationMode.values[orientation];
+    }
+    _playerAnimations = prefs.getBool(_keyPlayerAnimations) ?? true;
     notifyListeners();
   }
 
   Future<void> setDoubleTapMode(DoubleTapMode v) async {
+    await ensureLoaded();
     if (_doubleTapMode == v) return;
     _doubleTapMode = v;
     notifyListeners();
@@ -224,6 +252,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   }
 
   Future<void> setShowProgressLine(bool v) async {
+    await ensureLoaded();
     if (_showProgressLine == v) return;
     _showProgressLine = v;
     notifyListeners();
@@ -233,6 +262,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 播放控制按钮背景开关（默认关闭）
   Future<void> setShowButtonBackground(bool v) async {
+    await ensureLoaded();
     if (_showButtonBackground == v) return;
     _showButtonBackground = v;
     notifyListeners();
@@ -242,6 +272,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 画面比例（拉伸/自动/裁剪/等宽/等高/原始/限制/4:3/16:9）
   Future<void> setVideoFit(PlayerVideoFit v) async {
+    await ensureLoaded();
     if (_videoFit == v) return;
     _videoFit = v;
     notifyListeners();
@@ -250,6 +281,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   }
 
   Future<void> setRememberSpeed(bool v) async {
+    await ensureLoaded();
     if (_rememberSpeed == v) return;
     _rememberSpeed = v;
     notifyListeners();
@@ -259,6 +291,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 记录当前倍速（无论是否启用记忆都会保存；启用记忆后下次打开生效）
   Future<void> setSpeed(double v) async {
+    await ensureLoaded();
     _lastSpeed = v;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -267,6 +300,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 快进/快退时长（秒），限制在 1 – maxSeekSeconds。双击手势与中央按钮共用。
   Future<void> setSeekSeconds(int v) async {
+    await ensureLoaded();
     final clamped = v.clamp(1, maxSeekSeconds);
     if (_seekSeconds == clamped) return;
     _seekSeconds = clamped;
@@ -277,6 +311,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 长按倍速（1.0 – 6.0，步进 0.1，离散）
   Future<void> setLongPressSpeed(double v) async {
+    await ensureLoaded();
     final clamped = ((v * 10).roundToDouble() / 10)
         .clamp(minLongPressSpeed, maxLongPressSpeed);
     if ((_longPressSpeed - clamped).abs() < 0.001) return;
@@ -288,6 +323,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 倍速播放指示器开关（长按倍速时是否显示「正在 X.Xx 倍速播放」）
   Future<void> setShowSpeedIndicator(bool v) async {
+    await ensureLoaded();
     if (_showSpeedIndicator == v) return;
     _showSpeedIndicator = v;
     notifyListeners();
@@ -297,6 +333,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 标记「已完成一次完整的长按 + 左右滑动」，首次使用提示不再出现
   Future<void> markSpeedHintShown() async {
+    await ensureLoaded();
     if (_speedHintShown) return;
     _speedHintShown = true;
     notifyListeners();
@@ -306,6 +343,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 播放时调整的音量是否在退出后写回系统（默认开启）
   Future<void> setSaveVolumeToSystem(bool v) async {
+    await ensureLoaded();
     if (_saveVolumeToSystem == v) return;
     _saveVolumeToSystem = v;
     notifyListeners();
@@ -315,6 +353,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 音量手势灵敏度（满屏滑动对应的量程倍率，0.5 – 2.0）
   Future<void> setVolumeSensitivity(double v) async {
+    await ensureLoaded();
     final clamped = v.clamp(minGestureSensitivity, maxGestureSensitivity);
     if ((_volumeSensitivity - clamped).abs() < 0.001) return;
     _volumeSensitivity = clamped;
@@ -325,6 +364,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 亮度手势灵敏度（同上）
   Future<void> setBrightnessSensitivity(double v) async {
+    await ensureLoaded();
     final clamped = v.clamp(minGestureSensitivity, maxGestureSensitivity);
     if ((_brightnessSensitivity - clamped).abs() < 0.001) return;
     _brightnessSensitivity = clamped;
@@ -335,6 +375,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 双指缩小视频（默认开启：最小缩放 0.75；关闭则最小 1.0）
   Future<void> setEnableShrinkVideo(bool v) async {
+    await ensureLoaded();
     if (_enableShrinkVideo == v) return;
     _enableShrinkVideo = v;
     notifyListeners();
@@ -344,6 +385,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 进度条缩略图预览开关（默认关闭；开启后拖动进度条才触发预热，省后台解码与缓存）
   Future<void> setShowThumbnailPreview(bool v) async {
+    await ensureLoaded();
     if (_showThumbnailPreview == v) return;
     _showThumbnailPreview = v;
     notifyListeners();
@@ -355,6 +397,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 进度 >= 阈值 → 已看完（列表灰色）；>0 且 < 阈值 → 观看中。
   /// 任意输入就近对齐到 5% 档位并钳制范围（与 load 迁移同一对齐逻辑）。
   Future<void> setWatchThreshold(double v) async {
+    await ensureLoaded();
     final clamped = _roundWatchThreshold(v)
         .clamp(minWatchThreshold, maxWatchThreshold);
     if ((_watchThreshold - clamped).abs() < 0.0001) return;
@@ -374,6 +417,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 自动连播：当前视频播完后自动播放下一集（默认开启）
   Future<void> setAutoNext(bool v) async {
+    await ensureLoaded();
     if (_autoNext == v) return;
     _autoNext = v;
     notifyListeners();
@@ -384,6 +428,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 播放完毕自动退出：当前文件夹最后一个视频播完后自动退出播放页
   /// （默认开启；关闭则播完自动暂停停在末尾）
   Future<void> setAutoExit(bool v) async {
+    await ensureLoaded();
     if (_autoExit == v) return;
     _autoExit = v;
     notifyListeners();
@@ -393,6 +438,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 循环播放模式（默认关闭；off / 列表循环 / 单集循环）
   Future<void> setLoopMode(LoopMode v) async {
+    await ensureLoaded();
     if (_loopMode == v) return;
     _loopMode = v;
     notifyListeners();
@@ -400,8 +446,29 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setInt(_keyLoopMode, v.index);
   }
 
+  /// 视频方向（默认自动：按视频方向横/竖屏；锁定竖屏/横屏强制对应方向）
+  Future<void> setVideoOrientation(VideoOrientationMode v) async {
+    await ensureLoaded();
+    if (_videoOrientation == v) return;
+    _videoOrientation = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyVideoOrientation, v.index);
+  }
+
+  /// 播放界面动画开关（默认开启；关闭后播放页控制层与面板直接出现/消失）
+  Future<void> setPlayerAnimations(bool v) async {
+    await ensureLoaded();
+    if (_playerAnimations == v) return;
+    _playerAnimations = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyPlayerAnimations, v);
+  }
+
   /// 添加自定义倍速预设（去重、限制范围与数量）
   Future<void> addCustomSpeedPreset(double v) async {
+    await ensureLoaded();
     final clamped = v.clamp(minSpeed, maxSpeed);
     if (_customSpeedPresets.any((e) => (e - clamped).abs() < 0.01)) return;
     if (_customSpeedPresets.length >= maxCustomSpeedPresets) return;
@@ -411,6 +478,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   }
 
   Future<void> removeCustomSpeedPreset(double v) async {
+    await ensureLoaded();
     if (!_customSpeedPresets.any((e) => (e - v).abs() < 0.01)) return;
     _customSpeedPresets = [
       for (final e in _customSpeedPresets)
@@ -422,6 +490,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 倍速预设重置：清空自定义预设，回到系统预设
   Future<void> resetCustomSpeedPresets() async {
+    await ensureLoaded();
     if (_customSpeedPresets.isEmpty) return;
     _customSpeedPresets = const [];
     notifyListeners();
@@ -439,6 +508,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 放置动作到槽位（不重复、不超过上限；放满后需先移除）
   Future<void> addTopAction(PlayerTopAction a) async {
+    await ensureLoaded();
     if (_topActions.contains(a) || _topActions.length >= maxTopActions) return;
     _topActions = [..._topActions, a];
     notifyListeners();
@@ -446,6 +516,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   }
 
   Future<void> removeTopAction(PlayerTopAction a) async {
+    await ensureLoaded();
     if (!_topActions.contains(a)) return;
     _topActions = [..._topActions]..remove(a);
     notifyListeners();
@@ -455,6 +526,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 槽位排序。配合 ReorderableListView 的 [onReorderItem] 使用：
   /// 该回调已按「移除后插入」修正 newIndex，这里直接 removeAt + insert。
   Future<void> reorderTopAction(int oldIndex, int newIndex) async {
+    await ensureLoaded();
     if (oldIndex == newIndex) return;
     final list = [..._topActions];
     final item = list.removeAt(oldIndex);
@@ -466,6 +538,7 @@ class PlayerControlsSettings extends ChangeNotifier {
 
   /// 控制栏重置：清空全部槽位（默认状态 = 槽位全空，仅保留「更多」）
   Future<void> resetTopActions() async {
+    await ensureLoaded();
     if (_topActions.isEmpty) return;
     _topActions = const [];
     notifyListeners();
@@ -483,6 +556,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 测试用：恢复默认值（单例在测试间共享，避免状态泄漏）
   @visibleForTesting
   void reset() {
+    _loadFuture = null; // 下次 setter 重新触发 load（读当前 mock prefs）
     _topActions = const [];
     _doubleTapMode = DoubleTapMode.mixed;
     _showProgressLine = false;
@@ -504,6 +578,8 @@ class PlayerControlsSettings extends ChangeNotifier {
     _autoNext = true;
     _autoExit = true;
     _loopMode = LoopMode.off;
+    _videoOrientation = VideoOrientationMode.auto;
+    _playerAnimations = true;
     notifyListeners();
   }
 }
