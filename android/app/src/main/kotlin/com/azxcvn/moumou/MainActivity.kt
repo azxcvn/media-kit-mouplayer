@@ -55,39 +55,56 @@ class MainActivity : FlutterActivity() {
      * SystemChrome.setSystemUIOverlayStyle 保证。
      */
     private fun applySystemBarStyle() {
-        // API 29+ 默认 isNavigationBarContrastEnforced=true：系统会在导航栏上
-        // 叠加半透明对比度 scrim，把纯黑底刷成灰白（深色/AMOLED 下三大金刚键
-        // 区域发灰的根因）。关闭后 navigationBarColor 精确生效（内联 SDK 判断
-        // 防 lint NewApi 报错）。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            window.isNavigationBarContrastEnforced = false
-        }
-        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
-        val mode = prefs.getInt("flutter.theme_mode", -1)
-        val isDark = when (mode) {
-            2, 3 -> true // dark / amoled
-            1 -> false // light
-            else -> { // system / 未设置：跟随系统
-                val night = resources.configuration.uiMode and
-                    Configuration.UI_MODE_NIGHT_MASK
-                night == Configuration.UI_MODE_NIGHT_YES
+        // 启动路径绝不允许崩溃：读取失败/类型异常一律降级为 system 模式，
+        // 否则 onCreate 抛异常会形成「每次启动必崩」的崩溃循环（debug/release 同理）。
+        try {
+            // API 29+ 默认 isNavigationBarContrastEnforced=true：系统会在导航栏上
+            // 叠加半透明对比度 scrim，把纯黑底刷成灰白（深色/AMOLED 下三大金刚键
+            // 区域发灰的根因）。关闭后 navigationBarColor 精确生效（内联 SDK 判断
+            // 防 lint NewApi 报错）。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
             }
-        }
-        @Suppress("DEPRECATION")
-        window.navigationBarColor = if (isDark) {
-            android.graphics.Color.BLACK
-        } else {
-            android.graphics.Color.WHITE
-        }
-        // 导航键图标亮度（API 26+；浅色主题用深色键，深色主题用浅色键）
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val flags = window.decorView.systemUiVisibility
+            val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            // 关键坑：shared_preferences 在 Android 把 Dart 的 int 一律存为 Long
+            // （Dart int 是 64 位，插件 setInt → putLong）。若用 prefs.getInt(...) 读，
+            // SharedPreferencesImpl 直接抛 ClassCastException: Long cannot be cast to
+            // Integer（历史启动崩溃根因）。这里从 all 取值做类型兼容读取：
+            // Int / Long 都接受，其余类型/缺失按「未设置(-1)」处理。
+            val mode = when (val v = prefs.all["flutter.theme_mode"]) {
+                is Int -> v
+                is Long -> v.toInt()
+                else -> -1
+            }
+            val isDark = when (mode) {
+                2, 3 -> true // dark / amoled
+                1 -> false // light
+                else -> { // system / 未设置：跟随系统
+                    val night = resources.configuration.uiMode and
+                        Configuration.UI_MODE_NIGHT_MASK
+                    night == Configuration.UI_MODE_NIGHT_YES
+                }
+            }
             @Suppress("DEPRECATION")
-            window.decorView.systemUiVisibility = if (isDark) {
-                flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+            window.navigationBarColor = if (isDark) {
+                android.graphics.Color.BLACK
             } else {
-                flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                android.graphics.Color.WHITE
             }
+            // 导航键图标亮度（API 26+；浅色主题用深色键，深色主题用浅色键）
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val flags = window.decorView.systemUiVisibility
+                @Suppress("DEPRECATION")
+                window.decorView.systemUiVisibility = if (isDark) {
+                    flags and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv()
+                } else {
+                    flags or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                }
+            }
+        } catch (e: Exception) {
+            // 导航栏配色只是视觉效果：任何异常（prefs 损坏/类型异常等）都静默降级，
+            // 保证 onCreate 永不因主题读取崩溃（debug/release 一致）
+            Log.w("MainActivity", "applySystemBarStyle failed, fallback to system: ${e.message}")
         }
     }
 
