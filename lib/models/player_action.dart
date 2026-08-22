@@ -65,9 +65,10 @@ enum PlayerVideoFit {
 
 /// 播放器右上角可自定义的按钮动作（最多 5 个，顺序可调）。
 ///
-/// [implemented] 为 false 的动作是占位入口（字幕/弹幕/音轨/音频均衡器/解码/片头片尾），
+/// [implemented] 为 false 的动作是占位入口（字幕/弹幕/音轨/音频均衡器/解码），
 /// 顶栏点击提示「功能即将上线」，待后续接入具体功能。
-/// [implemented] 为 true 的动作：比例、画中画、听视频（已接入）、循环播放。
+/// [implemented] 为 true 的动作：比例、画中画、听视频、循环播放、章节、
+/// 片头片尾（已接入）。
 ///
 /// 注意：倍速（speed）**不在**顶栏动作之列 —— 倍速按钮固定于播放页
 /// 底栏（超分辨率按钮左侧），不支持在顶栏控制栏增加或删除。
@@ -77,7 +78,7 @@ enum PlayerTopAction {
   audio('audio', '音轨', Icons.library_music_outlined, false),
   aspect('aspect', '比例', Icons.aspect_ratio, true),
   // v2 新增：pip/listen 已规划实现（implemented=true，具体接入见后续任务）；
-  // equalizer/decode/introOutro 仅入口（implemented=false → 点击提示即将上线）
+  // equalizer/decode 仅入口（implemented=false → 点击提示即将上线）
   pip('pip', '画中画', Icons.picture_in_picture_alt_outlined, true),
   // 听视频：已接入（工作.md 第 10 点），点击进入听视频界面
   listen('listen', '听视频', Icons.headphones_outlined, true),
@@ -87,7 +88,8 @@ enum PlayerTopAction {
   decode('decode', '解码', Icons.deblur_outlined, false),
   // 章节：已接入（工作.md 章节功能），点击呼出章节列表（无章节时提示）
   chapter('chapter', '章节', Icons.bookmarks_outlined, true),
-  introOutro('intro_outro', '片头片尾', Icons.movie_filter_outlined, false);
+  // 片头片尾：已接入（工作.md 片头片尾功能），点击呼出跳过设置面板
+  introOutro('intro_outro', '片头片尾', Icons.movie_filter_outlined, true);
 
   /// 持久化标识（稳定，勿改）
   final String id;

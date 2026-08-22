@@ -17,6 +17,7 @@ import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
 import 'package:moumou/pages/player/views/player_gesture_layer.dart';
+import 'package:moumou/pages/player/views/player_intro_outro_panel.dart';
 import 'package:moumou/pages/player/views/player_loop_panel.dart';
 import 'package:moumou/pages/player/views/player_playlist_panel.dart';
 import 'package:moumou/pages/player/views/player_resume_indicator.dart';
@@ -31,10 +32,13 @@ import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
+import 'package:moumou/services/intro_outro_settings.dart';
+import 'package:moumou/services/intro_outro_tracker.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/utils/intro_outro_skip.dart';
 import 'package:moumou/utils/pip_aspect.dart';
 import 'package:moumou/utils/playback_completion.dart';
 import 'package:moumou/utils/playback_restore.dart';
@@ -107,6 +111,11 @@ class _PlayerPageState extends State<PlayerPage>
   /// 章节状态跟踪器（工作.md 章节功能）：读取章节与跳过片段、跟踪当前
   /// 章节与胶囊自动弹出窗口；横竖屏共享同一实例（切集/位置流统一驱动）。
   late final ChapterTracker _chapterTracker;
+
+  /// 片头片尾状态跟踪器（工作.md 片头片尾功能）：驱动片头/片尾自动跳过
+  /// 动作；横竖屏共享同一实例（切集/位置流统一驱动）。
+  late final IntroOutroTracker _introOutroTracker =
+      IntroOutroTracker(IntroOutroSettings.instance);
 
   double _speed = 1.0;
 
@@ -348,6 +357,10 @@ class _PlayerPageState extends State<PlayerPage>
         if (!_disposed && mounted) _positionNotifier.value = p;
         // 章节跟踪：当前章节/跳过片段/胶囊自动弹出窗口随位置推进
         _chapterTracker.onPositionChanged(p);
+        // 片头片尾：竖屏页/听视频页打开期间让位（共享同一 Player，
+        // 避免重复 seek / 切集）
+        if (_portraitActive || _audioActive) return;
+        _handleIntroOutroPosition(p);
       }),
     );
     _subs.add(
@@ -420,10 +433,13 @@ class _PlayerPageState extends State<PlayerPage>
     await PlaybackProgressService.instance.ensureLoaded();
     if (_disposed || !mounted) return;
     final start = _resumeStartFor(_path);
+    // 片头片尾：新媒体重置跟踪状态（open 期间位置事件不评估）
+    _introOutroTracker.reset();
     // 恢复时先盖住视频：暂停加载 + seek 期间用户看不到 0 时刻海报
     if (start != null && mounted) setState(() => _restoring = true);
+    var restored = false;
     try {
-      final restored = await openAndRestore(
+      restored = await openAndRestore(
         _player,
         _path,
         saved: start,
@@ -449,6 +465,12 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     if (_disposed || !mounted) return;
+    // 片头片尾：恢复点感知后标记就绪，位置事件开始评估
+    // （恢复点 > 0 时不跳片头；恢复点落在片尾时不立即切集）
+    if (restored && start != null) {
+      _introOutroTracker.markResumedPosition(start, _player.state.duration);
+    }
+    _introOutroTracker.markReady();
     // 章节功能：open 完成后读取章节（此时时长已就绪；空章节静默清空）
     unawaited(_chapterTracker.load());
     await _applyVideoOrientation();
@@ -1138,6 +1160,49 @@ class _PlayerPageState extends State<PlayerPage>
       );
   }
 
+  // ── 片头片尾 ─────────────────────────────────────────────
+
+  /// 片头片尾面板页（顶栏「片头片尾」槽位弹出）
+  PlayerPanelPage _introOutroPanelPage() => PlayerPanelPage(
+        title: '片头片尾',
+        body: PlayerIntroOutroPanel(
+          positionListenable: _positionNotifier,
+          durationListenable: _durationNotifier,
+        ),
+      );
+
+  /// 打开片头片尾设置面板（右侧滑入，[showPlayerPanel]）。
+  Future<void> _openIntroOutroPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_introOutroPanelPage()]);
+    _resetHideTimer();
+  }
+
+  /// 片头片尾自动跳过：位置流每次更新调用（横屏页在竖屏/听视频
+  /// 打开期间让位，见位置流订阅处的门控）。
+  ///
+  /// - 跳过片头：seek 到片头结束并提示；
+  /// - 跳过片尾：提示并自动播放下一集（[resolveIntroOutroAction] 已
+  ///   保证存在下一集才产生此动作）。
+  void _handleIntroOutroPosition(Duration p) {
+    final action = _introOutroTracker.onPositionChanged(
+      p,
+      _durationNotifier.value,
+      hasNext: _hasNext,
+    );
+    switch (action) {
+      case IntroOutroAction.none:
+        break;
+      case IntroOutroAction.skipIntro:
+        final s = IntroOutroSettings.instance;
+        _player.seek(Duration(seconds: s.introSeconds));
+        _toast('已跳过片头');
+      case IntroOutroAction.nextEpisode:
+        _toast('已跳过片尾');
+        _playNext();
+    }
+  }
+
   // ── 下一集 / 切集 ───────────────────────────────────────
 
   /// 手动/自动「下一集」：定位播放列表中的下一项后统一切集。
@@ -1171,6 +1236,8 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       // 章节功能：先清空旧媒体的章节标记（防 open 期间旧数据闪现）
       _chapterTracker.clear();
+      // 片头片尾：重置跟踪状态（open 期间位置事件不评估）
+      _introOutroTracker.reset();
       if (mounted) {
         setState(() => _resumeVisible = false);
       }
@@ -1199,8 +1266,10 @@ class _PlayerPageState extends State<PlayerPage>
         setState(() {
           _path = path;
           _title = title;
-          _positionNotifier.value = Duration.zero;
-          _durationNotifier.value = Duration.zero;
+          // 同步播放器真实状态（此时文件已加载，时长/位置已就绪；
+          // 不能置零——duration 流事件在 open 阶段已发出，不会再重发）
+          _positionNotifier.value = _player.state.position;
+          _durationNotifier.value = _player.state.duration;
           _dragPositionNotifier.value = null;
           _zoomScale = 1.0;
           _zoomOffset = Offset.zero;
@@ -1214,6 +1283,14 @@ class _PlayerPageState extends State<PlayerPage>
         _positionNotifier.value = savedForNew;
         _showResumeIndicator();
       }
+      // 片头片尾：恢复点感知后标记就绪（新集从头播则直接评估）
+      if (restored && savedForNew != null) {
+        _introOutroTracker.markResumedPosition(
+          savedForNew,
+          _player.state.duration,
+        );
+      }
+      _introOutroTracker.markReady();
       // 章节功能：切集后重新读取新媒体的章节
       unawaited(_chapterTracker.load());
     } on AssertionError {
@@ -1454,7 +1531,8 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   /// 点击顶栏槽位执行动作（比例 → 弹画面比例面板；画中画 → [_enterPip]；
-  /// 循环播放 → [_openLoopPanel]；听视频 → [_openAudioPlayer]；其余占位提示即将上线）。
+  /// 循环播放 → [_openLoopPanel]；听视频 → [_openAudioPlayer]；
+  /// 片头片尾 → [_openIntroOutroPanel]；其余占位提示即将上线）。
   /// 倍速已移至底栏固定按钮（见底栏），不在此列。
   void _handleSlotAction(PlayerTopAction action) {
     switch (action) {
@@ -1465,7 +1543,6 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.audio:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
-      case PlayerTopAction.introOutro:
         if (!action.implemented) _showComingSoon(action.label);
       case PlayerTopAction.listen:
         _openAudioPlayer();
@@ -1475,6 +1552,8 @@ class _PlayerPageState extends State<PlayerPage>
         _openLoopPanel();
       case PlayerTopAction.chapter:
         _openChapterPanel();
+      case PlayerTopAction.introOutro:
+        _openIntroOutroPanel();
     }
   }
 
@@ -1618,8 +1697,8 @@ class _PlayerPageState extends State<PlayerPage>
             setState(() {
               _path = path;
               _title = title;
-              _positionNotifier.value = Duration.zero;
-              _durationNotifier.value = Duration.zero;
+              _positionNotifier.value = _player.state.position;
+              _durationNotifier.value = _player.state.duration;
               _dragPositionNotifier.value = null;
             });
           },
@@ -1627,6 +1706,8 @@ class _PlayerPageState extends State<PlayerPage>
           // 章节功能：共享横屏页跟踪器（同一 Player，状态一致）；
           // 不传则竖屏页自建空实例、章节标记/胶囊在竖屏全部不显示
           chapterTracker: _chapterTracker,
+          // 片头片尾：共享横屏页跟踪器（同一 Player，状态一致）
+          introOutroTracker: _introOutroTracker,
         ),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -1703,8 +1784,8 @@ class _PlayerPageState extends State<PlayerPage>
             setState(() {
               _path = path;
               _title = title;
-              _positionNotifier.value = Duration.zero;
-              _durationNotifier.value = Duration.zero;
+              _positionNotifier.value = _player.state.position;
+              _durationNotifier.value = _player.state.duration;
               _dragPositionNotifier.value = null;
             });
           },
@@ -1716,6 +1797,17 @@ class _PlayerPageState extends State<PlayerPage>
     if (!mounted) return;
     _audioActive = false;
     setState(() {});
+    // 听视频页可能已切集：按当前媒体状态重新初始化片头片尾跟踪
+    // （位置 > 0 按恢复点处理不跳片头；新集从头播则正常评估）
+    final audioPos = _player.state.position;
+    if (audioPos > Duration.zero) {
+      _introOutroTracker.reset();
+      _introOutroTracker.markResumedPosition(
+        audioPos,
+        _player.state.duration,
+      );
+      _introOutroTracker.markReady();
+    }
     // 听视频页是竖屏，返回后恢复横屏 + 沉浸式（与竖屏页返回一致）
     final lockPortrait =
         _settings.videoOrientation == VideoOrientationMode.portrait;

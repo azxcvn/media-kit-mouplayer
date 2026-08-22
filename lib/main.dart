@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/crash_log_service.dart';
+import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
@@ -65,6 +66,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // load Future，防止「启动加载未完成、用户已改设置被 load 覆盖」的竞态
     // （risk_audit #9）
     PlayerControlsSettings.instance.ensureLoaded();
+    // 片头片尾设置：同 ensureLoaded 模式（面板 setter 与这里共享同一
+    // load Future，防竞态）
+    IntroOutroSettings.instance.ensureLoaded();
     SuperResolutionService.instance.load();
   }
 
