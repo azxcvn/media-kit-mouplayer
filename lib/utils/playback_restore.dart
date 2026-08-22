@@ -152,3 +152,90 @@ Future<bool> restorePlaybackPosition(
     return false;
   }
 }
+
+/// 打开媒体并恢复到 [saved]（**v5.1 重写**，修复「指示器显示但视频仍从头播」）。
+///
+/// 根因（v5 实测反馈）：v5 在 `open(play: false)` 暂停态直接 seek——mpv 暂停
+/// 态 seek 只更新了 `time-pos` 属性（位置流确认到位、指示器照常显示），但
+/// 解码器尚未真正重定位；随后 `play()` 从 0 开始解码，出现「指示器跳出、
+/// 视频却从头播」。旧代码注释「时间线激活后 seek 才稳定」正是此坑。
+///
+/// 确定性恢复（v5.1）：
+/// 1. `open(play: false)` 暂停加载 + 等时长就绪（不播开头）；
+/// 2. `prepare`（倍速/超分）在播放前完成，避免 shader 变化重置位置；
+/// 3. **静音** + `play()` 激活时间线（mpv 真正开始解码/播放）；
+/// 4. 等位置推进 ≥150ms（播放确已开始、时间线激活）后 **再 seek**；
+/// 5. 位置流确认到位（失败重试一次），随后取消静音。
+///
+/// 全程由调用方用不透明封层盖住视频，静音则保证激活窗口内「从 0 短暂播放」
+/// 不出声——首帧即目标帧、无开头闪现、无开头声音。
+///
+/// 返回 true = 已恢复到 [saved]；false = 无需恢复或恢复失败（从 0 播）。
+Future<bool> openAndRestore(
+  Player player,
+  String path, {
+  Duration? saved,
+  Future<void> Function()? prepare,
+  Duration confirmTimeout = const Duration(seconds: 4),
+}) async {
+  final restore = saved != null && saved > Duration.zero;
+  // 统一暂停加载，等文件就绪（不播开头）
+  await player.open(Media(path), play: false);
+  await _waitDuration(player);
+  // 倍速 / 超分等准备（播放前完成）
+  if (prepare != null) await prepare();
+  if (!restore) {
+    await player.play();
+    return false;
+  }
+  final native = player.platform as NativePlayer;
+  // 静音：激活时间线期间「从 0 短暂播放」不出声（用户无感）
+  await native.setProperty('mute', 'yes');
+  try {
+    await player.play();
+    // 等播放真正开始（位置推进 ≥150ms 证明时间线已激活，seek 才稳定）
+    await waitForPlaybackStart(
+      player,
+      minStablePosition: const Duration(milliseconds: 150),
+      timeout: const Duration(seconds: 3),
+    );
+    // 时间线已激活，seek 必然生效
+    await player.seek(saved);
+    var ok =
+        await waitForPositionReaching(player, saved, timeout: confirmTimeout);
+    if (!ok) {
+      await player.seek(saved);
+      ok = await waitForPositionReaching(player, saved, timeout: confirmTimeout);
+    }
+    return ok;
+  } finally {
+    // 任何路径（含播放器销毁异常）都恢复静音状态，避免残留静音
+    try {
+      await native.setProperty('mute', 'no');
+    } on AssertionError {
+      // 播放器已销毁：忽略
+    }
+  }
+}
+
+/// 等待播放器上报时长（文件加载完成的信号），最多 [timeout]。
+///
+/// 超时也返回（不抛异常），调用方在时长仍未知时 seek 会自然失败，
+/// 由 [openAndRestore] 的重试与调用方的「未恢复则从头播」兜底。
+Future<void> _waitDuration(
+  Player player, {
+  Duration timeout = const Duration(seconds: 12),
+}) async {
+  if (player.state.duration > Duration.zero) return;
+  final completer = Completer<void>();
+  late final StreamSubscription<Duration> sub;
+  sub = player.stream.duration.listen((d) {
+    if (d > Duration.zero && !completer.isCompleted) completer.complete();
+  });
+  final timer = Timer(timeout, () {
+    if (!completer.isCompleted) completer.complete();
+  });
+  await completer.future;
+  timer.cancel();
+  await sub.cancel();
+}

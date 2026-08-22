@@ -2,19 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-/// 恢复上次播放进度指示器（横屏顶部弹出，独立于控制层显隐）。
+/// 恢复上次播放进度指示器（顶部弹出，独立于控制层显隐）。
 ///
 /// - 文案：「已恢复上次播放进度｜重头开始｜关闭」；
 /// - 「重头开始」：可点击，由页面执行 seek(0) 并继续播放，随后关闭指示器；
 /// - 「关闭」：可点击（红色文本），仅关闭指示器；
-/// - 5 秒无操作自动隐藏；
-/// - 进出场动画与音量/亮度指示器（kazumi 风格）一致：从屏幕边缘滑入 +
-///   淡入 + 轻微缩放（本组件从顶部滑入），退场反向。
+/// - 2.5 秒无操作自动隐藏；
+/// - **胶囊式包裹**（工作.md 第 2 点）：整体为药丸形（完全圆角），
+///   参考倍速列表/倍速指示器的胶囊样式，深色半透明底 + 白字；
+/// - 进出场动画与音量/亮度指示器（kazumi 风格）一致：从顶部滑入 +
+///   淡入 + 轻微缩放，退场反向。
 class PlayerResumeIndicator extends StatefulWidget {
   /// 「重头开始」点击：页面执行 seek(0) + 继续播放
   final VoidCallback onRestart;
 
-  /// 指示器关闭（「关闭」点击 / 5 秒自动隐藏 / 「重头开始」后都会触发）
+  /// 指示器关闭（「关闭」点击 / 自动隐藏 / 「重头开始」后都会触发）
   final VoidCallback onClose;
 
   const PlayerResumeIndicator({
@@ -29,7 +31,6 @@ class PlayerResumeIndicator extends StatefulWidget {
 
 class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
     with SingleTickerProviderStateMixin {
-  // 工作.md 第 9 点：退场时间由 5 秒缩减到 2.5 秒
   static const _autoHideDelay = Duration(milliseconds: 2500);
 
   late final AnimationController _controller = AnimationController(
@@ -69,7 +70,6 @@ class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _controller.forward();
     });
-    // 5 秒无操作自动隐藏
     _hideTimer = Timer(_autoHideDelay, _dismiss);
   }
 
@@ -105,20 +105,25 @@ class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
           position: _slide,
           child: IgnorePointer(
             ignoring: _closing,
+            // 胶囊式包裹：完全圆角（药丸形），参考倍速胶囊样式
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.only(left: 16, right: 4),
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(999),
+                // 轻描边让胶囊更立体（kazumi 风格）
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.12),
+                ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const Padding(
-                    padding: EdgeInsets.only(left: 14, right: 8),
+                    padding: EdgeInsets.only(right: 8),
                     child: Text(
                       '已恢复上次播放进度',
-                      style: TextStyle(color: Colors.white, fontSize: 14),
+                      style: TextStyle(color: Colors.white, fontSize: 13),
                     ),
                   ),
                   TextButton(
@@ -130,13 +135,13 @@ class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      minimumSize: const Size(0, 36),
+                      minimumSize: const Size(0, 34),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                     child: const Text(
                       '重头开始',
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -146,15 +151,14 @@ class _PlayerResumeIndicatorState extends State<PlayerResumeIndicator>
                     style: TextButton.styleFrom(
                       foregroundColor: Colors.redAccent,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
+                        horizontal: 10,
                         vertical: 8,
                       ),
-                      minimumSize: const Size(0, 36),
+                      minimumSize: const Size(0, 34),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    child: const Text('关闭', style: TextStyle(fontSize: 14)),
+                    child: const Text('关闭', style: TextStyle(fontSize: 13)),
                   ),
-                  const SizedBox(width: 6),
                 ],
               ),
             ),

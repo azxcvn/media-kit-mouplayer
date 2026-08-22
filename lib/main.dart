@@ -57,7 +57,10 @@ class _MoumouAppState extends State<MoumouApp> {
     super.initState();
     _themeController.load();
     _viewSettings.load();
-    PlaybackProgressService.instance.load();
+    // 用 ensureLoaded 而非 load：播放页恢复进度时也用 ensureLoaded，
+    // 两者共享同一 load Future，防止「main 的 load 未完成、播放页已读
+    // 空缓存」的竞态（用户反馈：重启后恢复不了进度的根因）
+    PlaybackProgressService.instance.ensureLoaded();
     // 用 ensureLoaded 而非 load：setter 侧的 ensureLoaded 与这里共享同一
     // load Future，防止「启动加载未完成、用户已改设置被 load 覆盖」的竞态
     // （risk_audit #9）

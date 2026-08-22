@@ -4,6 +4,22 @@ import 'package:flutter/services.dart';
 /// 播放页路由标识：播放页 push 时需携带 RouteSettings(name: playerRouteName)
 const String playerRouteName = 'player';
 
+/// 播放页路由：淡入淡出转场（200ms）。
+///
+/// 退出时淡出与系统竖屏旋转自然重叠——不加延时、不盖黑屏：横屏播放页在
+/// 淡出过程中旋转回竖屏，视觉平滑（用户反馈 v5：退出不能有错向界面
+/// 长时间闪现，也不能有生硬的黑屏淡出）。
+Route<T> playerPageRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    settings: const RouteSettings(name: playerRouteName),
+    transitionDuration: const Duration(milliseconds: 200),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
+    pageBuilder: (_, _, _) => page,
+    transitionsBuilder: (_, animation, _, child) =>
+        FadeTransition(opacity: animation, child: child),
+  );
+}
+
 /// 全局框架：包裹整个 Navigator，处理系统安全区与播放页全屏。
 ///
 /// - 普通页面：底部避让系统导航键（三大金刚键），背景为主题色；

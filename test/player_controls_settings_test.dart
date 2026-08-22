@@ -46,6 +46,8 @@ void main() {
     // 视频方向默认自动；播放界面动画默认开启（工作.md 第 5/7 点）
     expect(s.videoOrientation, VideoOrientationMode.auto);
     expect(s.playerAnimations, isTrue);
+    // 顶部信息默认：时间与电量同时显示（工作.md 第 12 点）
+    expect(s.topStatusDisplay, TopStatusDisplay.both);
   });
 
   test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
@@ -383,6 +385,7 @@ void main() {
     await s.setAutoNext(false);
     await s.setAutoExit(false);
     await s.setLoopMode(LoopMode.loopAll);
+    await s.setTopStatusDisplay(TopStatusDisplay.time);
 
     await s.load();
     expect(s.doubleTapMode, DoubleTapMode.seek);
@@ -396,5 +399,22 @@ void main() {
     expect(s.autoNext, isFalse);
     expect(s.autoExit, isFalse);
     expect(s.loopMode, LoopMode.loopAll);
+    expect(s.topStatusDisplay, TopStatusDisplay.time);
+  });
+
+  test('顶部信息显示：关闭/时间/电量/两者切换并持久化（工作.md 第 12 点）', () async {
+    final s = PlayerControlsSettings.instance;
+    await s.setTopStatusDisplay(TopStatusDisplay.off);
+    expect(s.topStatusDisplay, TopStatusDisplay.off);
+    await s.load(); // 模拟重启
+    expect(s.topStatusDisplay, TopStatusDisplay.off);
+    await s.setTopStatusDisplay(TopStatusDisplay.battery);
+    expect(s.topStatusDisplay, TopStatusDisplay.battery);
+    await s.setTopStatusDisplay(TopStatusDisplay.both);
+    expect(s.topStatusDisplay, TopStatusDisplay.both);
+    await s.setTopStatusDisplay(TopStatusDisplay.time);
+    expect(s.topStatusDisplay, TopStatusDisplay.time);
+    await s.setTopStatusDisplay(TopStatusDisplay.time); // 幂等
+    expect(s.topStatusDisplay, TopStatusDisplay.time);
   });
 }

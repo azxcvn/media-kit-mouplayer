@@ -120,14 +120,11 @@ class _TreeFolderPageState extends State<TreeFolderPage> {
         if (!c.isFolder) c.video!,
     ];
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        settings: const RouteSettings(name: playerRouteName),
-        builder: (_) => PlayerPage(
-          path: video.path,
-          title: video.name,
-          playlist: playlist,
-        ),
-      ),
+      playerPageRoute(PlayerPage(
+        path: video.path,
+        title: video.name,
+        playlist: playlist,
+      )),
     );
     // 返回后刷新，进度条立即更新
     if (mounted) setState(() {});

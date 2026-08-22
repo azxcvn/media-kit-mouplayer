@@ -23,6 +23,21 @@ enum VideoOrientationMode {
   const VideoOrientationMode(this.label);
 }
 
+/// 播放界面顶部信息栏显示内容（工作.md 第 12 点，设置-播放器设置-顶部信息）：
+/// - [off]：关闭——不显示时间也不显示电量，不占用顶部区域；
+/// - [time]：只显示时间；
+/// - [battery]：只显示电量；
+/// - [both]：时间与电量同时显示。
+enum TopStatusDisplay {
+  off('关闭'),
+  time('只显示时间'),
+  battery('只显示电量'),
+  both('时间与电量');
+
+  final String label;
+  const TopStatusDisplay(this.label);
+}
+
 /// 画面比例（对齐 PiliPlus 的 VideoFitType）：
 /// 通过 Video 组件的 [BoxFit] 与 [aspectRatio] 实现，无需 mpv 属性。
 enum PlayerVideoFit {
@@ -52,8 +67,7 @@ enum PlayerVideoFit {
 ///
 /// [implemented] 为 false 的动作是占位入口（字幕/弹幕/音轨/音频均衡器/解码/片头片尾），
 /// 顶栏点击提示「功能即将上线」，待后续接入具体功能。
-/// [implemented] 为 true 的动作：比例（已接入）；画中画/听视频（v2 已规划，
-/// 接入见对应任务，接入前点击暂不响应）。
+/// [implemented] 为 true 的动作：比例、画中画、听视频（已接入）、循环播放。
 ///
 /// 注意：倍速（speed）**不在**顶栏动作之列 —— 倍速按钮固定于播放页
 /// 底栏（超分辨率按钮左侧），不支持在顶栏控制栏增加或删除。
@@ -65,8 +79,8 @@ enum PlayerTopAction {
   // v2 新增：pip/listen 已规划实现（implemented=true，具体接入见后续任务）；
   // equalizer/decode/introOutro 仅入口（implemented=false → 点击提示即将上线）
   pip('pip', '画中画', Icons.picture_in_picture_alt_outlined, true),
-  // v3：听视频暂移除实现（待重做），仅保留图标入口（点击提示即将上线）
-  listen('listen', '听视频', Icons.headphones_outlined, false),
+  // 听视频：已接入（工作.md 第 10 点），点击进入听视频界面
+  listen('listen', '听视频', Icons.headphones_outlined, true),
   // v3：循环播放从设置页移入播放界面，作为可自定义槽位动作（可增删）
   loop('loop', '循环播放', Icons.repeat, true),
   equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, false),

@@ -109,6 +109,18 @@ class DeviceServices {
     }
   }
 
+  /// 读取当前电池电量百分比（0 – 100，播放界面顶部信息行用）；
+  /// 失败/不支持返回 null（调用方隐藏电量显示）。
+  static Future<int?> getBatteryLevel() async {
+    try {
+      final v = await _channel.invokeMethod<int>('getBatteryLevel');
+      if (v == null || v < 0) return null;
+      return v.clamp(0, 100);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 提取本地视频 [path] 在 [timeMs] 时刻的画面（JPEG 字节，最长边约 [maxWidth]）。
   ///
   /// 按秒分桶 + 原生/包内缓存；Dart 侧做一层 LRU 与在飞去重。

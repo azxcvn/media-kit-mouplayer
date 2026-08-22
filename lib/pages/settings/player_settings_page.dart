@@ -116,6 +116,32 @@ class PlayerSettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
+              // ── 顶部信息（工作.md 第 12 点）──────────────
+              const SizedBox(height: 16),
+              const SettingsGroupTitle(title: '顶部信息'),
+              SettingsCard(
+                child: Column(
+                  children: [
+                    for (final m in TopStatusDisplay.values)
+                      SettingsRadioTile(
+                        icon: switch (m) {
+                          TopStatusDisplay.off => Icons.visibility_off_outlined,
+                          TopStatusDisplay.time => Icons.access_time,
+                          TopStatusDisplay.battery => Icons.battery_full,
+                          TopStatusDisplay.both =>
+                            Icons.schedule_send_outlined,
+                        },
+                        title: m.label,
+                        subtitle: Text(switch (m) {
+                          TopStatusDisplay.off => '不显示时间与电量，不占用顶部区域',
+                          _ => '在播放界面顶部居中显示时间与电量',
+                        }),
+                        selected: settings.topStatusDisplay == m,
+                        onTap: () => settings.setTopStatusDisplay(m),
+                      ),
+                  ],
+                ),
+              ),
               // ── 播放行为（原「播放」组别改名）────────────
               const SizedBox(height: 16),
               const SettingsGroupTitle(title: '播放行为'),

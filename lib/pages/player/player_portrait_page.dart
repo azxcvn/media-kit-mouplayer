@@ -7,14 +7,17 @@ import 'package:media_kit_video/media_kit_video.dart';
 import 'package:moumou/models/player_action.dart';
 import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
 import 'package:moumou/pages/player/views/player_gesture_layer.dart';
 import 'package:moumou/pages/player/views/player_loop_panel.dart';
 import 'package:moumou/pages/player/views/player_playlist_panel.dart';
+import 'package:moumou/pages/player/views/player_resume_indicator.dart';
 import 'package:moumou/pages/player/views/player_speed_indicator.dart';
 import 'package:moumou/pages/player/views/player_speed_panel.dart';
+import 'package:moumou/pages/player/views/player_status_bar.dart';
 import 'package:moumou/pages/player/views/player_super_resolution_panel.dart';
 import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
 import 'package:moumou/pages/player/views/player_right_actions.dart';
@@ -29,6 +32,7 @@ import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/playback_completion.dart';
 import 'package:moumou/utils/playback_restore.dart';
 import 'package:moumou/utils/player_gestures.dart';
+import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/player_bottom_panel.dart';
 import 'package:moumou/widgets/player_panel.dart';
 import 'package:saver_gallery/saver_gallery.dart';
@@ -74,6 +78,13 @@ class PlayerPortraitPage extends StatefulWidget {
   /// 本页 EOF「自动退出」时回调（横屏页先关本页再退出播放器回到列表）
   final VoidCallback? onExitPlayer;
 
+  /// 恢复进度指示器是否应在进入本页时显示（工作.md 第 3 点：
+  /// 锁定竖屏/竖屏播放时横屏页已恢复进度，本页要接住并显示指示器）
+  final bool initialResumeVisible;
+
+  /// 本页指示器关闭时通知横屏页同步隐藏（避免返回横屏后指示器残留）
+  final VoidCallback? onResumeDismissed;
+
   const PlayerPortraitPage({
     super.key,
     required this.player,
@@ -83,6 +94,8 @@ class PlayerPortraitPage extends StatefulWidget {
     this.playlist,
     this.onVideoChanged,
     this.onExitPlayer,
+    this.initialResumeVisible = false,
+    this.onResumeDismissed,
   });
 
   @override
@@ -167,6 +180,18 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   /// 单击屏幕可呼出/隐藏解锁按钮——与横屏一致）
   bool _locked = false;
 
+  /// 恢复进度指示器是否可见（工作.md 第 3 点）：
+  /// - 进入本页时继承横屏页已完成的恢复结果（[widget.initialResumeVisible]）；
+  /// - 本页内切集恢复成功后也显示（切集流程内联，v5 重写）。
+  bool _resumeVisible = false;
+
+  /// 正在恢复进度（v5 重写：切集恢复时用不透明封层盖住视频，暂停加载 +
+  /// seek 都在封层下进行，用户看不到 0 时刻第一帧海报；到位后揭开 + 播放）。
+  bool _restoring = false;
+
+  /// 听视频页打开期间为 true：本页 EOF 让位给听视频页
+  bool _audioActive = false;
+
   /// 解锁按钮显隐动画（工作.md 第 8 点：与横屏一致——锁定后从左右两侧
   /// 滑入，单击屏幕切换呼出/隐藏，解锁时滑出）
   late final AnimationController _unlockController = AnimationController(
@@ -220,6 +245,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     _positionNotifier.value = _player.state.position;
     _durationNotifier.value = _player.state.duration;
     _playing = _player.state.playing;
+
+    // 工作.md 第 3 点：横屏页已完成恢复时，本页接住并显示恢复指示器
+    _resumeVisible = widget.initialResumeVisible;
 
     // 倍速展示：跟随共享播放器当前设置（不 setRate，横屏已应用）
     _speed = _settings.rememberSpeed ? _settings.lastSpeed : 1.0;
@@ -594,63 +622,95 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
 
   /// 切集统一入口（「下一集」/「列表循环回第一集」/播放列表面板点击共用，
   /// 工作.md 第 8 点）：共享播放器上直接切集（音频连续），
-  /// 保存当前进度 → open → 倍速/超分 → 恢复新集记忆进度。
+  /// 保存当前进度 → open（恢复时暂停加载 + 封层 + seek，见 [openAndRestore]）
+  /// → 倍速/超分 → 确认新集恢复（v5 确定性恢复，无跳转）。
   Future<void> _switchTo(String path, String name) async {
     _isSwitchingVideo = true;
-    _saveProgress();
     try {
-      await _player.open(Media(path));
+      await _saveProgress(forcePersist: true);
+      // 新集保存进度：open 时恢复（阈值过滤见 [_resumeStartFor]，
+      // 防「已看完」定位到结尾触发 EOF 连播）
+      final savedForNew = _resumeStartFor(path);
+      // 恢复时先盖住视频（暂停加载 + seek 都在封层下）
+      if (savedForNew != null && mounted) setState(() => _restoring = true);
+      final restored = await openAndRestore(
+        _player,
+        path,
+        saved: savedForNew,
+        // 倍速 + 超分在播放/seek 前完成（避免 shader 变化重置位置）
+        prepare: () async {
+          await _player.setRate(_speed);
+          try {
+            await SuperResolutionService.instance.apply(_player);
+          } catch (_) {
+            // 忽略：超分失败不影响播放
+          }
+        },
+      );
+      if (!mounted) return;
+      if (mounted) {
+        setState(() {
+          _path = path;
+          _title = name;
+          _positionNotifier.value = Duration.zero;
+          _durationNotifier.value = Duration.zero;
+          _dragPositionNotifier.value = null;
+          _indicator = null;
+          _swipeSeekData = null;
+          _resumeVisible = false;
+          _restoring = false;
+        });
+      }
+      // 通知横屏页同步最新 path/title（共享播放器，横屏侧状态必须跟随）
+      widget.onVideoChanged?.call(path, name);
+      if (!mounted) return;
+      if (restored && savedForNew != null) {
+        _positionNotifier.value = savedForNew;
+        _showResumeIndicator();
+      }
     } on AssertionError {
       // 共享播放器已被销毁（横屏页已退出）：静默返回，不写假崩溃日志
       return;
     } finally {
       _isSwitchingVideo = false;
     }
-    if (!mounted) return;
-    _player.setRate(_speed);
-    try {
-      // 切集后重放着色器（mpv 打开新文件时着色器链需重新确认）
-      await SuperResolutionService.instance.apply(_player);
-    } catch (_) {
-      // 忽略：超分失败不影响播放
-    }
-    if (mounted) {
-      setState(() {
-        _path = path;
-        _title = name;
-        _positionNotifier.value = Duration.zero;
-        _durationNotifier.value = Duration.zero;
-        _dragPositionNotifier.value = null;
-        _indicator = null;
-        _swipeSeekData = null;
-      });
-    }
-    // 通知横屏页同步最新 path/title（共享播放器，横屏侧状态必须跟随）
-    widget.onVideoChanged?.call(path, name);
-    if (!mounted) return;
-    // 新集恢复其记忆进度（<30s 短视频不恢复，与横屏语义一致）
-    await _restoreProgressForNewVideo();
     _resetHideTimer();
   }
 
-  /// 恢复新集记忆进度（仅切集时调用；进入竖屏页本身不恢复——同一会话）。
-  /// 短视频（<30s）不恢复（参考 src loadVideo）；看完阈值用设置。
-  Future<void> _restoreProgressForNewVideo() async {
-    await PlaybackProgressService.instance.ensureLoaded();
-    if (!mounted) return;
-    final saved = PlaybackProgressService.instance.getProgress(_path);
-    if (saved == null || saved <= Duration.zero) return;
-    if (_player.state.duration > Duration.zero &&
-        _player.state.duration < const Duration(seconds: 30)) {
-      return;
+  /// 读取保存进度并做阈值过滤（与横屏页 [_resumeStartFor] 同逻辑，
+  /// Kazumi `resumedNearEnd` 思路）：无进度/≤0/已看完（≥阈值）/进度过少
+  /// （<5%）→ null 从头播；时长优先用播放列表 MediaStore 的 durationMs。
+  Duration? _resumeStartFor(String path) {
+    Duration? listDuration;
+    final list = widget.playlist;
+    if (list != null) {
+      for (final v in list) {
+        if (v.path == path && v.durationMs > 0) {
+          listDuration = Duration(milliseconds: v.durationMs);
+          break;
+        }
+      }
     }
-    await restorePlaybackPosition(
-      _player,
-      saved,
-      maxRestoreRatio: _settings.watchThreshold,
-      // 页面销毁后取消剩余重试（risk_audit #2，共享播放器被横屏页销毁时防异常）
-      isCancelled: () => !mounted,
-    );
+    final saved = PlaybackProgressService.instance.getProgress(path);
+    if (saved == null || saved <= Duration.zero) return null;
+    if (listDuration != null &&
+        !shouldRestorePosition(
+          listDuration,
+          saved,
+          maxRestoreRatio: _settings.watchThreshold,
+        )) {
+      return null;
+    }
+    return saved;
+  }
+
+  /// 恢复到位后显示「已恢复上次播放进度」指示器（与横屏页同款）。
+  ///
+  /// 同步显示（无需延迟）：[PlayerResumeIndicator] 自带进场动画形成错峰；
+  /// v5 恢复改由 [openAndRestore] 确定性完成，不再需要「进入视频 2s」延迟。
+  void _showResumeIndicator() {
+    if (!mounted) return;
+    setState(() => _resumeVisible = true);
   }
 
   /// 列表循环：回到播放列表第一集。
@@ -692,6 +752,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   /// 共享播放器下，竖屏页在栈顶期间负责处理 completed（横屏已让位）。
   void _onPlaybackCompleted() {
     if (_isSwitchingVideo || _isHandlingEndOfFile) return;
+    // 听视频页打开期间：completed 由听视频页处理（共享播放器）
+    if (_audioActive) return;
     if (!mounted) return;
     if (_duration <= Duration.zero) return;
     if (_position < _duration - const Duration(seconds: 1)) return;
@@ -832,11 +894,12 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.subtitle:
       case PlayerTopAction.danmaku:
       case PlayerTopAction.audio:
-      case PlayerTopAction.listen:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
       case PlayerTopAction.introOutro:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.listen:
+        _openAudioPlayer();
       case PlayerTopAction.pip:
         break;
     }
@@ -855,11 +918,14 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.subtitle:
       case PlayerTopAction.danmaku:
       case PlayerTopAction.audio:
-      case PlayerTopAction.listen:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
       case PlayerTopAction.introOutro:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.listen:
+        // 先关闭「更多」面板再进入听视频（§4.5：不叠加第二个面板/弹窗）
+        Navigator.of(panelContext).pop();
+        _openAudioPlayer();
       case PlayerTopAction.pip:
         break;
     }
@@ -875,7 +941,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     _hideTimer?.cancel();
     await showPlayerBottomPanel(
       context,
-      pages: [PlayerPanelPage(title: '控制栏', body: _buildMorePanel())],
+      pages: [PlayerPanelPage(title: '更多', body: _buildMorePanel())],
     );
     _resetHideTimer();
   }
@@ -898,16 +964,81 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   /// 只保存进度并 pop——播放器/设备状态/方向/系统 UI 由横屏页统一持有与恢复，
   /// **音频零中断**（共享播放器从未停止）。
   Future<void> _exitPlayer() async {
-    _saveProgress();
+    await _saveProgress(forcePersist: true);
     if (mounted) Navigator.of(context).pop();
   }
 
-  /// 记录播放进度（播了一部分才记，避免污染"没看过的视频"）
-  void _saveProgress() {
+  /// 顶栏返回 / 系统返回（工作.md 第 4 点 bug 修复）：
+  /// 竖屏模式下返回应**直接退出播放**（先关本页，再退出横屏播放页回到列表），
+  /// 而不是回到横屏再退一次。走横屏页的 [_exitWithPortrait]（onExitPlayer）。
+  Future<void> _backExit() async {
+    await _saveProgress(forcePersist: true);
+    final exit = widget.onExitPlayer;
+    if (exit != null) {
+      exit();
+    } else if (mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// 关闭本页恢复指示器，并通知横屏页同步隐藏（返回横屏后不残留）
+  void _dismissResume() {
+    if (!mounted) return;
+    setState(() => _resumeVisible = false);
+    widget.onResumeDismissed?.call();
+  }
+
+  /// 听视频（工作.md 第 10 点）：竖屏页「更多 → 听视频」进入。
+  /// 共享同一 Player（音频零中断），听视频页是竖屏界面；返回后本页继续。
+  Future<void> _openAudioPlayer() async {
+    _hideTimer?.cancel();
+    _audioActive = true;
+    if (mounted) setState(() {});
+    await Navigator.of(context).push(
+      PageRouteBuilder(
+        settings: const RouteSettings(name: playerRouteName),
+        transitionDuration: const Duration(milliseconds: 200),
+        reverseTransitionDuration: const Duration(milliseconds: 200),
+        pageBuilder: (_, _, _) => AudioPlayerPage(
+          player: _player,
+          initialPath: _path,
+          initialTitle: _title,
+          playlist: widget.playlist,
+          onVideoChanged: (path, title) {
+            if (!mounted) return;
+            setState(() {
+              _path = path;
+              _title = title;
+              _positionNotifier.value = Duration.zero;
+              _durationNotifier.value = Duration.zero;
+              _dragPositionNotifier.value = null;
+            });
+            widget.onVideoChanged?.call(path, title);
+          },
+        ),
+        transitionsBuilder: (_, animation, _, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
+    if (!mounted) return;
+    _audioActive = false;
+    setState(() {});
+    // 听视频页竖屏，返回后本页保持竖屏 + 沉浸式
+    _enterFullscreen();
+    _resetHideTimer();
+  }
+
+  /// 记录播放进度（播了一部分才记，避免污染"没看过的视频"）。
+  /// [forcePersist] = true 时强制落盘（退出/切集调用，保证重启后可恢复）。
+  Future<void> _saveProgress({bool forcePersist = false}) async {
     if (_position.inMilliseconds > 0 &&
         _duration.inMilliseconds > 0 &&
         _position < _duration) {
-      PlaybackProgressService.instance.save(_path, _position);
+      await PlaybackProgressService.instance.save(
+        _path,
+        _position,
+        forcePersist: forcePersist,
+      );
     }
   }
 
@@ -957,7 +1088,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
-        _exitPlayer();
+        // 工作.md 第 4 点：竖屏模式下返回直接退出播放
+        _backExit();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -969,13 +1101,21 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
             return Stack(
               children: [
                 // 视频画面（与横屏同一 VideoController，同一路画面；
-                // Android 支持多 Video 挂同一 controller）
+                // Android 支持多 Video 挂同一 controller）。
+                // 用 ListenableBuilder 监听设置：画面比例实时生效
+                //（工作.md 第 8 点 bug 修复）
                 Positioned.fill(
-                  child: Video(
-                    controller: _controller,
-                    controls: NoVideoControls,
-                    fit: _settings.videoFit.boxFit,
-                    aspectRatio: _settings.videoFit.aspectRatio,
+                  child: ListenableBuilder(
+                    listenable: _settings,
+                    builder: (context, _) => Video(
+                      // ⚠️ key 随 fit 变化：4:3 → 自动时强制重建，
+                      // 否则 Video 内部渲染纹理尺寸缓存不刷新（工作.md 第 3 点）
+                      key: ValueKey('fit-${_settings.videoFit.index}'),
+                      controller: _controller,
+                      controls: NoVideoControls,
+                      fit: _settings.videoFit.boxFit,
+                      aspectRatio: _settings.videoFit.aspectRatio,
+                    ),
                   ),
                 ),
                 // 手势层：单击显隐控制层 / 双击按设置 / 长按倍速 /
@@ -1001,7 +1141,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                     child: const SizedBox.expand(),
                   ),
                 ),
-                // 顶栏：返回 + 标题 + 槽位 + 更多（顶部下滑隐藏）
+                // 顶栏：时间/电量信息行（工作.md 第 12 点）+ 返回 + 标题 +
+                // 槽位 + 更多（顶部下滑隐藏）
                 Positioned(
                   left: 0,
                   right: 0,
@@ -1017,11 +1158,33 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                       child: AnimatedOpacity(
                         opacity: _controlsVisible ? 1 : 0,
                         duration: _controlsFadeDuration,
-                        child: PortraitPlayerTopBar(
-                          title: _title,
-                          onBack: _exitPlayer,
-                          onMore: _openMorePanel,
-                          onActionTap: _handleSlotAction,
+                        // 顶部渐变压暗统一放这里（信息行 + 顶栏整体一个连续
+                        // 渐变，顶部最暗 → 向下淡出）；组件不再各自画渐变，
+                        // 避免两段渐变拼接的暗色断层（用户反馈 v2）
+                        child: Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [
+                                Colors.black.withValues(alpha: 0.72),
+                                Colors.black.withValues(alpha: 0.3),
+                                Colors.transparent,
+                              ],
+                            ),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const PlayerStatusBar(portrait: true),
+                              PortraitPlayerTopBar(
+                                title: _title,
+                                onBack: _backExit,
+                                onMore: _openMorePanel,
+                                onActionTap: _handleSlotAction,
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ),
@@ -1244,6 +1407,46 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                     ),
                   ),
                 ),
+                // 恢复进度指示器（工作.md 第 3 点：竖屏/锁定竖屏也要显示；
+                // 竖屏顶栏（信息行 + 返回/标题/槽位）较高，指示器放其下方）
+                if (_resumeVisible)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: 100,
+                    child: IgnorePointer(
+                      child: Center(
+                        child: PlayerResumeIndicator(
+                          onRestart: () {
+                            _player.seek(Duration.zero);
+                            _player.play();
+                            _dismissResume();
+                          },
+                          onClose: _dismissResume,
+                        ),
+                      ),
+                    ),
+                  ),
+                // 恢复进度封层（z 序最顶）：切集恢复时盖住视频，暂停加载 +
+                // seek 期间用户看不到 0 时刻第一帧海报；到位后揭开 + 播放。
+                if (_restoring)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Container(
+                        color: Colors.black,
+                        alignment: Alignment.center,
+                        child: const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white24),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 // 双击快进/快退反馈徽章（顶部居中，控制层隐藏时也显示）
                 if (_seekFeedback != null)
                   Positioned(

@@ -9,6 +9,10 @@ import 'package:moumou/utils/formatters.dart';
 /// - 倍速条：长按且左右拖动调速后出现（位于指示器下方），显示全部
 ///   动态档位，当前档位高亮；停止操作 3 秒后自动隐藏（由页面计时控制）。
 ///
+/// 全部容器采用**胶囊式包裹**（工作.md 第 6 点）：完全圆角药丸形 +
+/// 半透明深色底（参考倍速列表胶囊 / 恢复指示器样式）；倍速条内的档位
+/// 也是胶囊，选中档位主题蓝填充高亮。
+///
 /// [visible] 由页面控制（长按中且设置开启指示器）；整体淡入淡出。
 class PlayerSpeedIndicator extends StatelessWidget {
   final double speed;
@@ -50,13 +54,10 @@ class PlayerSpeedIndicator extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // 速度胶囊（常驻）
+            // 速度胶囊（常驻，胶囊式包裹）
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(12),
-              ),
+              decoration: _capsuleDecoration,
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -78,7 +79,7 @@ class PlayerSpeedIndicator extends StatelessWidget {
                 ],
               ),
             ),
-            // 首次使用提示（尚未掌握动态调速时显示）
+            // 首次使用提示（胶囊式包裹）
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
               child: showHint && !dynamicActive
@@ -89,10 +90,7 @@ class PlayerSpeedIndicator extends StatelessWidget {
                           horizontal: 16,
                           vertical: 6,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        decoration: _capsuleDecoration,
                         child: const Text(
                           '左右滑动可临时调节长按倍数',
                           style: TextStyle(
@@ -104,7 +102,7 @@ class PlayerSpeedIndicator extends StatelessWidget {
                     )
                   : const SizedBox.shrink(),
             ),
-            // 倍速条（动态调速后出现，位于指示器下方）
+            // 倍速条（动态调速后出现；胶囊容器 + 档位胶囊）
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 200),
               child: dynamicActive && showBar
@@ -113,19 +111,16 @@ class PlayerSpeedIndicator extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 8),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
+                          horizontal: 8,
+                          vertical: 6,
                         ),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        decoration: _capsuleDecoration,
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             for (final p in presets) ...[
-                              if (p != presets.first) const SizedBox(width: 6),
-                              _PresetText(
+                              if (p != presets.first) const SizedBox(width: 4),
+                              _PresetPill(
                                 label: _presetLabel(p),
                                 selected: (speed - p).abs() < 0.01,
                               ),
@@ -142,28 +137,42 @@ class PlayerSpeedIndicator extends StatelessWidget {
     );
   }
 
+  /// 胶囊式包裹的通用容器样式：完全圆角 + 半透明深色底
+  static BoxDecoration get _capsuleDecoration => BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(999),
+      );
+
   static String _presetLabel(double p) =>
       p == p.roundToDouble() ? '${p.toInt()}x' : '${p.toStringAsFixed(1)}x';
 }
 
-class _PresetText extends StatelessWidget {
+/// 倍速条里的档位胶囊：选中项主题蓝填充 + 白字加粗，未选中半透明底
+class _PresetPill extends StatelessWidget {
   final String label;
   final bool selected;
 
-  const _PresetText({required this.label, required this.selected});
+  const _PresetPill({required this.label, required this.selected});
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedDefaultTextStyle(
+    return AnimatedContainer(
       duration: const Duration(milliseconds: 150),
-      style: TextStyle(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
         color: selected
             ? const Color(0xFF4FC3F7)
-            : Colors.white.withValues(alpha: 0.6),
-        fontSize: selected ? 14 : 12,
-        fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            : Colors.white.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(label),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: selected ? Colors.black : Colors.white.withValues(alpha: 0.7),
+          fontSize: selected ? 13 : 12,
+          fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
     );
   }
 }

@@ -10,6 +10,10 @@ import 'package:moumou/services/player_controls_settings.dart';
 ///
 /// 控制按钮背景：设置「播放器设置 → 按钮背景」开启后，返回/槽位/更多
 /// 图标显示半透明圆角背景（与底栏倍速图标一致）；默认关闭 = 纯图标。
+///
+/// ⚠️ 顶部渐变压暗由页面层统一提供（「信息行 + 本顶栏」整体一个连续
+/// 渐变，见 PlayerStatusBar 文件头注释）：本组件不再自带渐变，避免与
+/// 上方信息行的渐变拼接产生「阴影在时间电量下方」的断层（用户反馈 v2）。
 class PlayerTopBar extends StatelessWidget {
   final String title;
   final VoidCallback onBack;
@@ -28,23 +32,15 @@ class PlayerTopBar extends StatelessWidget {
   Widget build(BuildContext context) {
     // 顶栏已随控制设置自动重建（槽位变化/背景开关共用同一监听）
     final showBg = PlayerControlsSettings.instance.showButtonBackground;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Colors.black.withValues(alpha: 0.7), Colors.transparent],
-        ),
-      ),
-      child: SafeArea(
-        // 横屏时挖孔在物理左/右侧，控制层不应消费左右 inset（见 AppFrame 约定）
-        left: false,
-        bottom: false,
-        right: false,
-        // 人体工学（工作.md 第 19 点）：返回按钮整体右移，与底栏进度条
-        // 开端/下一集/时间文本对齐到同一 x（kPlayerLeftInset）
-        child: Padding(
-          padding: const EdgeInsets.only(left: kPlayerLeftInset),
+    return SafeArea(
+      // 横屏时挖孔在物理左/右侧，控制层不应消费左右 inset（见 AppFrame 约定）
+      left: false,
+      bottom: false,
+      right: false,
+      // 人体工学（工作.md 第 19 点）：返回按钮整体右移，与底栏进度条
+      // 开端/下一集/时间文本对齐到同一 x（kPlayerLeftInset）
+      child: Padding(
+        padding: const EdgeInsets.only(left: kPlayerLeftInset),
           child: Row(
             children: [
               _TopIconButton(
@@ -98,8 +94,7 @@ class PlayerTopBar extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }
 

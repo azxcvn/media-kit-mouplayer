@@ -18,6 +18,15 @@ import 'package:moumou/services/player_controls_settings.dart';
 ///
 /// 控制按钮背景：与横屏顶栏一致，受「播放器设置 → 按钮背景」控制
 /// （默认关闭 = 纯图标）。
+///
+/// ⚠️ 顶部渐变压暗由页面层统一提供（「信息行 + 本顶栏」整体一个连续
+/// 渐变）：本组件不再自带渐变，避免两段渐变拼接的「阴影在时间电量下方」
+/// 断层（用户反馈 v2）。
+///
+/// ⚠️ SafeArea 不再消费顶部 inset（用户反馈 v3：竖屏下顶部 inset 把
+/// 返回/控制行大幅往下顶，与上方时间/电量行之间出现超大间隔）：
+/// 播放页为沉浸式全屏，视频本身延伸到状态栏/挖孔区域，控制行跟随
+/// 信息行紧贴屏幕顶部即可。
 class PortraitPlayerTopBar extends StatelessWidget {
   /// 竖屏顶栏最多渲染的槽位数（v3 用户反馈：5 个会超出屏宽）
   static const int maxPortraitSlots = 4;
@@ -41,26 +50,17 @@ class PortraitPlayerTopBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final showBg = PlayerControlsSettings.instance.showButtonBackground;
-    return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Colors.black.withValues(alpha: 0.72),
-            Colors.black.withValues(alpha: 0.45),
-            Colors.transparent,
-          ],
-        ),
-      ),
-      child: SafeArea(
-        left: false,
-        right: false,
-        bottom: false,
-        child: Padding(
-          // top 留出更大空间，远离状态栏/刘海（PortraitTopBar 同款思路）；
-          // left 与底栏进度条/时间/下一集对齐（人体工学左对齐）
-          padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 10, 4, 6),
+    return SafeArea(
+      left: false,
+      right: false,
+      bottom: false,
+      // 不消费顶部 inset：见文件头注释（v3 用户反馈：顶部大间隔）
+      top: false,
+      child: Padding(
+        // top 留出更大空间，远离状态栏/刘海（PortraitTopBar 同款思路）；
+        // 顶部信息行已单独占一行，这里 top 减小避免顶栏被顶得过低
+        // （用户反馈：竖屏下状态栏把控制组件大幅往下顶）
+        padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 4, 4, 4),
           child: Row(
             children: [
               _PortraitTopIconButton(
@@ -116,8 +116,7 @@ class PortraitPlayerTopBar extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }
 

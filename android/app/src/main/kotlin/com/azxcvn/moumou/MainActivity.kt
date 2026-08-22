@@ -7,6 +7,7 @@ import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -162,6 +163,8 @@ class MainActivity : FlutterActivity() {
                         setWindowBrightness(call.argument<Double>("brightness") ?: -1.0)
                         result.success(null)
                     }
+                    // 播放界面顶部电量显示（工作.md 第 12 点）
+                    "getBatteryLevel" -> result.success(getBatteryLevel())
                     "getVideoFrameAt" -> {
                         val path = call.argument<String>("path")
                         // 注意：Dart 小整数经 MethodChannel 编码后是 Integer 而非 Long，
@@ -442,6 +445,22 @@ class MainActivity : FlutterActivity() {
         val attrs = window.attributes
         attrs.screenBrightness = if (value < 0) -1f else value.toFloat().coerceIn(0f, 1f)
         window.attributes = attrs
+    }
+
+    // ── 电量（播放界面顶部信息行，工作.md 第 12 点）──────────
+
+    /**
+     * 读取当前电池电量百分比（0 – 100）。
+     * BatteryManager.BATTERY_PROPERTY_CAPACITY 无需任何权限（API 21+）；
+     * 异常时返回 -1，Dart 侧按「未知」隐藏电量显示。
+     */
+    private fun getBatteryLevel(): Int {
+        return try {
+            val bm = getSystemService(BATTERY_SERVICE) as? BatteryManager
+            bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
+        } catch (e: Exception) {
+            -1
+        }
     }
 
     // ── 任意时刻抓帧（本地视频）────────────────────────────

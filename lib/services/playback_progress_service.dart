@@ -38,15 +38,20 @@ class PlaybackProgressService extends ChangeNotifier {
     return ms != null ? Duration(milliseconds: ms) : null;
   }
 
-  /// 启动时加载全部进度
+  /// 启动时加载全部进度。
+  ///
+  /// ⚠️ 竞态修复（用户反馈「重启后恢复不了」的根因）：必须在**读盘完成之后**
+  /// 才置 [_loaded] = true。旧实现先置位再 await 读盘——main.dart 调 [load] 后
+  /// 播放页调 [ensureLoaded]（`_loadFuture ??= load()`）会再走一次 [load]，
+  /// 此时 [_loaded] 已是 true 直接返回空缓存，恢复逻辑读到 null 不恢复。
   Future<void> load() async {
     if (_loaded) return;
-    _loaded = true;
     final prefs = await SharedPreferences.getInstance();
     final json = prefs.getString(_key);
     if (json != null) {
       _cache = Map<String, int>.from(jsonDecode(json) as Map);
     }
+    _loaded = true; // 读盘完成后再置位
     notifyListeners();
   }
 
@@ -61,13 +66,18 @@ class PlaybackProgressService extends ChangeNotifier {
   /// 节流（risk_audit #3）：同一 path 在 [_persistInterval] 内重复保存
   /// 只更新内存，不重复整表写盘（用户连续退出/切集同一视频时收益最大；
   /// 退出/切集时内存进度仍是最新的，进程正常存活不受影响）。
-  Future<void> save(String path, Duration position) async {
+  /// [forcePersist] = true 时跳过节流强制落盘（退出播放/切集时调用，
+  /// 保证重启后磁盘上一定是最新进度，用户反馈「重启后恢复不了」的修复）。
+  Future<void> save(String path, Duration position,
+      {bool forcePersist = false}) async {
     await ensureLoaded();
     _cache[path] = position.inMilliseconds;
     notifyListeners();
     final last = _lastPersistedAt[path];
     final now = DateTime.now();
-    if (last != null && now.difference(last) < _persistInterval) {
+    if (!forcePersist &&
+        last != null &&
+        now.difference(last) < _persistInterval) {
       return; // 节流命中：内存已更新，跳过本轮全量写盘
     }
     _lastPersistedAt[path] = now;

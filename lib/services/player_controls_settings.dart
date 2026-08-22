@@ -52,6 +52,8 @@ class PlayerControlsSettings extends ChangeNotifier {
   // 视频方向（自动/锁定竖屏/锁定横屏）+ 播放界面动画开关
   static const _keyVideoOrientation = 'player_controls_video_orientation';
   static const _keyPlayerAnimations = 'player_controls_player_animations';
+  // 播放界面顶部信息栏（工作.md 第 12 点：时间/电量显示）
+  static const _keyTopStatusDisplay = 'player_controls_top_status_display';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -148,6 +150,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 播放界面动画（默认开启）：关闭后控制层/面板等不再显示进出场动画
   bool _playerAnimations = true;
 
+  /// 播放界面顶部信息栏显示内容（默认：时间与电量同时显示）
+  TopStatusDisplay _topStatusDisplay = TopStatusDisplay.both;
+
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
   DoubleTapMode get doubleTapMode => _doubleTapMode;
@@ -172,6 +177,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   LoopMode get loopMode => _loopMode;
   VideoOrientationMode get videoOrientation => _videoOrientation;
   bool get playerAnimations => _playerAnimations;
+  TopStatusDisplay get topStatusDisplay => _topStatusDisplay;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -239,6 +245,12 @@ class PlayerControlsSettings extends ChangeNotifier {
       _videoOrientation = VideoOrientationMode.values[orientation];
     }
     _playerAnimations = prefs.getBool(_keyPlayerAnimations) ?? true;
+    final topStatus = prefs.getInt(_keyTopStatusDisplay);
+    if (topStatus != null &&
+        topStatus >= 0 &&
+        topStatus < TopStatusDisplay.values.length) {
+      _topStatusDisplay = TopStatusDisplay.values[topStatus];
+    }
     notifyListeners();
   }
 
@@ -466,6 +478,16 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setBool(_keyPlayerAnimations, v);
   }
 
+  /// 播放界面顶部信息栏显示内容（只显示时间 / 只显示电量 / 时间与电量）
+  Future<void> setTopStatusDisplay(TopStatusDisplay v) async {
+    await ensureLoaded();
+    if (_topStatusDisplay == v) return;
+    _topStatusDisplay = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyTopStatusDisplay, v.index);
+  }
+
   /// 添加自定义倍速预设（去重、限制范围与数量）
   Future<void> addCustomSpeedPreset(double v) async {
     await ensureLoaded();
@@ -580,6 +602,7 @@ class PlayerControlsSettings extends ChangeNotifier {
     _loopMode = LoopMode.off;
     _videoOrientation = VideoOrientationMode.auto;
     _playerAnimations = true;
+    _topStatusDisplay = TopStatusDisplay.both;
     notifyListeners();
   }
 }
