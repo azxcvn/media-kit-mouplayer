@@ -161,7 +161,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.image_outlined,
                       title: '进度条缩略图',
-                      subtitle: const Text('拖动进度条时预览画面；默认关闭，开启后仅在拖动时后台预热'),
+                      subtitle: const Text('拖动进度条时预览画面（FFmpeg 硬解抓帧，与播放互不影响）'),
                       trailing: Switch(
                         value: settings.showThumbnailPreview,
                         onChanged: (v) => settings.setShowThumbnailPreview(v),

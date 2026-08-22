@@ -26,10 +26,10 @@ import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
 import 'package:moumou/pages/player/views/player_thumbnail_preview.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/services/device_services.dart';
+import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
-import 'package:moumou/services/thumbnail_preload_service.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/pip_aspect.dart';
 import 'package:moumou/utils/playback_completion.dart';
@@ -201,13 +201,14 @@ class _PlayerPageState extends State<PlayerPage>
 
   // ── 进度条缩略图预览 ──────────────────────────────────
 
-  /// 当前预览（bytes 为 null 表示帧仍在加载，先显示占位 + 时间）
-  ({Uint8List? bytes, Duration time})? _thumbPreview;
+  /// 当前预览（frame 为 null 表示帧仍在加载，先显示占位 + 时间）
+  ({FastThumbFrame? frame, Duration time})? _thumbPreview;
   double _thumbFraction = 0;
-  int _lastThumbBucketMs = -1;
 
-  /// 全片缩略图后台预热（快速拖动也能即时显示最近帧）
-  final ThumbnailPreloadService _preload = ThumbnailPreloadService();
+  /// 气泡可见性（拖动中 true；松手淡出后 false 再卸载）
+  bool _thumbVisible = false;
+  Timer? _thumbHideTimer;
+  int _lastThumbBucketMs = -1;
 
   final List<StreamSubscription<dynamic>> _subs = [];
 
@@ -220,6 +221,18 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   // ── 恢复进度 / 播放完成（EOF）处理 ──────────────────────
+
+  /// 把 mpv 的 hr-seek 设为 absolute：绝对 seek 一律精确（从上一关键帧
+  /// 解码到目标帧）。长 GOP 视频松手后可能多等几十毫秒，换取所见即所得。
+  Future<void> _applyExactSeek() async {
+    try {
+      final native = _player.platform as NativePlayer;
+      await native.waitForPlayerInitialization;
+      await native.setProperty('hr-seek', 'absolute');
+    } catch (_) {
+      // 播放器初始化失败时随打开流程报错，此处静默
+    }
+  }
 
   /// 恢复进度指示器是否可见（恢复到位后显示，自管理 2.5s 隐藏）
   bool _resumeVisible = false;
@@ -260,6 +273,10 @@ class _PlayerPageState extends State<PlayerPage>
     _title = widget.title;
     _player = Player();
     _controller = VideoController(_player);
+    // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
+    // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
+    // 而非落在最近关键帧）
+    unawaited(_applyExactSeek());
 
     // 工作.md 第 7 点：关闭「启用播放界面动画」后，控制层/解锁按钮
     // 的进出场动画时长归零（forward/reverse 立即完成，直接出现/消失）
@@ -960,12 +977,14 @@ class _PlayerPageState extends State<PlayerPage>
   /// 拖动进度条时请求对应时刻的画面。
   ///
   /// 两级策略（快速拖动也能即时出图）：
-  /// 1. 先查内存缓存中的「最近预生成帧」——命中即秒显（时间胶囊仍显示
-  ///    拖动位置，画面是最近采样点，精确帧到了再替换）；
-  /// 2. 无覆盖时显示加载占位，再走精确解码（与预生成共享缓存/去重）。
+  /// 1. 先查内存缓存中的「最近已解码帧」——命中即秒显（时间胶囊仍显示
+  ///    拖动位置，画面是最近帧，精确帧到了再替换）；
+  /// 2. 无覆盖时显示加载占位，再走精确解码（FFmpeg 快速引擎 ~85ms）。
   void _requestThumbnail(int ms) {
     if (!_settings.showThumbnailPreview) return;
     if (_duration <= Duration.zero || _path.isEmpty) return;
+    // 新拖动开始：终止空闲预取（预取与新请求共享单飞队列，无需其他处理）
+    _cancelThumbPrefetch();
     final clamped = ms.clamp(0, _duration.inMilliseconds);
     final bucket = (clamped ~/ 1000) * 1000;
     if (bucket == _lastThumbBucketMs) return;
@@ -974,26 +993,17 @@ class _PlayerPageState extends State<PlayerPage>
         ? clamped / _duration.inMilliseconds
         : 0;
 
-    // 拖动进度条才启动整段缩略图后台预热（从当前位置向外扩散，先近后远）。
-    // 只有真正拖动过的用户才产生后台解码与磁盘缓存开销。
-    if (!_preload.isActiveFor(_path)) {
-      _preload.start(
-        _path,
-        _duration.inMilliseconds,
-        fromMs: clamped,
-      );
-    }
-
-    // 1) 最近预生成帧即时显示
+    // 1) 最近已解码帧即时显示（同一区域来回拖动零解码）
     final nearest = DeviceServices.peekNearestFrame(
       _path,
       bucket,
-      maxGapMs: ThumbnailPreloadService.intervalFor(_duration),
+      maxGapMs: 10000,
     );
     if (nearest != null) {
       setState(() {
         _thumbPreview =
-            (bytes: nearest.bytes, time: Duration(milliseconds: bucket));
+            (frame: nearest.frame, time: Duration(milliseconds: bucket));
+        _thumbVisible = true;
       });
       // 精确桶已缓存或已跳过，则无需再取
       if (DeviceServices.peekFrame(_path, bucket) != null) return;
@@ -1003,26 +1013,79 @@ class _PlayerPageState extends State<PlayerPage>
 
     // 2) 无覆盖：占位 + 精确解码
     setState(() {
-      _thumbPreview = (bytes: null, time: Duration(milliseconds: bucket));
+      _thumbPreview = (frame: null, time: Duration(milliseconds: bucket));
+      _thumbVisible = true;
     });
     _fetchThumbnail(bucket);
   }
 
   /// 精确桶异步取帧（失败/过期自动丢弃）
   void _fetchThumbnail(int bucket) {
-    DeviceServices.getVideoFrameAt(_path, bucket).then((bytes) {
-      if (!mounted || bytes == null || bytes.isEmpty) return;
+    DeviceServices.getVideoFrameAt(_path, bucket).then((frame) {
+      if (!mounted || frame == null) return;
       // 已拖到别的秒：丢弃过期帧（_lastThumbBucketMs 只记录最新请求）
       if (_lastThumbBucketMs != bucket) return;
       setState(() {
-        _thumbPreview = (bytes: bytes, time: Duration(milliseconds: bucket));
+        _thumbPreview = (frame: frame, time: Duration(milliseconds: bucket));
       });
     });
   }
 
+  /// 松手：气泡淡出（150ms 动画）后再卸载，避免硬切闪烁
+  void _hideThumbPreview() {
+    _thumbHideTimer?.cancel();
+    if (_thumbPreview == null) return;
+    setState(() => _thumbVisible = false);
+    _thumbHideTimer = Timer(const Duration(milliseconds: 250), () {
+      // 期间又开始了新一轮拖动（_thumbVisible 被置回 true）则不清
+      if (!mounted || _thumbVisible) return;
+      setState(() {
+        _thumbPreview = null;
+        _lastThumbBucketMs = -1;
+      });
+    });
+  }
+
+  /// 立即清空缩略图预览（切集/退出时调用，需处于 setState 内或随后触发重建）
   void _clearThumbnail() {
+    _thumbHideTimer?.cancel();
+    _cancelThumbPrefetch();
     _thumbPreview = null;
+    _thumbVisible = false;
     _lastThumbBucketMs = -1;
+  }
+
+  // ── 空闲预取邻近秒桶（对齐 mpvRx：松手停住后后台补附近帧）──
+
+  Timer? _thumbPrefetchTimer;
+  int _thumbPrefetchGen = 0;
+
+  void _cancelThumbPrefetch() {
+    _thumbPrefetchTimer?.cancel();
+    _thumbPrefetchTimer = null;
+    _thumbPrefetchGen++;
+  }
+
+  /// 松手停住 350ms 后，把 [bucketMs] 附近 ±1/±2/±3 秒的秒桶串行补进
+  /// 内存缓存（每帧 ~85ms，共 6 帧）——再次拖到附近秒显。
+  /// 用户重新拖动（onChanged 会取消）/ 切集 / 退出立即终止；
+  /// 与实时抓帧共享单飞队列与缓存去重，不重复解码、不抢优先级
+  /// （新拖动请求会顶掉排队中的预取）。
+  void _scheduleThumbPrefetch(int bucketMs) {
+    _cancelThumbPrefetch();
+    final gen = _thumbPrefetchGen;
+    _thumbPrefetchTimer = Timer(const Duration(milliseconds: 350), () async {
+      for (final delta in const [1000, -1000, 2000, -2000, 3000, -3000]) {
+        if (!mounted || gen != _thumbPrefetchGen) return;
+        // 用户又开始拖动 → 立即终止
+        if (_dragPosition != null) return;
+        if (!_settings.showThumbnailPreview) return;
+        final b = bucketMs + delta;
+        if (b < 0) continue;
+        if (DeviceServices.peekFrame(_path, b) != null) continue;
+        await DeviceServices.getVideoFrameAt(_path, b);
+      }
+    });
   }
 
   Future<void> _seekBy(int seconds) async {
@@ -1126,8 +1189,6 @@ class _PlayerPageState extends State<PlayerPage>
           _restoring = false;
           _clearThumbnail();
         });
-        // 切集：取消旧视频的缩略图预热（新视频拖动进度条时才重新预热）
-        _preload.cancel();
       }
       if (restored && savedForNew != null) {
         _positionNotifier.value = savedForNew;
@@ -1781,7 +1842,8 @@ class _PlayerPageState extends State<PlayerPage>
     _positionNotifier.dispose();
     _durationNotifier.dispose();
     _dragPositionNotifier.dispose();
-    _preload.cancel();
+    _thumbHideTimer?.cancel();
+    _cancelThumbPrefetch();
     // 兜底保存进度（正常退出已走 _exitPlayer 的强制落盘，这里防异常路径；
     // dispose 无法 await，交给后台链串行完成）
     _saveProgress();
@@ -1954,7 +2016,9 @@ class _PlayerPageState extends State<PlayerPage>
                           onSeekEnd: (v) {
                             _player.seek(Duration(milliseconds: v.round()));
                             _dragPositionNotifier.value = null;
-                            _clearThumbnail();
+                            _hideThumbPreview();
+                            // 空闲后预取邻近秒桶，下次拖到附近秒显
+                            _scheduleThumbPrefetch((v.round() ~/ 1000) * 1000);
                             _resetHideTimer();
                           },
                           hasNext: _hasNext,
@@ -2164,17 +2228,18 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                   ),
                 ),
-                // 进度条拖动缩略图预览（进度条上方跟随拖动位置）
-                if (_thumbPreview != null && _dragPosition != null)
+                // 进度条拖动缩略图预览（进度条上方跟随拖动位置；
+                // 松手淡出后再卸载）
+                if (_thumbPreview != null)
                   Positioned(
                     left: 0,
                     right: 0,
                     bottom: 104,
                     child: PlayerThumbnailPreview(
-                      bytes: _thumbPreview!.bytes,
+                      frame: _thumbPreview!.frame,
                       time: _thumbPreview!.time,
                       fraction: _thumbFraction,
-                      visible: true,
+                      visible: _thumbVisible,
                     ),
                   ),
                 // 双指缩放后显示「还原画面」入口（播放/暂停按钮下方，

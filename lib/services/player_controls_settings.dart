@@ -126,9 +126,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 双指缩小视频（默认开启：最小缩放 0.75；关闭则最小 1.0）
   bool _enableShrinkVideo = true;
 
-  /// 进度条缩略图预览（默认关闭：拖动进度条时预览画面 + 后台预热缓存；
-  /// 关闭后不再抓帧/预热，省后台解码与缓存占用）
-  bool _showThumbnailPreview = false;
+  /// 进度条缩略图预览（默认开启：FFmpeg 硬解快速抓帧 ~85ms/帧，
+  /// 独立解码实例与播放并行，拖动进度条时显示画面预览）
+  bool _showThumbnailPreview = true;
 
   /// 「已观看」达成阈值（5% – 100%，步进 5%，默认 95%）：
   /// 视频列表「进度」字段据此把视频判定为 未观看 / 观看中 / 已看完
@@ -224,9 +224,9 @@ class PlayerControlsSettings extends ChangeNotifier {
             defaultGestureSensitivity)
         .clamp(minGestureSensitivity, maxGestureSensitivity);
     _enableShrinkVideo = prefs.getBool(_keyEnableShrinkVideo) ?? true;
-    // 进度条缩略图预览：默认关闭（降低后台解码与缓存占用）
+    // 进度条缩略图预览：默认开启（FFmpeg 硬解快速引擎，开销极低）
     _showThumbnailPreview =
-        prefs.getBool(_keyShowThumbnailPreview) ?? false;
+        prefs.getBool(_keyShowThumbnailPreview) ?? true;
     // 旧值迁移：老版本以 1% 粒度存（0.5 – 1.0），读入后钳制到 5% – 100%
     // 并就近对齐到 5% 档位
     _watchThreshold = _roundWatchThreshold(
@@ -395,7 +395,7 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setBool(_keyEnableShrinkVideo, v);
   }
 
-  /// 进度条缩略图预览开关（默认关闭；开启后拖动进度条才触发预热，省后台解码与缓存）
+  /// 进度条缩略图预览开关（默认开启：FFmpeg 硬解快速引擎，开销极低）
   Future<void> setShowThumbnailPreview(bool v) async {
     await ensureLoaded();
     if (_showThumbnailPreview == v) return;
@@ -595,7 +595,7 @@ class PlayerControlsSettings extends ChangeNotifier {
     _volumeSensitivity = defaultGestureSensitivity;
     _brightnessSensitivity = defaultGestureSensitivity;
     _enableShrinkVideo = true;
-    _showThumbnailPreview = false;
+    _showThumbnailPreview = true;
     _watchThreshold = 0.95;
     _autoNext = true;
     _autoExit = true;

@@ -11,15 +11,14 @@ class CacheCategory {
 
 /// 缓存管理服务：查询/清除各类应用缓存。
 ///
-/// 原生实现见 `MainActivity.kt`（`cacheDir/thumbs/` 按文件名下划线分段区分
-/// 进度条缩略图与列表封面；未来类别如弹幕/字幕预留 `other`）。
+/// 原生实现见 `MainActivity.kt`（`cacheDir/thumbs/` 为列表封面；
+/// 未来类别如弹幕/字幕预留 `other`）。
+/// 进度条缩略图已切换为 FFmpeg 快速引擎 + 纯内存缓存（随播放页退出清空），
+/// 不再产生磁盘缓存。
 class CacheManagerService {
   CacheManagerService._();
 
   static const MethodChannel _channel = MethodChannel('moumou/video_info');
-
-  /// 进度条视频缩略图缓存
-  static const scrubThumbs = CacheCategory('scrubThumbs', '进度条视频缩略图');
 
   /// 视频列表封面缩略图缓存
   static const listThumbs = CacheCategory('listThumbs', '视频列表封面缩略图');
@@ -28,7 +27,7 @@ class CacheManagerService {
   static const other = CacheCategory('other', '其他缓存');
 
   /// 全部类别（顺序即展示顺序）
-  static const all = [scrubThumbs, listThumbs, other];
+  static const all = [listThumbs, other];
 
   /// 各缓存类别占用字节数（失败返回空 map）
   static Future<Map<String, int>> getCacheSizes() async {
@@ -41,20 +40,17 @@ class CacheManagerService {
     }
   }
 
-  /// 清除单个类别缓存（进度条缩略图同时清掉 Dart 内存缓存）
+  /// 清除单个类别缓存
   static Future<bool> clearCategory(CacheCategory category) async {
     try {
       await _channel.invokeMethod<void>('clearCache', {'category': category.key});
-      if (category.key == scrubThumbs.key) {
-        DeviceServices.clearFrameCache();
-      }
       return true;
     } catch (_) {
       return false;
     }
   }
 
-  /// 一键清除所有缓存
+  /// 一键清除所有缓存（同时清掉进度条缩略图的 Dart 内存缓存）
   static Future<bool> clearAll() async {
     try {
       await _channel.invokeMethod<void>('clearAllCaches');

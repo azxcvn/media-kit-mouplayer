@@ -1,15 +1,13 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:video_thumbnail_plus/video_thumbnail_plus.dart';
+import 'package:moumou/services/fast_thumbnails.dart';
 
 /// 设备能力服务：系统音量 / 窗口亮度 / 任意时刻视频抓帧（本地文件）/ 画中画（PiP）。
 ///
-/// - 音量/亮度/画中画：走 [MethodChannel]（`moumou/video_info`，原生见 `MainActivity.kt`）；
-/// - 抓帧：**原生通道为主**（磁盘缓存 + MediaMetadataRetriever SYNC→CLOSEST
-///   各自独立容错 + 落盘），video_thumbnail_plus 包为兜底（带超时防挂死，
-///   成功也落盘）。
+/// - 音量/亮度/电池/画中画：走 [MethodChannel]（`moumou/video_info`，原生见 `MainActivity.kt`）；
+/// - 抓帧：**FFmpeg 快速引擎**（自建 libmpv.so 内核的 `mk_thumbnail_grab`，
+///   独立解码实例 + MediaCodec 硬解，与播放内核完全并行，单帧 ~85ms）。
+///   RGBA 直通内存缓存与 UI，无磁盘缓存、无旧链路降级。
 ///
 /// 纯数据层（无 UI），所有方法失败时返回 null / false，调用方自行降级。
 class DeviceServices {
@@ -121,21 +119,24 @@ class DeviceServices {
     }
   }
 
-  /// 提取本地视频 [path] 在 [timeMs] 时刻的画面（JPEG 字节，最长边约 [maxWidth]）。
+  // ── 任意时刻抓帧（FFmpeg 快速引擎，RGBA 直通）────────
+
+  /// 提取本地视频 [path] 在 [timeMs] 时刻的画面（RGBA 帧，最长边约 [maxWidth]）。
   ///
-  /// 按秒分桶 + 原生/包内缓存；Dart 侧做一层 LRU 与在飞去重。
-  static Future<Uint8List?> getVideoFrameAt(
+  /// 按秒分桶 + 内存 LRU + 在飞去重；引擎不可用或被新请求顶掉时返回 null，
+  /// 由调用方显示占位或邻近帧（[peekNearestFrame]）。
+  static Future<FastThumbFrame?> getVideoFrameAt(
     String path,
     int timeMs, {
     int maxWidth = 320,
   }) async {
     if (timeMs < 0) return null;
-    // 按秒分桶，命中原生缓存
+    // 按秒分桶
     final bucketMs = (timeMs ~/ 1000) * 1000;
     final key = '$path|$bucketMs|$maxWidth';
     final cached = _frameCache[key];
     if (cached != null) {
-      // LRU（risk_audit #7）：读取时移到尾部 = 最近使用，淘汰时删头部最久未用
+      // LRU：读取时移到尾部 = 最近使用，淘汰时删头部最久未用
       _frameCache
         ..remove(key)
         ..[key] = cached;
@@ -144,13 +145,13 @@ class DeviceServices {
     final inflight = _inflight[key];
     if (inflight != null) return inflight;
 
-    final future = _fetchFrame(path, bucketMs, maxWidth).then((bytes) {
-      if (bytes != null && bytes.isNotEmpty) {
-        _frameCache[key] = bytes;
-        _frameCacheBytes += bytes.lengthInBytes;
+    final future = _fetchFrame(path, bucketMs, maxWidth).then((frame) {
+      if (frame != null) {
+        _frameCache[key] = frame;
+        _frameCacheBytes += frame.rgba.lengthInBytes;
         _trimCache();
       }
-      return bytes;
+      return frame;
     });
     _inflight[key] = future;
     try {
@@ -161,7 +162,7 @@ class DeviceServices {
   }
 
   /// 内存缓存中查找精确秒桶的已生成帧（不触发任何解码）
-  static Uint8List? peekFrame(
+  static FastThumbFrame? peekFrame(
     String path,
     int timeMs, {
     int maxWidth = 320,
@@ -173,7 +174,7 @@ class DeviceServices {
 
   /// 内存缓存中查找与 [timeMs] 最近且间隔不超过 [maxGapMs] 的已生成帧。
   /// 快速拖动时先显示最近帧（秒显），精确帧异步补齐。
-  static ({Uint8List bytes, int bucketMs})? peekNearestFrame(
+  static ({FastThumbFrame frame, int bucketMs})? peekNearestFrame(
     String path,
     int timeMs, {
     int maxWidth = 320,
@@ -183,7 +184,7 @@ class DeviceServices {
     final bucketMs = (timeMs ~/ 1000) * 1000;
     final prefix = '$path|';
     final suffix = '|$maxWidth';
-    ({Uint8List bytes, int bucketMs})? best;
+    ({FastThumbFrame frame, int bucketMs})? best;
     var bestGap = maxGapMs + 1;
     for (final entry in _frameCache.entries) {
       if (!entry.key.startsWith(prefix) || !entry.key.endsWith(suffix)) {
@@ -196,7 +197,7 @@ class DeviceServices {
       final gap = (b - bucketMs).abs();
       if (gap < bestGap) {
         bestGap = gap;
-        best = (bytes: entry.value, bucketMs: b);
+        best = (frame: entry.value, bucketMs: b);
       }
     }
     return best;
@@ -204,11 +205,11 @@ class DeviceServices {
 
   /// 测试用：向内存缓存注入一帧（模拟预生成/已解码）
   @visibleForTesting
-  static void debugPutFrame(String path, int timeMs, Uint8List bytes) {
+  static void debugPutFrame(String path, int timeMs, FastThumbFrame frame) {
     final bucketMs = (timeMs ~/ 1000) * 1000;
     final key = '$path|$bucketMs|320';
-    _frameCache[key] = bytes;
-    _frameCacheBytes += bytes.lengthInBytes;
+    _frameCache[key] = frame;
+    _frameCacheBytes += frame.rgba.lengthInBytes;
     _trimCache();
   }
 
@@ -220,87 +221,49 @@ class DeviceServices {
     _inflight.clear();
   }
 
-  /// 抓帧实现（**原生通道为主**，包为兜底）：
-  ///
-  /// 1. 原生 `getVideoFrameAt`：磁盘缓存命中 → 零解码；未命中走
-  ///    `MediaMetadataRetriever`（SYNC 快 → CLOSEST 稳，各自独立容错），
-  ///    成功后落盘——保证磁盘缓存始终有数据、重开视频零解码；
-  /// 2. 包（video_thumbnail_plus，只走 SYNC）作为兜底，**带 4 秒超时**
-  ///    防止插件挂死导致永久转圈；成功时同样落盘（`putVideoFrame`）。
-  ///
-  /// 任一路径失败都不抛异常（返回 null），由调用方显示加载占位。
-  static Future<Uint8List?> _fetchFrame(
+  /// 抓帧实现：FFmpeg 快速引擎（独立 isolate 解码，RGBA 直出，无编码往返）。
+  /// 引擎不可用（内核未替换/非 Android）/失败/被新请求顶掉 → null。
+  static Future<FastThumbFrame?> _fetchFrame(
     String path,
     int timeMs,
     int maxWidth,
   ) async {
-    // 诊断日志：定位「原生路径失败 / 写盘未发生」的根因
-    debugPrint('[Thumb] _fetchFrame path=$path t=$timeMs w=$maxWidth');
-    try {
-      final bytes = await _channel.invokeMethod<Uint8List>(
-        'getVideoFrameAt',
-        {'path': path, 'timeMs': timeMs, 'maxWidth': maxWidth},
-      );
-      if (bytes != null && bytes.isNotEmpty) {
-        debugPrint('[Thumb] native OK ${bytes.length}B');
-        return bytes;
-      }
-      debugPrint('[Thumb] native null/empty');
-    } catch (e) {
-      debugPrint('[Thumb] native ERROR $e');
+    final sw = Stopwatch()..start();
+    final frame = await FastThumbnails.grab(
+      path,
+      timeMs / 1000.0,
+      dimension: maxWidth.clamp(64, 4096),
+      useHwdec: true,
+    );
+    sw.stop();
+    if (frame != null) {
+      debugPrint('[Thumb] fast OK ${frame.rgba.lengthInBytes}B '
+          '${frame.width}x${frame.height} ${sw.elapsedMilliseconds}ms');
+    } else {
+      debugPrint('[Thumb] fast null/stale ${sw.elapsedMilliseconds}ms');
     }
-    try {
-      final bytes = await VideoThumbnailPlus.thumbnailData(
-        video: path,
-        imageFormat: ImageFormat.JPEG,
-        maxWidth: maxWidth,
-        quality: 60,
-        timeMs: timeMs,
-      ).timeout(
-        const Duration(seconds: 4),
-        onTimeout: () => null,
-      );
-      if (bytes != null && bytes.isNotEmpty) {
-        debugPrint('[Thumb] package OK ${bytes.length}B');
-        // 包成功的帧也写入磁盘缓存（异步，不阻塞），下次零解码
-        unawaited(
-          _channel.invokeMethod<void>(
-            'putVideoFrame',
-            {'path': path, 'timeMs': timeMs, 'maxWidth': maxWidth, 'bytes': bytes},
-          ).catchError((e) => debugPrint('[Thumb] putVideoFrame ERROR $e')),
-        );
-        return bytes;
-      }
-      debugPrint('[Thumb] package null/empty');
-    } catch (e) {
-      debugPrint('[Thumb] package ERROR $e');
-    }
-    return null;
+    return frame;
   }
 
-  /// Dart 侧缩略图 LRU（约 24 MB）
+  /// Dart 侧缩略图 LRU（约 24 MB，按 RGBA 字节计）
   /// LinkedHashMap 按插入序维护：新帧插尾部，命中时 remove+put 移到尾部，
   /// 淘汰时删头部（最久未用，risk_audit #7 修复——原先按「最早插入」删，
   /// 快速来回拖动时可能淘汰掉马上要用的帧）。
   static const int _frameCacheMaxBytes = 24 * 1024 * 1024;
-  // Dart 的 Map 字面量即 LinkedHashMap（插入序）：新帧插尾部，命中时
-  // remove+put 移到尾部，淘汰时删头部（最久未用）——见上方说明。
-  static final Map<String, Uint8List> _frameCache = <String, Uint8List>{};
-  static final Map<String, Future<Uint8List?>> _inflight = {};
+  static final Map<String, FastThumbFrame> _frameCache = {};
+  static final Map<String, Future<FastThumbFrame?>> _inflight = {};
   static int _frameCacheBytes = 0;
 
   static void _trimCache() {
     while (_frameCacheBytes > _frameCacheMaxBytes &&
         _frameCache.isNotEmpty) {
       final key = _frameCache.keys.first;
-      _frameCacheBytes -= _frameCache.remove(key)!.lengthInBytes;
+      _frameCacheBytes -= _frameCache.remove(key)!.rgba.lengthInBytes;
     }
   }
 
-  /// 清空缩略图缓存（切换视频 / 播放页销毁时调用）
+  /// 清空 Dart 内存缓存（「清除所有缓存」时调用）
   static void clearFrameCache() {
-    _frameCache.clear();
-    _frameCacheBytes = 0;
-    _inflight.clear();
+    debugClearFrames();
   }
 }

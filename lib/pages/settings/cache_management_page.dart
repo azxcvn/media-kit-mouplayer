@@ -20,7 +20,6 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
 
   /// 各类别图标（服务层不依赖 UI，图标放页面层）
   static const _icons = {
-    'scrubThumbs': Icons.image_outlined,
     'listThumbs': Icons.video_library_outlined,
     'other': Icons.folder_zip_outlined,
   };
@@ -94,7 +93,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     final first = await _confirm(
       '清除所有缓存',
       '将删除全部缓存（当前共 ${formatFileSize(_totalBytes)}）：\n'
-      '· 进度条视频缩略图\n· 视频列表封面缩略图\n· 其他缓存\n\n此操作不可恢复。',
+      '· 视频列表封面缩略图\n· 其他缓存\n\n此操作不可恢复。',
     );
     if (!first) return;
     final second = await _confirm('再次确认', '确定要清除所有缓存吗？');
@@ -180,8 +179,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
-                '进度条缩略图缓存随播放自动生成（可在「播放器设置」关闭该功能）；'
-                '列表封面缩略图会在下次扫描时重新生成。',
+                '列表封面缩略图会在下次扫描时重新生成；进度条缩略图为纯内存缓存，'
+                '随播放页退出自动清空，不占用存储。',
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,

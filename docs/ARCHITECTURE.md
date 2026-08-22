@@ -15,6 +15,8 @@ Flutter 本地视频播放器（Android），核心能力：
 - 两种模式共用同一套卡片组件（视觉一致）
 - 播放器：media_kit，横屏沉浸式全屏，播放进度持久化；**听视频**（共享 Player 只播音频，
   封面模糊背景 + 白色底部倍速/列表面板 + 时间刻随机播放）
+- **进度条缩略图**：自建 libmpv 内核（含 `mk_thumbnail_*` 快速抓帧接口）+ FFmpeg/MediaCodec
+  硬解独立解码实例（~85ms/帧），拖动实时预览、松手精确落帧、空闲预取邻近帧（§4.9）
 - 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
 - 外观设置：23 种主题色 + 21 种调色板风格（flex_seed_scheme）
 
@@ -40,13 +42,13 @@ lib/
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
-│   ├── video_info_service.dart# 缩略图生成（磁盘缓存）+ 基本元数据 + 完整媒体信息
+│   ├── video_info_service.dart# 列表封面缩略图（磁盘缓存）+ 基本元数据 + 完整媒体信息
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化 + 串行写盘）
 │   ├── player_controls_settings.dart   # 播放器控制设置（槽位/手势/倍速/比例/长按/方向/顶部信息等）
-│   ├── device_services.dart   # 设备能力：音量/亮度/抓帧/画中画/电量（MethodChannel）
-│   ├── thumbnail_preload_service.dart # 缩略图预热（首次拖动进度条时向外扩散）
+│   ├── device_services.dart   # 设备能力：音量/亮度/画中画/电量（MethodChannel）+ 任意时刻抓帧（FFmpeg 引擎 + 秒桶内存 LRU）
+│   ├── fast_thumbnails.dart   # FFmpeg 快速缩略图引擎（FFI 直连自建 libmpv.so 的 mk_thumbnail_*，单飞+顶旧调度）
 │   ├── crash_log_service.dart # 崩溃日志：列表/读取/删除/清空/导出
-│   ├── cache_manager_service.dart # 缓存管理：大小查询 / 逐类清除 / 一键清除
+│   ├── cache_manager_service.dart # 缓存管理：列表封面磁盘缓存查询/清除（进度条缩略图为纯内存，不占磁盘）
 │   ├── super_resolution_service.dart   # 超分：模式持久化、着色器拷贝、mpv 应用
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
@@ -59,6 +61,7 @@ lib/
 │   ├── folder_card.dart       #   文件夹卡片（列表/树状共用）
 │   ├── video_card.dart        #   视频卡片（列表/树状/详情共用）
 │   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/滑杆主题）
+│   ├── raw_thumb_image.dart   #   RGBA 帧直渲组件（FastThumbFrame → ui.Image，帧切换保持上一帧无缝）
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
 │   └── marquee_text.dart      #   无缝循环跑马灯
@@ -93,7 +96,7 @@ lib/
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容
 │   │       ├── player_resume_indicator.dart   # 恢复进度指示器（胶囊样式，2.5s 自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层
-│   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡
+│   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（RGBA 直渲 + 淡入淡出）
 │   │       ├── portrait_player_top_bar.dart   # 竖屏顶栏（返回 + 标题 + 最多 4 槽位 + 更多）
 │   │       ├── portrait_player_bottom_bar.dart # 竖屏底栏（超分→列表→倍速→选择屏幕）
 │   │       └── portrait_edit_panel.dart       # 竖屏「编辑控制栏」页
@@ -145,7 +148,7 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认关闭）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、顶部信息显示（关闭/时间/电量/两者，默认两者）** 属 `PlayerControlsSettings`
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、顶部信息显示（关闭/时间/电量/两者，默认两者）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
@@ -230,6 +233,34 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 - 音量指示器在**屏幕左侧**、亮度指示器在**屏幕右侧**（对称）；kazumi 风格进出场
   （从屏幕边缘滑入滑出 + 淡入淡出 + 轻微缩放），2 秒无操作自动隐藏。
 
+### 4.9 进度条缩略图 —— FFmpeg 快速引擎（自建 libmpv 内核）
+
+> 2026-08 重构：进度条抓帧从「原生 MediaMetadataRetriever + 磁盘缓存 + video_thumbnail_plus 兜底」
+> 三级链路，整体替换为**自建内核 + FFmpeg 独立解码实例**。旧链路、磁盘缓存与预生成服务已全部移除。
+
+**内核来源**：`third_party/media_kit_libs_android_video/`（本地包，pubspec `dependency_overrides` 指向），
+内含 4 个 ABI 的 jar（`android/jars/`，`fileTree` 直接引用，**不走官方下载任务**）。
+jar 构建自 [azxcvn/libmpv-android-video-build](https://github.com/azxcvn/libmpv-android-video-build)
+（fork，补丁 `mk_thumbnail.patch` 给 libmpv 增加 `mk_thumbnail_grab/free/clear_cache` 三个导出符号，
+push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码。
+
+**调用链**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 内核 | libmpv.so `mk_thumbnail_grab` | 独立 FFmpeg 解码实例：MediaCodec 硬解优先/失败自动软解、硬解 ctx 全局复用、极速探测、±5s 宽容匹配；输出 RGBA |
+| 引擎 | `services/fast_thumbnails.dart` | FFI 绑定 + 后台 isolate + **单飞调度**（最多 1 在跑 + 1 待跑，新请求顶掉旧待跑） |
+| 缓存 | `services/device_services.dart` | `getVideoFrameAt`：秒桶 + **24MB 内存 LRU**（RGBA 字节计）+ 在飞去重；`peekFrame`/`peekNearestFrame` |
+| UI | `views/player_thumbnail_preview.dart` + `widgets/raw_thumb_image.dart` | 气泡 + RGBA 直渲（`ImageDescriptor.raw`，无 PNG/JPEG 编码往返） |
+| 调度 | `pages/player/player_page.dart` | 拖动：邻近帧秒显 + 精确帧异步补齐；松手：淡出 150ms 后卸载 + **空闲 350ms 预取 ±1/±2/±3 秒桶**（再拖动立即终止，拖动请求绝对优先） |
+
+**关键事实**：
+- JavaVM 无需自行注册——media_kit 启动时已通过官方补丁 `mpv_lavc_set_java_vm` 完成，MediaCodec 硬解天然可用
+- 精确落帧：播放器初始化设 mpv `hr-seek=absolute`（`_applyExactSeek`），松手 seek 帧级精确、与预览帧一致
+- 缩略图**无磁盘缓存**（单帧 ~85ms 无落盘必要）；「缓存管理」页只管列表封面
+- 性能基线（一加 PLR110，1080p H.264）：硬解 63–134ms/帧；logcat `MKThumb` 可查每帧 `hw=` 与耗时
+- 听视频页封面（`audio_player_page`）复用同一引擎（`maxWidth: 480`）
+
 ---
 
 ## 5. 新增功能指南（按功能类型）
@@ -272,7 +303,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 完成**重大功能新增 / 优化或 Bug 修复**后，必须在本文件（ARCHITECTURE.md）同步以下内容，再算收工：
 
 1. **§2 目录结构**：新增/删除/移动的文件、目录必须反映到树形图（含一行注释说明职责）；
-2. **受影响章节**：改到状态管理 → §4.1；新增弹窗 → §4.5；改播放页 → §5.1 / §4.3/4.4；新增设置 → §5.3；新增测试 → §6；
+2. **受影响章节**：改到状态管理 → §4.1；新增弹窗 → §4.5；改播放页 → §5.1 / §4.3/4.4；缩略图/抓帧 → §4.9；新增设置 → §5.3；新增测试 → §6；
 3. **§7 已知注意事项**：新踩的坑（环境 / 框架 / 设备）要补进表格，防止他人重蹈覆辙。
 
 **文档写作约定（工作.md 第 1 点，必须遵守）**：
@@ -306,7 +337,7 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
   - `test/playlist_sort_test.dart` — 播放列表 4 排序纯函数（名称/日期 × 升/降序，自然序/无日期垫底）+ 目录过滤（folderOfPath/filterVideosInFolder）
   - `test/pip_aspect_test.dart` — 画中画宽高比纯函数（gcd 约分/0.5–2.39 钳制/未知尺寸回退 16:9）
   - `test/portrait_player_bottom_bar_test.dart` — 竖屏底栏右侧按钮簇顺序（超分辨率→列表→倍速→选择屏幕，左到右）
-  - `test/thumbnail_cache_test.dart` — 缩略图预生成间隔（intervalFor）+ 设备帧缓存查询（peekFrame/peekNearestFrame）+ 预生成服务状态流转
+  - `test/thumbnail_cache_test.dart` — FFmpeg 帧缓存查询（peekFrame 精确秒桶/peekNearestFrame 邻近匹配/跨视频隔离）+ 24MB LRU 超限淘汰
   - `test/watch_state_test.dart` — 观看状态纯函数（未观看/观看中/已看完判定 + 自定义阈值 + 百分比）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
@@ -347,8 +378,13 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 | 设置单例 load 竞态 | `ensureLoaded()` + 全部 setter 首行 await（risk_audit #9） |
 | 播放界面动画无法关闭 | 「启用播放界面动画」设置：动画控制器时长归零 / `animate=false` 零时长转场 |
 | MethodChannel 小整数是 Integer 非 Long | 取整型参数一律 `call.argument<Number>()?.toLong()/toInt()` |
-| MediaMetadataRetriever 取帧不可靠 | SYNC/CLOSEST 各自独立 try/catch + 磁盘缓存 + 包兜底（4s 超时）；空/损坏缓存自动删除重解 |
-| 缩略图缓存无限增长 / 体积大 | 原生 >200MB 自动清理到 50MB；scrub q60/320px、封面 384×216+q70 |
+| MediaMetadataRetriever 取帧不可靠 | 仅剩列表封面用（`getVideoInfo`）：SYNC/CLOSEST 独立 try/catch；进度条抓帧已换 FFmpeg 引擎（§4.9） |
+| 缩略图缓存无限增长 / 体积大 | 进度条缩略图=纯内存 LRU 24MB（RGBA 字节计，播放页退出清空，无磁盘）；列表封面 384×216+q70 磁盘缓存由缓存管理页清理 |
+| libmpv hidden visibility 吞掉新增符号 | 内核新导出函数必须经 `client.h` 的 `MPV_EXPORT` 声明携带可见性（.c 里 include client.h） |
+| `Isolate.run` 闭包捕获 Completer → unsendable 崩 | `Isolate.run` 放**独立静态函数**、只捕获原始值；同作用域兄弟闭包捕获的对象会被编译器合并进上下文一起发送 |
+| Flutter 插件统一构建目录（build/<插件名>）残留旧 jar | 官方下载式 libs 包改本地分发时，`fileTree` 直接指向 `android/jars/` 源目录，勿用「下载→复制到 build/output」模式（assemble 钩子不保证执行 + Gradle 9 隐式依赖校验报错） |
+| media_kit seek 落最近关键帧（与预览帧对不上） | 播放器初始化设 mpv `hr-seek=absolute`（对齐 mpvRx 的 `seek absolute+exact`） |
+| 松手后缩略图气泡不消失（要点屏才走） | 改变挂载条件的状态必须 `setState`；现走显式 `visible` 标志 + 定时器淡出后卸载 |
 | 列表首屏并发拉元数据 | `VideoInfoService` 在飞去重（同 path 共享 Future） |
 | 听视频共享 Player 语义 | 听视频页不建播放器/不恢复进度；切歌从 0 开始、切走前保存进度；EOF 由听视频页处理（播放页 `_audioActive` 让位）；循环三态：关闭/单曲/列表（点击循环按钮切换） |
 | 听视频随机播放 | 纯函数 `audioShuffleNextIndex`：当前时刻折叠种子 + 乘性散列，不重复当前曲目（可单测） |
@@ -370,7 +406,8 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 
 ## 8. 参考项目
 
-- `参考项目/mpvRx-master/` — 树状模式（逐级导航 + 面包屑）的设计来源
+- `参考项目/mpvRx-master/` — 树状模式（逐级导航 + 面包屑）的设计来源；缩略图调度策略（单飞+顶旧/邻近帧/精确落帧/空闲预取）与 `seek absolute+exact` 的来源
+- mpvlibAndroid（`项目调研/mpvlibAndroid-library/`）— 缩略图 native 实现 `thumbnail.cpp` 的移植来源（内核补丁）
 - `参考项目/PiliPlus-main/` — 设置体系、配色规模、弹窗交互参考
 - `参考项目/src/` — fam4k007 小牛播放器源码：缩略图 384×216 裁剪算法（`ThumbnailCacheManager`）、MediaInfo 接入（`MediaInfoHelper` + `MediaInfoActivity`）、崩溃日志（`CrashHandler` + `LogViewerScreen`）、许可证书（AboutLibraries）均参考自它
 - `参考项目/Kazumi-main/` — 关于页 LicensePage（Flutter 内置自动收集许可）与日志页交互参考

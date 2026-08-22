@@ -1,16 +1,16 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
+import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/widgets/raw_thumb_image.dart';
 
 /// 进度条拖动时的缩略图预览气泡（对齐 kt 项目 `SeekbarThumbnailPreview`）：
 /// 16:9 预览图（宽 160）+ 下方时间胶囊，水平位置跟随拖动比例。
 ///
-/// 图片字节来自 [DeviceServices.getVideoFrameAt]（本地视频任意时刻抓帧，
-/// 原生 MediaMetadataRetriever + 双层缓存）。[visible] 控制淡入淡出。
+/// 帧数据来自 [DeviceServices.getVideoFrameAt]（FFmpeg 快速引擎 RGBA 直通 +
+/// 分桶内存缓存），[RawThumbImage] 直接渲染像素。[visible] 控制淡入淡出。
 class PlayerThumbnailPreview extends StatelessWidget {
-  /// 预览图 JPEG 字节（null 时显示加载占位）
-  final Uint8List? bytes;
+  /// 预览帧（null 时显示加载占位）
+  final FastThumbFrame? frame;
 
   /// 预览时间点
   final Duration time;
@@ -23,7 +23,7 @@ class PlayerThumbnailPreview extends StatelessWidget {
 
   const PlayerThumbnailPreview({
     super.key,
-    required this.bytes,
+    required this.frame,
     required this.time,
     required this.fraction,
     required this.visible,
@@ -60,12 +60,8 @@ class PlayerThumbnailPreview extends StatelessWidget {
                           ),
                           color: Colors.black.withValues(alpha: 0.72),
                         ),
-                        child: bytes != null
-                            ? Image.memory(
-                                bytes!,
-                                fit: BoxFit.cover,
-                                gaplessPlayback: true,
-                              )
+                        child: frame != null
+                            ? RawThumbImage(frame: frame!, fit: BoxFit.cover)
                             : const Center(
                                 child: SizedBox(
                                   width: 18,

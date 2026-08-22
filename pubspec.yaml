@@ -43,10 +43,8 @@ dependencies:
   # 更多 Material 3 调色板风格（FlexSchemeVariant，21 种变体）
   flex_seed_scheme: ^4.0.1
   saver_gallery: ^5.1.0
-  # 进度条拖动缩略图预览：本地视频任意时刻抓帧。
-  # 用 video_thumbnail_plus（WutangNailao 维护分支）：修复了原包
-  # android/build.gradle 里的 jcenter()（Gradle 9 已移除）与旧 DSL（AGP 9 不兼容）
-  video_thumbnail_plus: ^0.0.2
+  # 快速缩略图引擎（FFI 直连自建 libmpv.so 的 mk_thumbnail_*）的内存分配
+  ffi: ^2.1.0
   # 关于页显示应用版本号
   package_info_plus: ^9.0.1
   # 关于页图标（邮箱 / GitHub，SVG 素材来自参考项目图标素材）
@@ -66,6 +64,13 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+dependency_overrides:
+  # Android 视频内核换为自建版本（内含 mk_thumbnail_* 快速缩略图接口）。
+  # 内核构建：https://github.com/azxcvn/libmpv-android-video-build（mk-thumbnail 分支）
+  # 其余平台不受影响，仍走 pub 上游的 media_kit 系列。
+  media_kit_libs_android_video:
+    path: third_party/media_kit_libs_android_video
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

@@ -7,10 +7,12 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/services/device_services.dart';
+import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/utils/audio_shuffle.dart';
 import 'package:moumou/utils/formatters.dart';
+import 'package:moumou/widgets/raw_thumb_image.dart';
 
 /// 听视频界面（工作.md 第 10 点，参考小喵 KT 项目 AudioPlayerScreen）：
 ///
@@ -87,8 +89,8 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
   /// 切歌防重入（open 期间旧文件可能触发 completed）
   bool _isSwitching = false;
 
-  /// 封面字节（居中封面 + 背景高斯模糊共用）
-  Uint8List? _coverBytes;
+  /// 封面帧（居中封面 + 背景高斯模糊共用，RGBA 直通）
+  FastThumbFrame? _coverFrame;
 
   final List<StreamSubscription<dynamic>> _subs = [];
 
@@ -172,13 +174,13 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
 
   /// 取当前视频封面（居中显示 + 背景模糊共用）
   Future<void> _loadCover() async {
-    final bytes = await DeviceServices.getVideoFrameAt(
+    final frame = await DeviceServices.getVideoFrameAt(
       _path,
       _durationNotifier.value.inMilliseconds ~/ 2,
       maxWidth: 480,
     );
-    if (!mounted || bytes == null || bytes.isEmpty) return;
-    setState(() => _coverBytes = bytes);
+    if (!mounted || frame == null) return;
+    setState(() => _coverFrame = frame);
   }
 
   /// 保存当前视频进度（切歌前 / 退出时调用，保证「视频进度还在」）
@@ -226,7 +228,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
         _positionNotifier.value = Duration.zero;
         _durationNotifier.value = Duration.zero;
         _dragPosition = null;
-        _coverBytes = null;
+        _coverFrame = null;
       });
     }
     widget.onVideoChanged?.call(video.path, video.name);
@@ -551,7 +553,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
           children: [
             // 背景：封面高斯模糊 + 深色蒙层
             Positioned.fill(
-              child: _coverBytes == null
+              child: _coverFrame == null
                   ? Container(
                       decoration: const BoxDecoration(
                         gradient: LinearGradient(
@@ -566,10 +568,9 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
                         sigmaX: 40,
                         sigmaY: 40,
                       ),
-                      child: Image.memory(
-                        _coverBytes!,
+                      child: RawThumbImage(
+                        frame: _coverFrame!,
                         fit: BoxFit.cover,
-                        gaplessPlayback: true,
                       ),
                     ),
             ),
@@ -625,16 +626,15 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
                               aspectRatio: 16 / 9,
                               child: Container(
                                 color: const Color(0xFF2A2A2A),
-                                child: _coverBytes == null
+                                child: _coverFrame == null
                                     ? const Icon(
                                         Icons.headphones_outlined,
                                         color: Colors.white24,
                                         size: 48,
                                       )
-                                    : Image.memory(
-                                        _coverBytes!,
+                                    : RawThumbImage(
+                                        frame: _coverFrame!,
                                         fit: BoxFit.cover,
-                                        gaplessPlayback: true,
                                       ),
                               ),
                             ),
