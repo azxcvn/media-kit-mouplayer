@@ -35,8 +35,10 @@ void main() {
     expect(s.volumeSensitivity, 1.0);
     expect(s.brightnessSensitivity, 1.0);
     expect(s.enableShrinkVideo, isTrue);
-    // 进度条缩略图默认关闭（省后台解码与缓存占用）
-    expect(s.showThumbnailPreview, isFalse);
+    // 进度条缩略图默认开启（FFmpeg 硬解快速引擎，开销极低）
+    expect(s.showThumbnailPreview, isTrue);
+    // 显示章节进度条默认开启（工作.md 章节功能）
+    expect(s.showChapterProgress, isTrue);
     // 「已观看」进度阈值默认 95%
     expect(s.watchThreshold, 0.95);
     // 自动连播 / 播放完毕自动退出默认开启，循环播放默认关闭

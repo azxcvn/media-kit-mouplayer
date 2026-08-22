@@ -54,6 +54,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const _keyPlayerAnimations = 'player_controls_player_animations';
   // 播放界面顶部信息栏（工作.md 第 12 点：时间/电量显示）
   static const _keyTopStatusDisplay = 'player_controls_top_status_display';
+  // 章节功能：进度条章节标记（默认开启，工作.md 章节功能）
+  static const _keyShowChapterProgress =
+      'player_controls_show_chapter_progress';
 
   // 旧版按键时长 key（v1 拆分过双击/按钮两套，现已合并），仅用于数据迁移
   static const _legacyKeyButtonSeek = 'player_controls_button_seek';
@@ -153,6 +156,9 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 播放界面顶部信息栏显示内容（默认：时间与电量同时显示）
   TopStatusDisplay _topStatusDisplay = TopStatusDisplay.both;
 
+  /// 显示章节进度条（默认开启）：进度条上标记章节节点、显示当前章节名称
+  bool _showChapterProgress = true;
+
   /// 右上角槽位上已放置的动作（有序，最多 [maxTopActions] 个；空列表 = 槽位全空）
   List<PlayerTopAction> get topActions => List.unmodifiable(_topActions);
   DoubleTapMode get doubleTapMode => _doubleTapMode;
@@ -178,6 +184,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   VideoOrientationMode get videoOrientation => _videoOrientation;
   bool get playerAnimations => _playerAnimations;
   TopStatusDisplay get topStatusDisplay => _topStatusDisplay;
+  bool get showChapterProgress => _showChapterProgress;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -192,6 +199,7 @@ class PlayerControlsSettings extends ChangeNotifier {
       _doubleTapMode = DoubleTapMode.values[mode];
     }
     _showProgressLine = prefs.getBool(_keyProgressLine) ?? false;
+    _showChapterProgress = prefs.getBool(_keyShowChapterProgress) ?? true;
     // 记忆倍速默认关闭（用户显式开启后才记住上次倍速）
     _rememberSpeed = prefs.getBool(_keyRememberSpeed) ?? false;
     _lastSpeed = prefs.getDouble(_keyLastSpeed) ?? 1.0;
@@ -270,6 +278,16 @@ class PlayerControlsSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyProgressLine, v);
+  }
+
+  /// 显示章节进度条开关（默认开启）：进度条章节节点标记 + 当前章节名称
+  Future<void> setShowChapterProgress(bool v) async {
+    await ensureLoaded();
+    if (_showChapterProgress == v) return;
+    _showChapterProgress = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyShowChapterProgress, v);
   }
 
   /// 播放控制按钮背景开关（默认关闭）
@@ -603,6 +621,7 @@ class PlayerControlsSettings extends ChangeNotifier {
     _videoOrientation = VideoOrientationMode.auto;
     _playerAnimations = true;
     _topStatusDisplay = TopStatusDisplay.both;
+    _showChapterProgress = true;
     notifyListeners();
   }
 }

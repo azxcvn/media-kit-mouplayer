@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
+import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
 /// 底栏：全宽进度条 + 下一集 + 时间 + 右下角按钮组（超分辨率/列表/倍速/选择屏幕）。
@@ -41,6 +43,16 @@ class PlayerBottomBar extends StatelessWidget {
   /// 「列表」：打开播放列表面板（倍速按钮左侧）
   final VoidCallback onPlaylistTap;
 
+  /// 章节标记数据（进度条节点圆点 + 跳过片段色段；开关关闭时传空）
+  final List<ChapterInfo> chapters;
+  final List<SkipSegment> skipSegments;
+
+  /// 当前章节名称（无章节/开关关闭时为 null，不显示章节名行）
+  final String? currentChapterName;
+
+  /// 点击章节名称：呼出章节列表面板
+  final VoidCallback? onChapterTap;
+
   const PlayerBottomBar({
     super.key,
     required this.valueMs,
@@ -59,6 +71,10 @@ class PlayerBottomBar extends StatelessWidget {
     required this.showScreenSwitchBackground,
     required this.onPlaylistTap,
     this.showListButtonBackground = false,
+    this.chapters = const [],
+    this.skipSegments = const [],
+    this.currentChapterName,
+    this.onChapterTap,
   });
 
   @override
@@ -78,12 +94,23 @@ class PlayerBottomBar extends StatelessWidget {
         right: false,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          // 左对齐：章节名称行（min 宽度）与进度条左缘对齐，不被居中
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 章节名称行：进度条上方（工作.md 章节功能第 2 点），
+            // 点击呼出章节列表；无章节时不占位
+            if (currentChapterName != null && onChapterTap != null)
+              PlayerChapterNameRow(
+                name: currentChapterName!,
+                onTap: onChapterTap!,
+              ),
             PlayerSeekBar(
               valueMs: valueMs,
               maxMs: maxMs,
               onChanged: onSeekChanged,
               onChangeEnd: onSeekEnd,
+              chapters: chapters,
+              skipSegments: skipSegments,
             ),
             Padding(
               // 左缘与进度条开端对齐（kPlayerLeftInset），右缘留 20

@@ -8,8 +8,11 @@ import 'package:moumou/models/player_action.dart';
 import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
+import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/player_portrait_page.dart';
 import 'package:moumou/pages/player/views/player_bottom_bar.dart';
+import 'package:moumou/pages/player/views/player_chapter_bar.dart';
+import 'package:moumou/pages/player/views/player_chapter_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
@@ -25,6 +28,7 @@ import 'package:moumou/pages/player/views/player_super_resolution_panel.dart';
 import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
 import 'package:moumou/pages/player/views/player_thumbnail_preview.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
+import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/playback_progress_service.dart';
@@ -95,6 +99,14 @@ class _PlayerPageState extends State<PlayerPage>
     _durationNotifier,
     _dragPositionNotifier,
   ]);
+
+  /// 章节监听合并：底栏（进度条标记/章节名称）+ 胶囊浮层订阅用
+  late final Listenable _chapterListenable =
+      Listenable.merge([_progressListenable, _chapterTracker]);
+
+  /// 章节状态跟踪器（工作.md 章节功能）：读取章节与跳过片段、跟踪当前
+  /// 章节与胶囊自动弹出窗口；横竖屏共享同一实例（切集/位置流统一驱动）。
+  late final ChapterTracker _chapterTracker;
 
   double _speed = 1.0;
 
@@ -273,6 +285,8 @@ class _PlayerPageState extends State<PlayerPage>
     _title = widget.title;
     _player = Player();
     _controller = VideoController(_player);
+    // 章节跟踪器：绑定同一播放器（mpv chapter-list 子属性读取）
+    _chapterTracker = ChapterTracker(MpvChapterSource(_player));
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
     // 而非落在最近关键帧）
@@ -332,6 +346,8 @@ class _PlayerPageState extends State<PlayerPage>
     _subs.add(
       _player.stream.position.listen((p) {
         if (!_disposed && mounted) _positionNotifier.value = p;
+        // 章节跟踪：当前章节/跳过片段/胶囊自动弹出窗口随位置推进
+        _chapterTracker.onPositionChanged(p);
       }),
     );
     _subs.add(
@@ -433,6 +449,8 @@ class _PlayerPageState extends State<PlayerPage>
       return;
     }
     if (_disposed || !mounted) return;
+    // 章节功能：open 完成后读取章节（此时时长已就绪；空章节静默清空）
+    unawaited(_chapterTracker.load());
     await _applyVideoOrientation();
   }
 
@@ -1151,6 +1169,8 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _switchTo(String path, String title) async {
     _isSwitchingVideo = true;
     try {
+      // 章节功能：先清空旧媒体的章节标记（防 open 期间旧数据闪现）
+      _chapterTracker.clear();
       if (mounted) {
         setState(() => _resumeVisible = false);
       }
@@ -1194,6 +1214,8 @@ class _PlayerPageState extends State<PlayerPage>
         _positionNotifier.value = savedForNew;
         _showResumeIndicator();
       }
+      // 章节功能：切集后重新读取新媒体的章节
+      unawaited(_chapterTracker.load());
     } on AssertionError {
       // 播放器已被销毁（切集过程中退出）：静默返回，不写假崩溃日志
       return;
@@ -1451,7 +1473,35 @@ class _PlayerPageState extends State<PlayerPage>
         _enterPip();
       case PlayerTopAction.loop:
         _openLoopPanel();
+      case PlayerTopAction.chapter:
+        _openChapterPanel();
     }
+  }
+
+  /// 打开章节列表面板（顶栏「章节」动作 / 点击章节名称共用）：
+  /// 右侧滑入（[showPlayerPanel]），无章节时面板内显示空状态提示。
+  Future<void> _openChapterPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(
+      context,
+      pages: [
+        PlayerPanelPage(
+          title: '章节',
+          body: PlayerChapterPanel(
+            tracker: _chapterTracker,
+            onSelect: (chapter) => _chapterTracker.seekToChapter(chapter),
+          ),
+        ),
+      ],
+    );
+    _resetHideTimer();
+  }
+
+  /// 点击跳过胶囊：跳到当前片段结束（EOF 保护见 [skipSeekTarget]），
+  /// seek 离开片段后胶囊自动消失；回拖进片段可再次触发（可重复）。
+  Future<void> _skipCurrentSegment() async {
+    _resetHideTimer();
+    await _chapterTracker.skipActiveSegment();
   }
 
   // ── 画中画 / 循环播放 / 听视频 ──────────────────────────
@@ -1574,6 +1624,9 @@ class _PlayerPageState extends State<PlayerPage>
             });
           },
           onExitPlayer: _exitWithPortrait,
+          // 章节功能：共享横屏页跟踪器（同一 Player，状态一致）；
+          // 不传则竖屏页自建空实例、章节标记/胶囊在竖屏全部不显示
+          chapterTracker: _chapterTracker,
         ),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -1842,6 +1895,7 @@ class _PlayerPageState extends State<PlayerPage>
     _positionNotifier.dispose();
     _durationNotifier.dispose();
     _dragPositionNotifier.dispose();
+    _chapterTracker.dispose();
     _thumbHideTimer?.cancel();
     _cancelThumbPrefetch();
     // 兜底保存进度（正常退出已走 _exitPlayer 的强制落盘，这里防异常路径；
@@ -1990,56 +2044,117 @@ class _PlayerPageState extends State<PlayerPage>
                     ),
                   ),
                 ),
-                IgnorePointer(
-                  ignoring: !_controlsVisible || _locked,
-                  child: SlideTransition(
-                    position: _bottomSlide,
-                    child: Align(
-                      alignment: Alignment.bottomCenter,
-                      // 局部订阅进度：位置/时长/拖动位置变化只重建底栏
-                      //（进度条 + 时间文本），不重建整页（risk_audit #1）
-                      child: ListenableBuilder(
-                        listenable: _progressListenable,
-                        builder: (context, _) => PlayerBottomBar(
-                          valueMs: (_dragPosition ?? _position)
-                              .inMilliseconds
-                              .toDouble(),
-                          maxMs: _duration.inMilliseconds > 0
-                              ? _duration.inMilliseconds.toDouble()
-                              : 1.0,
-                          onSeekChanged: (v) {
-                            _dragPositionNotifier.value =
-                                Duration(milliseconds: v.round());
-                            _requestThumbnail(v.round());
-                            _resetHideTimer();
-                          },
-                          onSeekEnd: (v) {
-                            _player.seek(Duration(milliseconds: v.round()));
-                            _dragPositionNotifier.value = null;
-                            _hideThumbPreview();
-                            // 空闲后预取邻近秒桶，下次拖到附近秒显
-                            _scheduleThumbPrefetch((v.round() ~/ 1000) * 1000);
-                            _resetHideTimer();
-                          },
-                          hasNext: _hasNext,
-                          onNext: _playNext,
-                          timeText: _timeText,
-                          onTimeTap: _toggleTimeMode,
-                          onSpeedTap: _openSpeedPanel,
-                          showSpeedButtonBackground:
-                              _settings.showButtonBackground,
-                          superResolutionLabel: '超分辨率',
-                          onSuperResolutionTap: _openSuperResolutionPanel,
-                          onScreenSwitchTap: _openPortraitPlayer,
-                          showScreenSwitchBackground:
-                              _settings.showButtonBackground,
-                          // 工作.md 第 4 点：列表按钮背景与倍速按钮同开关
-                          showListButtonBackground:
-                              _settings.showButtonBackground,
-                          onPlaylistTap: _openPlaylistPanel,
+                // 跳过胶囊浮层 + 底栏主体：胶囊贴底栏顶部（章节名称上方），
+                // 独立于底栏滑出动画（自动弹出期间控制层隐藏也可见）。
+                // ⚠️ 必须 Positioned 钉在底部：Stack 非 Positioned 子项
+                // 默认摆放到 topLeft，底栏会整个跑到屏幕顶部（错位 bug）
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 跳过胶囊（工作.md 第 4 点）：进入 OP/ED 等片段自动弹出
+                      // （5 秒倒计时自动消失）；控制层可见且仍在片段内时常驻；
+                      // 回拖进片段可重复触发。位置与章节名称行同左缘对齐。
+                      ListenableBuilder(
+                        listenable: _chapterTracker,
+                        builder: (context, _) {
+                          final seg = _chapterTracker.activeSegment;
+                          final visible = seg != null &&
+                              !_locked &&
+                              (_chapterTracker.autoChipVisible ||
+                                  _controlsVisible);
+                          return AnimatedOpacity(
+                            opacity: visible ? 1 : 0,
+                            duration: const Duration(milliseconds: 250),
+                            child: IgnorePointer(
+                              ignoring: !visible,
+                              child: seg == null
+                                  ? const SizedBox.shrink()
+                                  : Padding(
+                                      padding: const EdgeInsets.only(
+                                        left: kPlayerLeftInset,
+                                        bottom: 8,
+                                      ),
+                                      child: ChapterSkipChip(
+                                        type: seg.type,
+                                        onTap: _skipCurrentSegment,
+                                      ),
+                                    ),
+                            ),
+                          );
+                        },
+                      ),
+                      IgnorePointer(
+                        ignoring: !_controlsVisible || _locked,
+                        child: SlideTransition(
+                          position: _bottomSlide,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            // 局部订阅进度 + 章节：位置/时长/章节变化只重建底栏
+                            //（进度条 + 时间文本 + 章节标记），不重建整页
+                            //（risk_audit #1）
+                            child: ListenableBuilder(
+                              listenable: _chapterListenable,
+                              builder: (context, _) => PlayerBottomBar(
+                                valueMs: (_dragPosition ?? _position)
+                                    .inMilliseconds
+                                    .toDouble(),
+                                maxMs: _duration.inMilliseconds > 0
+                                    ? _duration.inMilliseconds.toDouble()
+                                    : 1.0,
+                                onSeekChanged: (v) {
+                                  _dragPositionNotifier.value =
+                                      Duration(milliseconds: v.round());
+                                  _requestThumbnail(v.round());
+                                  _resetHideTimer();
+                                },
+                                onSeekEnd: (v) {
+                                  _player.seek(Duration(milliseconds: v.round()));
+                                  _dragPositionNotifier.value = null;
+                                  _hideThumbPreview();
+                                  // 空闲后预取邻近秒桶，下次拖到附近秒显
+                                  _scheduleThumbPrefetch(
+                                      (v.round() ~/ 1000) * 1000);
+                                  _resetHideTimer();
+                                },
+                                hasNext: _hasNext,
+                                onNext: _playNext,
+                                timeText: _timeText,
+                                onTimeTap: _toggleTimeMode,
+                                onSpeedTap: _openSpeedPanel,
+                                showSpeedButtonBackground:
+                                    _settings.showButtonBackground,
+                                superResolutionLabel: '超分辨率',
+                                onSuperResolutionTap: _openSuperResolutionPanel,
+                                onScreenSwitchTap: _openPortraitPlayer,
+                                showScreenSwitchBackground:
+                                    _settings.showButtonBackground,
+                                // 工作.md 第 4 点：列表按钮背景与倍速按钮同开关
+                                showListButtonBackground:
+                                    _settings.showButtonBackground,
+                                onPlaylistTap: _openPlaylistPanel,
+                                // 章节功能（工作.md）：「显示章节进度条」开关
+                                // 只控制进度条上的圆点与章节名称行；
+                                // 跳过色段与胶囊属于动漫跳过，强制开启不受开关影响
+                                chapters: _settings.showChapterProgress
+                                    ? _chapterTracker.chapters
+                                    : const [],
+                                skipSegments: _chapterTracker.skipSegments,
+                                currentChapterName:
+                                    _settings.showChapterProgress
+                                        ? _chapterTracker.currentChapterTitle
+                                        : null,
+                                onChapterTap: _openChapterPanel,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
                 // 右侧操作（截图 / 锁定，从右侧滑入）
@@ -2292,6 +2407,10 @@ class _PlayerPageState extends State<PlayerPage>
                 // 在顶栏下方，现提到顶部信息行/顶栏区域下方的 top: 20 附近）。
                 if (_resumeVisible)
                   Positioned(
+                    // 稳定 key：拖动进度条时缩略图气泡（前一个条件 Positioned）
+                    // 会插入/移出 Stack children，无 key 兄弟项按索引错位匹配
+                    // 会重建 State → 指示器进场动画重播（「拖动一下唤出一次」根因）
+                    key: const ValueKey('resumeIndicator'),
                     left: 0,
                     right: 0,
                     top: 20,

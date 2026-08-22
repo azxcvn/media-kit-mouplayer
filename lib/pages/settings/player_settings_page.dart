@@ -159,6 +159,16 @@ class PlayerSettingsPage extends StatelessWidget {
                     ),
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsTile(
+                      icon: Icons.bookmarks_outlined,
+                      title: '显示章节进度条',
+                      subtitle: const Text('进度条上标记章节节点，显示当前章节名称（需视频自带章节信息）'),
+                      trailing: Switch(
+                        value: settings.showChapterProgress,
+                        onChanged: (v) => settings.setShowChapterProgress(v),
+                      ),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsTile(
                       icon: Icons.image_outlined,
                       title: '进度条缩略图',
                       subtitle: const Text('拖动进度条时预览画面（FFmpeg 硬解抓帧，与播放互不影响）'),

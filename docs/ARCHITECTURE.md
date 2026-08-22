@@ -38,6 +38,7 @@ lib/
 │   ├── player_action.dart     # 播放器按钮动作 / 双击手势模式 / 视频方向模式 / 顶部信息模式
 │   ├── player_loop.dart       # 循环播放模式枚举（off/列表循环/单集循环）
 │   ├── playlist_sort.dart     # 播放列表排序 + 目录过滤纯函数
+│   ├── chapter_info.dart      # 章节模型（ChapterInfo/SkipSegment/跳过类型枚举）
 │   └── super_resolution_mode.dart  # 超分模式/质量枚举 + 着色器链构建纯函数
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
@@ -50,6 +51,7 @@ lib/
 │   ├── crash_log_service.dart # 崩溃日志：列表/读取/删除/清空/导出
 │   ├── cache_manager_service.dart # 缓存管理：列表封面磁盘缓存查询/清除（进度条缩略图为纯内存，不占磁盘）
 │   ├── super_resolution_service.dart   # 超分：模式持久化、着色器拷贝、mpv 应用
+│   ├── chapter_tracker.dart   # 章节跟踪器（mpv chapter-list 读取 + 当前位置/片段/胶囊窗口状态）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -83,7 +85,9 @@ lib/
 │   │       ├── player_status_bar.dart     # 顶部信息行：时间/电量（居中；可关闭；与顶栏渐变一体）
 │   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进
 │   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间 + 右下角按钮簇
-│   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset）
+│   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset；章节圆点 + 跳过色段）
+│   │       ├── player_chapter_bar.dart    # 章节名行（可点击呼出列表）+ 跳过胶囊（5 秒自动消失/控制层可见时常驻）
+│   │       ├── player_chapter_panel.dart  # 章节列表面板（竖向滚动 + 实时高亮当前章节 + 点击跳转）
 │   │       ├── player_loop_panel.dart     # 循环播放面板内容（横竖屏共用）
 │   │       ├── player_right_actions.dart  # 右侧竖排：截图 + 锁定
 │   │       ├── player_fit_panel.dart      # 画面比例面板内容
@@ -122,6 +126,7 @@ lib/
     ├── playback_restore.dart  #   恢复进度：openAndRestore（暂停加载→静音激活时间线→seek→确认）
     ├── pip_aspect.dart        #   画中画宽高比纯函数
     ├── player_gestures.dart   #   双击判定 + 滑动手势数学
+    ├── chapter_utils.dart     #   章节纯函数（标题分类/片段派生/当前章节/跳过目标）
     └── audio_shuffle.dart     #   听视频随机播放算法（结合当前时间刻，纯函数）
 ```
 
@@ -252,7 +257,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 引擎 | `services/fast_thumbnails.dart` | FFI 绑定 + 后台 isolate + **单飞调度**（最多 1 在跑 + 1 待跑，新请求顶掉旧待跑） |
 | 缓存 | `services/device_services.dart` | `getVideoFrameAt`：秒桶 + **24MB 内存 LRU**（RGBA 字节计）+ 在飞去重；`peekFrame`/`peekNearestFrame` |
 | UI | `views/player_thumbnail_preview.dart` + `widgets/raw_thumb_image.dart` | 气泡 + RGBA 直渲（`ImageDescriptor.raw`，无 PNG/JPEG 编码往返） |
-| 调度 | `pages/player/player_page.dart` | 拖动：邻近帧秒显 + 精确帧异步补齐；松手：淡出 150ms 后卸载 + **空闲 350ms 预取 ±1/±2/±3 秒桶**（再拖动立即终止，拖动请求绝对优先） |
+| 调度 | `pages/player/player_page.dart` / `player_portrait_page.dart` | 横竖屏两页同款：拖动邻近帧秒显 + 精确帧异步补齐；松手淡出 150ms 后卸载 + **空闲 350ms 预取 ±1/±2/±3 秒桶**（再拖动立即终止，拖动请求绝对优先）；共用同一 FFmpeg 引擎与内存缓存，受同一 `showThumbnailPreview` 开关控制 |
 
 **关键事实**：
 - JavaVM 无需自行注册——media_kit 启动时已通过官方补丁 `mpv_lavc_set_java_vm` 完成，MediaCodec 硬解天然可用
@@ -339,6 +344,8 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/portrait_player_bottom_bar_test.dart` — 竖屏底栏右侧按钮簇顺序（超分辨率→列表→倍速→选择屏幕，左到右）
   - `test/thumbnail_cache_test.dart` — FFmpeg 帧缓存查询（peekFrame 精确秒桶/peekNearestFrame 邻近匹配/跨视频隔离）+ 24MB LRU 超限淘汰
   - `test/watch_state_test.dart` — 观看状态纯函数（未观看/观看中/已看完判定 + 自定义阈值 + 百分比）
+  - `test/chapter_utils_test.dart` — 章节纯函数（标题关键词分类/片段派生过滤/当前章节定位/跳过目标 EOF 保护）
+  - `test/chapter_tracker_test.dart` — 章节跟踪器（位置流驱动的章节推进/胶囊 5 秒窗口/回拖重复触发/跳过与跳转）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -401,6 +408,10 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 播放进度恢复重启后失效 | 恢复前 ensureLoaded；`save` 前等待加载完成 |
 | 排序字段胶囊 | 排序弹窗字段选择用胶囊样式（选中主题色填充），与倍速面板视觉一致 |
 | 三大金刚键遮挡 / AppBar 滚动变色 | AppFrame 全局 bottom 安全区；`app_theme.dart` 统一 `scrolledUnderElevation: 0` |
+| 类成员与导入纯函数同名被解析成成员（chapter 的 `currentChapterIndex`） | 纯函数 import 加 `as` 别名（`chapter_utils.currentChapterIndex`） |
+| mpv 章节子属性返回字符串、平台可能为 null | `NativePlayer.getProperty('chapter-list/$i/title'…)` 自行 parse；非 NativePlayer 静默无章节 |
+| 底栏/控制组件错位跑到屏幕顶部 | Stack 非 Positioned 子项默认 topLeft 摆放：底栏等固定定位组件必须包 `Positioned(left/right/bottom)` |
+| Stack 条件子项插入/移出导致无 key 兄弟错位重建（指示器动画重播） | 条件渲染的 Stack 子项（如缩略图气泡）前的有状态组件加稳定 key（`ValueKey`），防按索引错位丢 State |
 
 ---
 

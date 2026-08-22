@@ -85,6 +85,8 @@ enum PlayerTopAction {
   loop('loop', '循环播放', Icons.repeat, true),
   equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, false),
   decode('decode', '解码', Icons.deblur_outlined, false),
+  // 章节：已接入（工作.md 章节功能），点击呼出章节列表（无章节时提示）
+  chapter('chapter', '章节', Icons.bookmarks_outlined, true),
   introOutro('intro_outro', '片头片尾', Icons.movie_filter_outlined, false);
 
   /// 持久化标识（稳定，勿改）
