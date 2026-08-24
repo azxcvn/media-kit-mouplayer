@@ -104,10 +104,17 @@ List<double> dynamicSpeedPresets() {
   ];
 }
 
+/// 动态调速灵敏度：满屏宽度映射多少个「满区间跨度」。
+///
+/// 工作.md 阶段1 第 4 点重设计：旧值 3.5 时用户反馈「滑了很长距离、接近屏幕最右侧才到 4 倍」，
+/// 太不灵敏。现提高为 6.0：滑动约 **1/6 屏宽**即可扫完整个动态区间（1.5 → 4.0，
+/// 5 个跨度），拇指短距离拨动即可明显变速，适中不漂移。
+const double dynamicSpeedStepsPerScreenWidth = 6.0;
+
 /// 动态调速：从 [startIndex] 档开始，横向滑动 [dxPixels] 像素后的目标档位索引。
 ///
-/// 对齐 kt 项目算法：满屏宽度映射 [presetCount - 1] × 3.5 个档位跨度，
-/// 即滑动一屏大约跨越 3.5 个档位跨度（每档 ~0.5x）。
+/// 满屏宽度映射 [presetCount - 1] × [dynamicSpeedStepsPerScreenWidth] 个档位跨度，
+/// 即滑动约 1/6 屏即可跨越整个动态区间（每档 ~0.5x）。
 int dynamicSpeedIndex(
   double dxPixels,
   double screenWidth,
@@ -117,7 +124,8 @@ int dynamicSpeedIndex(
   assert(screenWidth > 0);
   assert(presetCount > 0);
   final range = presetCount - 1;
-  final indexDelta = (dxPixels / screenWidth) * range * 3.5;
+  final indexDelta =
+      (dxPixels / screenWidth) * range * dynamicSpeedStepsPerScreenWidth;
   return (startIndex + indexDelta.round()).clamp(0, range);
 }
 

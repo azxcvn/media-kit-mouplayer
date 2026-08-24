@@ -23,21 +23,6 @@ enum VideoOrientationMode {
   const VideoOrientationMode(this.label);
 }
 
-/// 播放界面顶部信息栏显示内容（工作.md 第 12 点，设置-播放器设置-顶部信息）：
-/// - [off]：关闭——不显示时间也不显示电量，不占用顶部区域；
-/// - [time]：只显示时间；
-/// - [battery]：只显示电量；
-/// - [both]：时间与电量同时显示。
-enum TopStatusDisplay {
-  off('关闭'),
-  time('只显示时间'),
-  battery('只显示电量'),
-  both('时间与电量');
-
-  final String label;
-  const TopStatusDisplay(this.label);
-}
-
 /// 画面比例（对齐 PiliPlus 的 VideoFitType）：
 /// 通过 Video 组件的 [BoxFit] 与 [aspectRatio] 实现，无需 mpv 属性。
 enum PlayerVideoFit {
@@ -73,7 +58,7 @@ enum PlayerVideoFit {
 /// 注意：倍速（speed）**不在**顶栏动作之列 —— 倍速按钮固定于播放页
 /// 底栏（超分辨率按钮左侧），不支持在顶栏控制栏增加或删除。
 enum PlayerTopAction {
-  subtitle('subtitle', '字幕', Icons.subtitles_outlined, false),
+  subtitle('subtitle', '字幕', Icons.subtitles_outlined, true),
   danmaku('danmaku', '弹幕', Icons.comment_outlined, false),
   audio('audio', '音轨', Icons.library_music_outlined, false),
   aspect('aspect', '比例', Icons.aspect_ratio, true),

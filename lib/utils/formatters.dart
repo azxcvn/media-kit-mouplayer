@@ -34,3 +34,24 @@ String formatSpeed(double speed) {
   final s = speed.toStringAsFixed(speed == speed.roundToDouble() ? 1 : 2);
   return '${s}x';
 }
+
+/// 网速显示（工作.md 阶段1 第 1 点）：自动切换 KB/MB，保留两位小数。
+/// [bytesPerSecond] 为每秒字节数：< 1024 KB/s 显示 KB，否则显示 MB。
+String formatNetworkSpeed(double bytesPerSecond) {
+  if (bytesPerSecond <= 0) return '0.00 KB/s';
+  final kb = bytesPerSecond / 1024;
+  if (kb < 1024) return '${kb.toStringAsFixed(2)} KB/s';
+  return '${(kb / 1024).toStringAsFixed(2)} MB/s';
+}
+
+/// 判断媒体路径是否为在线资源（工作.md 阶段1 第 1 点：网速详情仅在线播放时显示）。
+/// 本地文件返回 false，http/https/rtmp/rtsp 等网络协议返回 true。
+bool isOnlineMedia(String path) {
+  final lower = path.toLowerCase();
+  return lower.startsWith('http://') ||
+      lower.startsWith('https://') ||
+      lower.startsWith('rtmp://') ||
+      lower.startsWith('rtsp://') ||
+      lower.startsWith('mms://') ||
+      lower.startsWith('srt://');
+}

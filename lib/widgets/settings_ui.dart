@@ -158,6 +158,54 @@ class SettingsTile extends StatelessWidget {
   }
 }
 
+/// 多选设置项行（复选框，可同时勾选多项；工作.md 阶段1 第 1 点顶部信息多选）
+class SettingsCheckboxTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Widget? subtitle;
+  final bool checked;
+  final ValueChanged<bool>? onChanged;
+
+  const SettingsCheckboxTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.checked,
+    this.subtitle,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      onTap: onChanged == null ? null : () => onChanged!(!checked),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: checked ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          icon,
+          size: 22,
+          color: checked ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+      ),
+      subtitle: subtitle,
+      trailing: Checkbox(
+        value: checked,
+        onChanged: onChanged == null ? null : (v) => onChanged!(v ?? false),
+      ),
+    );
+  }
+}
+
 /// 单选设置项行（trailing 显示选中勾）
 class SettingsRadioTile extends StatelessWidget {
   final IconData icon;

@@ -12,6 +12,8 @@ include: package:flutter_lints/flutter.yaml
 analyzer:
   exclude:
     - 参考项目/**
+    # 杂项文件目录为参考资料/笔记（含第三方参考项目源码），非本项目代码，不参与分析
+    - 杂项文件/**
 
 linter:
   # The lint rules applied to this project can be customized in the

@@ -87,6 +87,8 @@ flutter:
   assets:
     - assets/shaders/
     - assets/icons/
+    # 字幕 libass 默认回退字体（Android libass 拿不到系统字体，必须捆绑字体才能渲染普通字幕）
+    - assets/fonts/NotoSansCJKsc-Regular.otf
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

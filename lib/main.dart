@@ -8,6 +8,7 @@ import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
+import 'package:moumou/services/subtitle_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/theme/app_theme.dart';
@@ -69,6 +70,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 片头片尾设置：同 ensureLoaded 模式（面板 setter 与这里共享同一
     // load Future，防竞态）
     IntroOutroSettings.instance.ensureLoaded();
+    // 字幕设置（工作.md 阶段1 第 3 点）：同 ensureLoaded 模式（面板 setter
+    // 与这里共享同一 load Future，防竞态）
+    SubtitleSettings.instance.ensureLoaded();
     SuperResolutionService.instance.load();
   }
 

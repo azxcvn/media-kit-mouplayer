@@ -14,7 +14,10 @@ Flutter 本地视频播放器（Android），核心能力：
 - **树状模式**：逐级目录导航（mpvRx 风格），一级界面显示独立文件夹卡片，点入下钻，带面包屑
 - 两种模式共用同一套卡片组件（视觉一致）
 - 播放器：media_kit，横屏沉浸式全屏，播放进度持久化；**听视频**（共享 Player 只播音频，
-  封面模糊背景 + 白色底部倍速/列表面板 + 时间刻随机播放）
+  封面模糊背景 + 1:1 圆角封面 + 胶囊式底部倍速/列表面板 + 定时关闭 + 后台播放（前台服务保活）+ 时间刻随机播放）
+- **字幕**（阶段1 第 3 点）：内嵌轨道 + 外挂字幕导入（Android≤11 系统选择器 / >11 自建选择器带排序与文件夹记忆），
+  主+次双字幕，延迟/样式/杂项/字体四类设置，样式支持预设 + RGBA 滑杆调色与强制覆盖开关，内嵌样式字幕默认尊重自带样式
+  （libass 原生渲染，见 §7 已知注意事项）
 - **进度条缩略图**：自建 libmpv 内核（含 `mk_thumbnail_*` 快速抓帧接口）+ FFmpeg/MediaCodec
   硬解独立解码实例（~85ms/帧），拖动实时预览、松手精确落帧、空闲预取邻近帧（§4.9）
 - 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
@@ -36,10 +39,11 @@ lib/
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         # 目录树节点（folder/video）
 │   ├── video_file.dart        # 视频文件信息
-│   ├── player_action.dart     # 播放器按钮动作 / 双击手势模式 / 视频方向模式 / 顶部信息模式
+│   ├── player_action.dart     # 播放器按钮动作 / 双击手势模式 / 视频方向模式
 │   ├── player_loop.dart       # 循环播放模式枚举（off/列表循环/单集循环）
 │   ├── playlist_sort.dart     # 播放列表排序 + 目录过滤纯函数
 │   ├── chapter_info.dart      # 章节模型（ChapterInfo/SkipSegment/跳过类型枚举）
+│   ├── subtitle_track.dart    # 字幕轨道模型 + 展示名/格式过滤/对齐/颜色/RGBA 转换/字体过滤纯函数
 │   └── super_resolution_mode.dart  # 超分模式/质量枚举 + 着色器链构建纯函数
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
@@ -47,7 +51,7 @@ lib/
 │   ├── video_info_service.dart# 列表封面缩略图（磁盘缓存）+ 基本元数据 + 完整媒体信息
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化 + 串行写盘）
 │   ├── player_controls_settings.dart   # 播放器控制设置（槽位/手势/倍速/比例/长按/方向/顶部信息等）
-│   ├── device_services.dart   # 设备能力：音量/亮度/画中画/电量（MethodChannel）+ 任意时刻抓帧（FFmpeg 引擎 + 秒桶内存 LRU）
+│   ├── device_services.dart   # 设备能力：音量/亮度/画中画/电量/网络类型/后台服务启停/字幕文件操作（MethodChannel）+ 任意时刻抓帧（FFmpeg 引擎 + 秒桶内存 LRU）
 │   ├── fast_thumbnails.dart   # FFmpeg 快速缩略图引擎（FFI 直连自建 libmpv.so 的 mk_thumbnail_*，单飞+顶旧调度）
 │   ├── crash_log_service.dart # 崩溃日志：列表/读取/删除/清空/导出
 │   ├── cache_manager_service.dart # 缓存管理：列表封面磁盘缓存查询/清除（进度条缩略图为纯内存，不占磁盘）
@@ -55,6 +59,8 @@ lib/
 │   ├── chapter_tracker.dart   # 章节跟踪器（mpv chapter-list 读取 + 当前位置/片段/胶囊窗口状态）
 │   ├── intro_outro_settings.dart # 片头片尾全局设置（开关/片头秒数/片尾秒数/各自范围，ChangeNotifier + 持久化）
 │   ├── intro_outro_tracker.dart  # 片头片尾跟踪器（就绪/已处理状态 + 恢复点感知 + 动作决策）
+│   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/字体/内嵌样式覆盖/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
+│   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -82,10 +88,10 @@ lib/
 │   │   ├── player_page.dart   #   播放页（横屏沉浸式；手势/恢复进度/切集/EOF/画中画/面板）
 │   │   ├── player_metrics.dart #  人体工学对齐常量 kPlayerLeftInset（横竖屏共用）
 │   │   ├── player_portrait_page.dart # 竖屏播放页（共享横屏 Player/VideoController，切换零中断）
-│   │   ├── audio_player_page.dart    # 听视频页（共享 Player 只播音频；封面模糊背景；白色底部面板；循环三态）
+│   │   ├── audio_player_page.dart    # 听视频页（共享 Player 只播音频；封面模糊背景；1:1 圆角封面；后台播放；循环三态）
 │   │   └── views/             #   播放页专属控制组件
 │   │       ├── player_top_bar.dart        # 顶栏：返回 + 标题 + 5 槽位 + 更多
-│   │       ├── player_status_bar.dart     # 顶部信息行：时间/电量（居中；可关闭；与顶栏渐变一体）
+│   │       ├── player_status_bar.dart     # 顶部信息行：时间/电量居中 + 网速胶囊/数据类型靠右（多选控制）
 │   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进
 │   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间 + 右下角按钮簇
 │   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset；章节圆点 + 跳过色段）
@@ -102,6 +108,9 @@ lib/
 │   │       ├── player_gesture_indicator.dart  # 音量/亮度手势指示器
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（胶囊样式）
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容
+│   │       ├── audio_player_panels.dart       # 听视频倍速/列表面板（胶囊式 + 定时关闭预设 + 统一关闭按钮）
+│   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置/字体自建选择器）
+│   │       ├── subtitle_file_picker.dart      # 外挂字幕/字体选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器）
 │   │       ├── player_resume_indicator.dart   # 恢复进度指示器（胶囊样式，2.5s 自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层
 │   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（RGBA 直渲 + 淡入淡出）
@@ -123,7 +132,7 @@ lib/
 │   └── theme_controller.dart  #   主题控制（模式/色/风格 + 迁移）
 └── utils/                     # 纯工具函数
     ├── app_dialog.dart        #   （见 widgets/app_dialog.dart 说明）
-    ├── formatters.dart        #   大小/日期/时长/倍速格式化
+    ├── formatters.dart        #   大小/日期/时长/倍速/网速格式化 + 在线媒体判定
     ├── natural_compare.dart   #   自然序（数字感知）比较
     ├── watch_state.dart       #   观看状态纯函数（未观看/观看中/已看完）
     ├── playback_completion.dart # EOF 动作解析纯函数（优先级链）
@@ -132,7 +141,8 @@ lib/
     ├── player_gestures.dart   #   双击判定 + 滑动手势数学
     ├── chapter_utils.dart     #   章节纯函数（标题分类/片段派生/当前章节/跳过目标）
     ├── intro_outro_skip.dart  #   片头片尾动作决策纯函数（跳过片头/切下一集/无动作）
-    └── audio_shuffle.dart     #   听视频随机播放算法（结合当前时间刻，纯函数）
+    ├── audio_shuffle.dart     #   听视频随机播放算法（结合当前时间刻，纯函数）
+    └── subtitle_sort.dart     #   自建字幕选择器排序纯函数（目录恒在前）
 ```
 
 ---
@@ -158,7 +168,7 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–6 步进 0.1/指示器开关/首次提示标记）、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、顶部信息显示（关闭/时间/电量/两者，默认两者）** 属 `PlayerControlsSettings`
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）、`SubtitleSettings`（单例，字幕延迟/大小/位置/对齐/颜色/字体/内嵌样式覆盖，默认关闭）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–4 步进 0.5/指示器开关/首次提示标记，阶段1 第 4 点）**、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、**顶部信息多选（时间/电量/网速/数据类型四项，默认全选，阶段1 第 1 点；旧单选枚举一次性迁移）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 片头片尾跳过设置属 `IntroOutroSettings`（独立单例 ChangeNotifier）：启用开关（默认关闭）、片头/片尾跳过秒数（默认 0）、各自范围上限（10–600 秒，默认 180）；范围收窄时秒数联动收窄；一键重置只清秒数与范围、保留开关；跟踪器 `IntroOutroTracker` 为普通类（随播放页生命周期），就绪门控防 open 期间误触发
 - 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
@@ -230,8 +240,8 @@ PiliPlus：裸 `RawGestureDetector` + 自定义识别器组 + `Listener` 兜底�
 |---|---|---|
 | 单击 | 显隐控制层（锁定态切换解锁按钮） | Tap + DoubleTap 并存，单击有 ~300ms 双击判定延迟（与旧实现一致） |
 | 双击 | 按 `doubleTapMode`：暂停 / 左退右进 / 混合 | 同旧逻辑 |
-| 长按（500ms） | 临时倍速（设置值 1–6x），指示器常驻 | 长按期间 `Listener` 裸指针事件驱动左右滑动调速 |
-| 长按 + 左右滑动 | 动态调速 1.5–4x（间隔 0.5，离散），出现倍速条 | 倍速条在指示器下方，停在某档 3 秒自动隐藏；首次完成该操作后提示不再出现（`speedHintShown` 持久化） |
+| 长按（500ms） | 临时倍速（设置值 1–4x），指示器常驻 | 长按期间 `Listener` 裸指针事件驱动左右滑动调速 |
+| 长按 + 左右滑动 | 动态调速 1.5–4x（间隔 0.5，离散），出现倍速条 | 灵敏度（阶段1 第 4 点重设计）：滑动约 **1/6 屏宽**扫完整个动态区间（倍率 6.0，旧 3.5 需滑近一屏太不灵敏）；倍速条在指示器下方，停在某档 3 秒自动隐藏；首次完成该操作后提示不再出现（`speedHintShown` 持久化） |
 | 单指垂直滑动 | 左半屏亮度、右半屏音量 | 顶部/底部 8% 死区（避系统手势）；音量 0–100、亮度 0–1，带浮点累加器；**方向确认延迟 80ms**（给第二根手指加入时间，防捏合误触滑动） |
 | 单指水平滑动 | 实时 seek（满屏 = 90 秒，40ms 节流），居中浮层显示目标时间 | 右侧 8% 死区（避系统返回手势）；若滑动中途加入第二指，先撤销 seek（`onSwipeCancel`）再进缩放 |
 | 双指 | 缩放（0.75–4x，设置可禁缩小）+ 平移 | 以双指焦点为锚缩放 + 焦点位移平移；缩放后「还原画面」胶囊出现在播放/暂停按钮下方（Alignment 0.34） |
@@ -299,7 +309,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 1. 设置主页 `settings_page.dart` 已有分组结构：`SettingsGroupTitle(title: '分组名')` + `SettingsCard(child: SettingsTile(...))`
 2. 新分组直接追加；新设置子页参考 `appearance_page.dart`（`AppBar` + 分组列表）
 3. 设置项 UI 组件复用 `lib/widgets/settings_ui.dart`（`SettingsGroupTitle / SettingsCard / SettingsTile / SettingsRadioTile`）
-4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆（**全部归为一张卡片**，项间 `Divider(height:1, indent:16, endIndent:16)` 分隔）；**视频方向**组 = 自动/锁定竖屏/锁定横屏（RadioTile 三选一）；**顶部信息**组 = 只显示时间/只显示电量/时间与电量（RadioTile 三选一，工作.md 第 12 点）；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/自动连播/播放完毕自动退出/循环播放模式（RadioTile 三选一：关闭/列表循环/单集循环）/倍速播放指示器/启用播放界面动画（组内每项之间用 `Divider(height:1, indent:16, endIndent:16)` 分隔）；「已观看进度阈值」独立滑杆组（5% – 100%，步进 5%，默认 95%）
+4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆（**全部归为一张卡片**，项间 `Divider(height:1, indent:16, endIndent:16)` 分隔）；**视频方向**组 = 自动/锁定竖屏/锁定横屏（RadioTile 三选一）；**顶部信息**组 = 时间/电量/网速/数据类型（CheckboxTile 四项多选，默认全选，阶段1 第 1 点）；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/自动连播/播放完毕自动退出/循环播放模式（RadioTile 三选一：关闭/列表循环/单集循环）/倍速播放指示器/启用播放界面动画（组内每项之间用 `Divider(height:1, indent:16, endIndent:16)` 分隔）；「已观看进度阈值」独立滑杆组（5% – 100%，步进 5%，默认 95%）
 
 ### 5.4 新增模型字段
 
@@ -356,6 +366,10 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/intro_outro_settings_test.dart` — 片头片尾设置服务（默认值/钳制/范围收窄联动/一键重置/持久化恢复）
   - `test/intro_outro_tracker_test.dart` — 片头片尾跟踪器（就绪门控/每集一次/越过即标记/恢复点感知/切集重置）
   - `test/intro_outro_panel_test.dart` — 片头片尾面板（开关展开/输入换算 mm:ss/滑杆/设为当前时间与剩余时间/一键重置）
+  - `test/formatters_network_test.dart` — 网速格式化（KB/MB 自动切换两位小数）与在线媒体判定纯函数（阶段1 第 1 点）
+  - `test/subtitle_track_test.dart` — 字幕轨道纯函数（展示名/ASS 样式判定/格式过滤/对齐/颜色 + RGBA↔mpv 颜色转换，阶段1 第 3 点）
+  - `test/subtitle_settings_test.dart` — 字幕设置服务（默认值/延迟叠加与钳制/描边模式/外挂字幕记忆/重置样式持久化）
+  - `test/subtitle_sort_test.dart` — 自建字幕选择器排序纯函数（目录恒在前/大小日期升降序）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -404,8 +418,13 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 松手后缩略图气泡不消失（要点屏才走） | 改变挂载条件的状态必须 `setState`；现走显式 `visible` 标志 + 定时器淡出后卸载 |
 | 列表首屏并发拉元数据 | `VideoInfoService` 在飞去重（同 path 共享 Future） |
 | 听视频共享 Player 语义 | 听视频页不建播放器/不恢复进度；切歌从 0 开始、切走前保存进度；EOF 由听视频页处理（播放页 `_audioActive` 让位）；循环三态：关闭/单曲/列表（点击循环按钮切换） |
+| 听视频退后台自动暂停 | 阶段1 第 2 点：进入听视频启动前台服务（`BackgroundPlaybackService`，mediaPlayback 类型）保活进程，mpv 音频在后台继续播放；退出听视频停服务；前台服务仅保活不带媒体控制 |
+| 外挂字幕 content:// 无法直接给 libmpv | `sub-add` 前先由原生侧拷贝到 `filesDir/subtitles/`（`copySubtitleFromUri`）；自建选择器直接返回文件真实路径 |
+| 字幕切集后消失/勾选丢失 | `SubtitleController.reapplyForMedia` 按媒体路径去重后重新 `sub-add` 全部外挂字幕，并按 `external-filename`（源路径）恢复主/次勾选（轨道 id 重开会变） |
+| 内嵌 ASS 字幕被强制换样式 | 默认 `sub-ass-override=no`（尊重自带样式字体）；开启「强制覆盖内嵌样式」才 `force`；主字幕为文本格式时用户样式恒生效 |
+| 字幕面板在横竖屏外壳下导航器类不同 | 面板二级页推页由页面注入回调（横屏传 `PlayerPanelNavigator`、竖屏传 `PlayerBottomPanelNavigator`），面板不直接依赖外壳（§4.5 Builder 约定） |
 | 听视频随机播放 | 纯函数 `audioShuffleNextIndex`：当前时刻折叠种子 + 乘性散列，不重复当前曲目（可单测） |
-| 播放页顶部时间/电量 | 原生 `getBatteryLevel`（BatteryManager 无需权限）；`PlayerStatusBar` 30s 刷时间/60s 刷电量；设置可选 关闭/时间/电量/两者；居中显示；渐变由播放页统一包「信息行+顶栏」一个连续渐变（勿各画各的，防断层）；竖屏压缩高度 |
+| 播放页顶部信息行 | 原生 `getBatteryLevel`/`getNetworkType`；时间 30s/电量 60s/网络类型 5s 刷新；四样多选（时间/电量/网速/数据类型，默认全选）；勾了时间或电量 → 时间电量居中、网速+数据类型靠右，否则网速+数据类型居中；网速胶囊仅在线播放显示（本地一律隐藏，`isOnlineMedia`）；渐变由播放页统一包「信息行+顶栏」一个连续渐变（勿各画各的，防断层）；竖屏压缩高度 |
 | 许可证书页 | 折叠式改为列表 + 二级详情页（可复制），不用 ExpansionTile |
 | 画中画进出检测 / 宽高比 | 用 `didChangeAppLifecycleState` 判断进出 PiP；`pipAspectRatio` 约分 + 0.5–2.39 钳制 |
 | 超分 UI 不刷新 / 看不出效果 | 面板用 `ValueNotifier` 实时刷新；720p 以下动漫 + 激进档位测试 |
@@ -422,6 +441,14 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | mpv 章节子属性返回字符串、平台可能为 null | `NativePlayer.getProperty('chapter-list/$i/title'…)` 自行 parse；非 NativePlayer 静默无章节 |
 | 底栏/控制组件错位跑到屏幕顶部 | Stack 非 Positioned 子项默认 topLeft 摆放：底栏等固定定位组件必须包 `Positioned(left/right/bottom)` |
 | Stack 条件子项插入/移出导致无 key 兄弟错位重建（指示器动画重播） | 条件渲染的 Stack 子项（如缩略图气泡）前的有状态组件加稳定 key（`ValueKey`），防按索引错位丢 State |
+| media_kit 默认 `libass:false` → mpv `sub-visibility=no`，无 SubtitleView 时字幕完全不渲染 | 播放器 `PlayerConfiguration(libass: true)` 走原生 libass 字幕管线（`player_page.dart`）；Android 捆绑回退字体 `NotoSansCJKsc` 经 `libassAndroidFont` 供 libass 使用 |
+| Android libass 拿不到系统字体，普通文本字幕无字体不显示 | 核心捆绑 NotoSansCJKsc 回退字体；`sub-font-provider` 统一 `auto`（勿设 `none`），内嵌字幕嵌入字体亦可用 |
+| mpv 颜色 8 位为 `#AARRGGBB`（alpha 在前），6 位 = 不透明 | `rgbaToMpvColor`/`mpvColorToRgba`（`subtitle_track.dart`）统一转换，alpha==255 输出 6 位保兼容 |
+| 打开视频后 ASS 内嵌字幕被强制覆盖样式（需切轨道才恢复原生样式） | 选中态与 mpv 实际 `sid` 同步（`reload`/`_syncActiveFromMpv`），样式策略按真实轨道判断，首帧即生效 |
+| 主/次字幕功能乱且难维护 | 改单选模型（只设 `sid`）：轨道点击两态循环 选中↔关闭；移除 secondary-sid 全部逻辑 |
+| 导入的外挂字幕退出播放后丢失 | `SubtitleSettings` 记忆路径列表（SharedPreferences），`SubtitleController` 构造时恢复、`reapply` 时以 `sub-add auto` 重挂（不抢占自带字幕） |
+| 系统选择器把 .ttf/.otf 置灰不可选 | 原生新增字体 MIME 选择器 `openFontPicker`（font/* + octet-stream）；SDK≤30 用它拷贝，≥31 自建文件夹选择器过滤 `isFontFile` |
+| 重置延迟/样式不生效（apply 竞态） | 先 await 设置变更、后 await `applyAllSettings()`，禁止同一事件内不等待的并行修改 |
 
 ---
 

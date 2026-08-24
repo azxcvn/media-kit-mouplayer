@@ -48,24 +48,46 @@ void main() {
     // 视频方向默认自动；播放界面动画默认开启（工作.md 第 5/7 点）
     expect(s.videoOrientation, VideoOrientationMode.auto);
     expect(s.playerAnimations, isTrue);
-    // 顶部信息默认：时间与电量同时显示（工作.md 第 12 点）
-    expect(s.topStatusDisplay, TopStatusDisplay.both);
+    // 顶部信息默认：时间/电量/网速/数据类型四项全选（工作.md 阶段1 第 1 点）
+    expect(s.showTopTime, isTrue);
+    expect(s.showTopBattery, isTrue);
+    expect(s.showTopNetSpeed, isTrue);
+    expect(s.showTopNetType, isTrue);
   });
 
-  test('长按倍速：设置/持久化/范围钳制/0.1 步进离散', () async {
+  test('长按倍速：设置/持久化/范围钳制/0.5 步进离散', () async {
     final s = PlayerControlsSettings.instance;
-    await s.setLongPressSpeed(2.3);
-    expect(s.longPressSpeed, 2.3);
+    await s.setLongPressSpeed(2.5);
+    expect(s.longPressSpeed, 2.5);
     await s.load(); // 模拟重启
-    expect(s.longPressSpeed, 2.3);
-    // 越界钳制到 1 – 6
+    expect(s.longPressSpeed, 2.5);
+    // 越界钳制到 1 – 4（工作.md 阶段1 第 4 点）
     await s.setLongPressSpeed(0.5);
     expect(s.longPressSpeed, PlayerControlsSettings.minLongPressSpeed);
     await s.setLongPressSpeed(9.9);
     expect(s.longPressSpeed, PlayerControlsSettings.maxLongPressSpeed);
-    // 0.1 步进离散：2.34 → 2.3
-    await s.setLongPressSpeed(2.34);
-    expect(s.longPressSpeed, closeTo(2.3, 0.0001));
+    // 0.5 步进就近对齐：2.3 → 2.5，2.2 → 2.0，3.8 → 4.0（钳制后）
+    await s.setLongPressSpeed(2.3);
+    expect(s.longPressSpeed, closeTo(2.5, 0.0001));
+    await s.setLongPressSpeed(2.2);
+    expect(s.longPressSpeed, closeTo(2.0, 0.0001));
+    await s.setLongPressSpeed(3.8);
+    expect(s.longPressSpeed, closeTo(4.0, 0.0001));
+  });
+
+  test('长按倍速：旧值（0.1 粒度、上限 6.0）迁移后钳制并对齐 0.5 档', () async {
+    // 旧版本以 0.1 粒度保存（如 5.3），上限 6.0；load 时先钳制到 1–4 再就近 0.5 对齐
+    SharedPreferences.setMockInitialValues({
+      'player_controls_long_press_speed': 5.3,
+    });
+    final s = PlayerControlsSettings.instance;
+    await s.load();
+    expect(s.longPressSpeed, 4.0); // 5.3 → 钳制到上限 4.0
+    SharedPreferences.setMockInitialValues({
+      'player_controls_long_press_speed': 2.3,
+    });
+    await s.load();
+    expect(s.longPressSpeed, 2.5); // 2.3 → 就近 2.5
   });
 
   test('倍速播放指示器：默认开启，可开关并持久化', () async {
@@ -387,7 +409,7 @@ void main() {
     await s.setAutoNext(false);
     await s.setAutoExit(false);
     await s.setLoopMode(LoopMode.loopAll);
-    await s.setTopStatusDisplay(TopStatusDisplay.time);
+    await s.setShowTopBattery(false);
 
     await s.load();
     expect(s.doubleTapMode, DoubleTapMode.seek);
@@ -401,22 +423,60 @@ void main() {
     expect(s.autoNext, isFalse);
     expect(s.autoExit, isFalse);
     expect(s.loopMode, LoopMode.loopAll);
-    expect(s.topStatusDisplay, TopStatusDisplay.time);
+    expect(s.showTopBattery, isFalse);
   });
 
-  test('顶部信息显示：关闭/时间/电量/两者切换并持久化（工作.md 第 12 点）', () async {
+  test('顶部信息多选：时间/电量/网速/数据类型开关并持久化（工作.md 阶段1 第 1 点）', () async {
     final s = PlayerControlsSettings.instance;
-    await s.setTopStatusDisplay(TopStatusDisplay.off);
-    expect(s.topStatusDisplay, TopStatusDisplay.off);
+    // 默认四项全选
+    expect(s.showTopTime, isTrue);
+    expect(s.showTopBattery, isTrue);
+    expect(s.showTopNetSpeed, isTrue);
+    expect(s.showTopNetType, isTrue);
+    // 关闭时间与电量，保留网速与数据类型（此时网速/数据类型居中显示）
+    await s.setShowTopTime(false);
+    await s.setShowTopBattery(false);
+    expect(s.showTopTime, isFalse);
+    expect(s.showTopBattery, isFalse);
     await s.load(); // 模拟重启
-    expect(s.topStatusDisplay, TopStatusDisplay.off);
-    await s.setTopStatusDisplay(TopStatusDisplay.battery);
-    expect(s.topStatusDisplay, TopStatusDisplay.battery);
-    await s.setTopStatusDisplay(TopStatusDisplay.both);
-    expect(s.topStatusDisplay, TopStatusDisplay.both);
-    await s.setTopStatusDisplay(TopStatusDisplay.time);
-    expect(s.topStatusDisplay, TopStatusDisplay.time);
-    await s.setTopStatusDisplay(TopStatusDisplay.time); // 幂等
-    expect(s.topStatusDisplay, TopStatusDisplay.time);
+    expect(s.showTopTime, isFalse);
+    expect(s.showTopBattery, isFalse);
+    expect(s.showTopNetSpeed, isTrue);
+    expect(s.showTopNetType, isTrue);
+    // 关闭网速与数据类型（四项全不勾 → 顶部不渲染）
+    await s.setShowTopNetSpeed(false);
+    await s.setShowTopNetType(false);
+    expect(s.showTopNetSpeed, isFalse);
+    expect(s.showTopNetType, isFalse);
+    await s.load();
+    expect(s.showTopNetSpeed, isFalse);
+    expect(s.showTopNetType, isFalse);
+  });
+
+  test('顶部信息：旧版单选枚举迁移到多选', () async {
+    // 旧值 0=关闭 → 时间/电量均不勾（网速/数据类型默认开）
+    SharedPreferences.setMockInitialValues({
+      'player_controls_top_status_display': 0,
+    });
+    final s = PlayerControlsSettings.instance;
+    await s.load();
+    expect(s.showTopTime, isFalse);
+    expect(s.showTopBattery, isFalse);
+    expect(s.showTopNetSpeed, isTrue);
+    expect(s.showTopNetType, isTrue);
+    // 旧值 1=只显示时间 → 时间勾、电量不勾
+    SharedPreferences.setMockInitialValues({
+      'player_controls_top_status_display': 1,
+    });
+    await s.load();
+    expect(s.showTopTime, isTrue);
+    expect(s.showTopBattery, isFalse);
+    // 旧值 3=时间与电量 → 两者都勾（与默认一致）
+    SharedPreferences.setMockInitialValues({
+      'player_controls_top_status_display': 3,
+    });
+    await s.load();
+    expect(s.showTopTime, isTrue);
+    expect(s.showTopBattery, isTrue);
   });
 }

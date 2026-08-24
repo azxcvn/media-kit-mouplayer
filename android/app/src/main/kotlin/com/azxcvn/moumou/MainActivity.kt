@@ -1,12 +1,17 @@
 package com.azxcvn.moumou
 
+import android.app.Activity
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
@@ -23,6 +28,13 @@ import java.io.FileOutputStream
 
 class MainActivity : FlutterActivity() {
     private val channelName = "moumou/video_info"
+
+    /**
+     * 系统文件选择器（ACTION_OPEN_DOCUMENT）的待回结果：
+     * invokeMethod 无法同步跨 onActivityResult 返回，先把 result 暂存，
+     * onActivityResult 里再 complete（返回 content:// uri 字符串或 null）。
+     */
+    private var pendingDocumentPickerResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -155,6 +167,66 @@ class MainActivity : FlutterActivity() {
                     }
                     // 播放界面顶部电量显示（工作.md 第 12 点）
                     "getBatteryLevel" -> result.success(getBatteryLevel())
+                    // 播放界面顶部网络类型显示（工作.md 阶段1 第 1 点）
+                    "getNetworkType" -> result.success(getNetworkType())
+                    // 听视频后台播放前台服务启停（工作.md 阶段1 第 2 点）
+                    "startBackgroundPlayback" -> {
+                        startBackgroundPlayback(call.argument<String>("title") ?: "")
+                        result.success(true)
+                    }
+                    "stopBackgroundPlayback" -> {
+                        stopBackgroundPlayback()
+                        result.success(true)
+                    }
+                    // ── 字幕功能（工作.md 阶段1 第 3 点）────────────
+                    "getSdkInt" -> result.success(Build.VERSION.SDK_INT)
+                    "listDirectory" -> result.success(listDirectory(call.argument<String>("path") ?: ""))
+                    "getSystemFonts" -> result.success(getSystemFonts())
+                    "copySubtitleFromUri" -> {
+                        copySubtitleFromUri(
+                            call.argument<String>("uri") ?: "",
+                            call.argument<String>("name") ?: "subtitle.srt",
+                        )
+                        result.success(null)
+                    }
+                    // 字幕字体导入：content:// 拷贝到 filesDir/fonts/（返回真实路径）
+                    "copyFontFromUri" -> {
+                        val path = copyFontFromUri(
+                            call.argument<String>("uri") ?: "",
+                            call.argument<String>("name") ?: "font.ttf",
+                        )
+                        result.success(path)
+                    }
+                    "openDocumentPicker" -> {
+                        if (pendingDocumentPickerResult != null) {
+                            result.error("BUSY", "picker already open", null)
+                        } else {
+                            pendingDocumentPickerResult = result
+                            try {
+                                startActivityForResult(buildDocumentPickerIntent(), 2002)
+                            } catch (e: Exception) {
+                                pendingDocumentPickerResult = null
+                                result.success(null) // 失败 → Dart 侧回退自建选择器
+                            }
+                        }
+                    }
+                    // 字体选择器（MIME 含 font 类型，系统选择器不再置灰 .ttf/.otf）
+                    "openFontPicker" -> {
+                        if (pendingDocumentPickerResult != null) {
+                            result.error("BUSY", "picker already open", null)
+                        } else {
+                            pendingDocumentPickerResult = result
+                            try {
+                                startActivityForResult(
+                                    buildDocumentPickerIntent(fontPickerMimeTypes),
+                                    2002,
+                                )
+                            } catch (e: Exception) {
+                                pendingDocumentPickerResult = null
+                                result.success(null)
+                            }
+                        }
+                    }
                     "getCacheSizes" -> result.success(getCacheSizes())
                     "clearCache" -> {
                         clearCache(call.argument<String>("category") ?: "")
@@ -397,6 +469,215 @@ class MainActivity : FlutterActivity() {
             bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
         } catch (e: Exception) {
             -1
+        }
+    }
+
+    // ── 网络类型（播放界面顶部「数据类型」图标，工作.md 阶段1 第 1 点）────
+
+    /**
+     * 读取当前活动网络类型：返回 "wifi" / "cellular" / "ethernet" / "none"。
+     * 需 ACCESS_NETWORK_STATE（normal 权限，安装即授予）；异常/无网络返回 "none"。
+     */
+    private fun getNetworkType(): String {
+        return try {
+            val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return "none"
+            val network = cm.activeNetwork ?: return "none"
+            val caps = cm.getNetworkCapabilities(network) ?: return "none"
+            when {
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                else -> "none"
+            }
+        } catch (e: Exception) {
+            "none"
+        }
+    }
+
+    // ── 听视频后台播放（前台服务保活，工作.md 阶段1 第 2 点）──────
+
+    /**
+     * 启动后台播放前台服务（保活进程，使 mpv 音频在退后台后继续播放）。
+     * Android 13+ 会先请求通知权限（未授予不影响服务运行，仅不显示通知）。
+     */
+    private fun startBackgroundPlayback(title: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED
+                ) {
+                    requestPermissions(
+                        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                        2001,
+                    )
+                }
+            }
+            BackgroundPlaybackService.createNotificationChannel(this)
+            val intent = Intent(this, BackgroundPlaybackService::class.java)
+                .putExtra("media_title", title)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "startBackgroundPlayback failed: ${e.message}")
+        }
+    }
+
+    /** 停止后台播放前台服务（退出听视频界面时调用） */
+    private fun stopBackgroundPlayback() {
+        try {
+            stopService(Intent(this, BackgroundPlaybackService::class.java))
+        } catch (e: Exception) {
+            Log.w("MainActivity", "stopBackgroundPlayback failed: ${e.message}")
+        }
+    }
+
+    // ── 字幕功能（工作.md 阶段1 第 3 点）────────────────────
+
+    /** 外挂字幕文件选择器的 MIME 白名单（额外的 octet-stream 兑底） */
+    private val subtitlePickerMimeTypes = arrayOf(
+        "text/plain",
+        "text/vtt",
+        "text/x-ssa",
+        "application/x-subrip",
+        "application/octet-stream",
+    )
+
+    /** 字体选择器的 MIME 白名单（含 font 类型，避免系统选择器把 .ttf/.otf 置灰） */
+    private val fontPickerMimeTypes = arrayOf(
+        "font/ttf",
+        "font/otf",
+        "font/sfnt",
+        "font/collection",
+        "application/x-font-ttf",
+        "application/x-font-otf",
+        "application/x-font-truetype",
+        "application/vnd.ms-opentype",
+        "application/octet-stream",
+    )
+
+    /**
+     * 系统文件选择器 Intent（ACTION_OPEN_DOCUMENT，无需权限）。
+     * @param mimeTypes 允许选择的文件类型白名单（默认字幕类型）。
+     */
+    private fun buildDocumentPickerIntent(
+        mimeTypes: Array<String> = subtitlePickerMimeTypes,
+    ): Intent {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
+        intent.type = "*/*"
+        intent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes)
+        intent.addCategory(Intent.CATEGORY_OPENABLE)
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION,
+        )
+        return intent
+    }
+
+    /** 系统文件选择器结果回传（content:// uri 字符串或 null） */
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 2002) {
+            val pending = pendingDocumentPickerResult
+            pendingDocumentPickerResult = null
+            val uri = if (resultCode == Activity.RESULT_OK) data?.data?.toString() else null
+            pending?.success(uri)
+        }
+    }
+
+    /**
+     * 列举目录内容（自建字幕文件选择器用，工作.md 阶段1 第 3 点）：
+     * 返回 name/path/isDirectory/size/modifiedMs 列表（排序在 Dart 侧完成）。
+     * 失败/不可读返回空列表。
+     */
+    private fun listDirectory(path: String): List<Map<String, Any>> {
+        val dir = File(path)
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        return try {
+            dir.listFiles()
+                ?.sortedBy { it.name.lowercase() }
+                ?.map { f ->
+                    mapOf(
+                        "name" to f.name,
+                        "path" to f.absolutePath,
+                        "isDirectory" to f.isDirectory,
+                        "size" to (if (f.isFile) f.length() else 0L),
+                        "modifiedMs" to f.lastModified(),
+                    )
+                }
+                ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * 系统字体列表（字幕字体设置用）：扫描 /system/fonts 下的 .ttf/.otf/.ttc
+     * 文件，返回去重后的字体名（文件主名，如 "NotoSansCJK"）。失败返回空列表。
+     */
+    private fun getSystemFonts(): List<String> {
+        val dir = File("/system/fonts")
+        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        return try {
+            dir.listFiles()
+                ?.map { it.name }
+                ?.filter { n ->
+                    val lower = n.lowercase()
+                    lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+                        lower.endsWith(".ttc")
+                }
+                ?.map { n -> n.substringBeforeLast('.') }
+                ?.distinct()
+                ?.sorted()
+                ?: emptyList()
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * 把 content:// 字幕 uri 拷贝到 filesDir/subtitles/<name>（libmpv 无法直接
+     * 读 content://，参考小喵 player SubtitleManager.copyContentUriToFile），
+     * 返回真实绝对路径；失败返回 null。
+     */
+    private fun copySubtitleFromUri(uriString: String, name: String): String? {
+        return try {
+            val uri = Uri.parse(uriString)
+            val subtitleDir = File(filesDir, "subtitles")
+            if (!subtitleDir.exists()) subtitleDir.mkdirs()
+            val safeName = name.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            val target = File(subtitleDir, "${uri.hashCode()}_$safeName")
+            contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (target.exists() && target.length() > 0) target.absolutePath else null
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copySubtitleFromUri failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 把 content:// 字体文件（.ttf/.otf）拷贝到 filesDir/fonts/<name>，返回真实绝对路径。
+     * 用户自导入字幕字体用（工作.md 阶段1 第 3 点：字幕字体支持自导入）。
+     */
+    private fun copyFontFromUri(uriString: String, name: String): String? {
+        return try {
+            val uri = Uri.parse(uriString)
+            val fontDir = File(filesDir, "fonts")
+            if (!fontDir.exists()) fontDir.mkdirs()
+            val safeName = name.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            val target = File(fontDir, safeName)
+            contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (target.exists() && target.length() > 0) target.absolutePath else null
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copyFontFromUri failed: ${e.message}")
+            null
         }
     }
 

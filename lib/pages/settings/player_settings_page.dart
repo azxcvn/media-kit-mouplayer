@@ -116,29 +116,43 @@ class PlayerSettingsPage extends StatelessWidget {
                   ],
                 ),
               ),
-              // ── 顶部信息（工作.md 第 12 点）──────────────
+              // ── 顶部信息（工作.md 阶段1 第 1 点：时间/电量/网速/数据类型多选）──
               const SizedBox(height: 16),
               const SettingsGroupTitle(title: '顶部信息'),
               SettingsCard(
                 child: Column(
                   children: [
-                    for (final m in TopStatusDisplay.values)
-                      SettingsRadioTile(
-                        icon: switch (m) {
-                          TopStatusDisplay.off => Icons.visibility_off_outlined,
-                          TopStatusDisplay.time => Icons.access_time,
-                          TopStatusDisplay.battery => Icons.battery_full,
-                          TopStatusDisplay.both =>
-                            Icons.schedule_send_outlined,
-                        },
-                        title: m.label,
-                        subtitle: Text(switch (m) {
-                          TopStatusDisplay.off => '不显示时间与电量，不占用顶部区域',
-                          _ => '在播放界面顶部居中显示时间与电量',
-                        }),
-                        selected: settings.topStatusDisplay == m,
-                        onTap: () => settings.setTopStatusDisplay(m),
-                      ),
+                    SettingsCheckboxTile(
+                      icon: Icons.access_time,
+                      title: '时间',
+                      subtitle: const Text('在播放界面顶部显示当前时间'),
+                      checked: settings.showTopTime,
+                      onChanged: settings.setShowTopTime,
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsCheckboxTile(
+                      icon: Icons.battery_full,
+                      title: '电量',
+                      subtitle: const Text('在播放界面顶部显示当前电量'),
+                      checked: settings.showTopBattery,
+                      onChanged: settings.setShowTopBattery,
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsCheckboxTile(
+                      icon: Icons.speed_outlined,
+                      title: '网速',
+                      subtitle: const Text('在线播放时显示实时网速详情（本地播放不显示）'),
+                      checked: settings.showTopNetSpeed,
+                      onChanged: settings.setShowTopNetSpeed,
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsCheckboxTile(
+                      icon: Icons.wifi_outlined,
+                      title: '数据类型',
+                      subtitle: const Text('显示当前网络类型（WiFi / 移动数据）'),
+                      checked: settings.showTopNetType,
+                      onChanged: settings.setShowTopNetType,
+                    ),
                   ],
                 ),
               ),
@@ -350,7 +364,7 @@ class _SensitivityTile extends StatelessWidget {
 }
 
 /// 长按倍速设置项（滑杆式，参考快进/快退时长调节样式）：
-/// 图标 + 固定标题 + 右侧倍率数值 + 滑杆（1 – 6 倍，步进 0.1，离散）。
+/// 图标 + 固定标题 + 右侧倍率数值 + 滑杆（1 – 4 倍，步进 0.5，离散）。
 class _LongPressSpeedTile extends StatelessWidget {
   final double value;
   final ValueChanged<double> onChanged;
@@ -401,7 +415,7 @@ class _LongPressSpeedTile extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 4),
-          // 50 档刻度过密会被 Flutter 跳过绘制，用密集刻度形状保证有圆点
+          // 1 – 4 倍、步进 0.5 共 7 档（(4-1)/0.5 = 6 个跨度）
           SliderTheme(
             data: kazumiSliderTheme(scheme).copyWith(
               tickMarkShape: const DenseSliderTickMarkShape(),
@@ -409,13 +423,16 @@ class _LongPressSpeedTile extends StatelessWidget {
             child: Slider(
               min: PlayerControlsSettings.minLongPressSpeed,
               max: PlayerControlsSettings.maxLongPressSpeed,
-              divisions: 50,
+              divisions: ((PlayerControlsSettings.maxLongPressSpeed -
+                          PlayerControlsSettings.minLongPressSpeed) /
+                      PlayerControlsSettings.longPressSpeedStep)
+                  .round(),
               value: value,
               onChanged: onChanged,
             ),
           ),
           Text(
-            '长按屏幕临时倍速播放（1 – 6 倍，步进 0.1）；长按期间左右滑动可在 1.5 – 4 倍间临时调速',
+            '长按屏幕临时倍速播放（1 – 4 倍，步进 0.5）；长按期间左右滑动可在 1.5 – 4 倍间临时调速',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],

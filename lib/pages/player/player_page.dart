@@ -29,6 +29,7 @@ import 'package:moumou/pages/player/views/player_super_resolution_panel.dart';
 import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
 import 'package:moumou/pages/player/views/player_thumbnail_preview.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
+import 'package:moumou/pages/player/views/subtitle_panel.dart';
 import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
@@ -36,6 +37,7 @@ import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/intro_outro_tracker.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
+import 'package:moumou/services/subtitle_service.dart';
 import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/intro_outro_skip.dart';
@@ -111,6 +113,10 @@ class _PlayerPageState extends State<PlayerPage>
   /// 章节状态跟踪器（工作.md 章节功能）：读取章节与跳过片段、跟踪当前
   /// 章节与胶囊自动弹出窗口；横竖屏共享同一实例（切集/位置流统一驱动）。
   late final ChapterTracker _chapterTracker;
+
+  /// 字幕控制器（工作.md 阶段1 第 3 点）：轨道列表/主次字幕/外挂导入/设置应用；
+  /// 横竖屏共享同一实例（同一 Player，切集后统一重新应用）。
+  late final SubtitleController _subtitleController;
 
   /// 片头片尾状态跟踪器（工作.md 片头片尾功能）：驱动片头/片尾自动跳过
   /// 动作；横竖屏共享同一实例（切集/位置流统一驱动）。
@@ -274,11 +280,16 @@ class _PlayerPageState extends State<PlayerPage>
   bool _portraitActive = false;
 
   /// 听视频页打开期间为 true：本页的 EOF 处理让位给听视频页
-  /// （听视频页共享同一 [Player] 并自行处理切歌/随机/循环）
-  bool _audioActive = false;
+  /// （听视频页共享同一 [Player] 并自行处理切歌/随机/循环）。
+  /// 用 ValueNotifier 供 Video 的 pauseUponEnteringBackgroundMode 局部订阅：
+  /// 听视频页打开时退后台不暂停（后台播放），否则保持默认退后台暂停。
+  final ValueNotifier<bool> _audioActive = ValueNotifier(false);
 
   /// 已开始退出播放页（异步退出流程中禁止再自动 push 竖屏页，防栈错乱）
   bool _exiting = false;
+
+  /// 播放器是否已销毁（退出路径先 await 销毁，widget dispose 兜底防重复）
+  bool _playerDisposed = false;
 
   /// 页面已销毁（risk_audit #2）：dispose 置位，异步恢复/打开流程的每个
   /// await 之后先查它，播放器销毁后的后续操作直接放弃——
@@ -292,10 +303,24 @@ class _PlayerPageState extends State<PlayerPage>
     WidgetsBinding.instance.addObserver(this);
     _path = widget.path;
     _title = widget.title;
-    _player = Player();
+    // 开启 libass：走 mpv 原生字幕渲染（sub-visibility=yes），而非 Flutter
+    // SubtitleView。这也是内嵌字幕原生样式 / 各种 sub-* 样式属性生效的前提
+    // （media_kit 默认 libass:false 会把 sub-visibility 关掉，字幕完全不渲染——
+    // 历史「字幕一塌糊涂」的根因）。Android 捆绑回退字体给 libass 使用。
+    _player = Player(
+      configuration: const PlayerConfiguration(
+        libass: true,
+        libassAndroidFont: 'assets/fonts/NotoSansCJKsc-Regular.otf',
+        libassAndroidFontName: 'Noto Sans CJK SC',
+      ),
+    );
     _controller = VideoController(_player);
     // 章节跟踪器：绑定同一播放器（mpv chapter-list 子属性读取）
     _chapterTracker = ChapterTracker(MpvChapterSource(_player));
+    // 字幕控制器：绑定同一播放器（track-list / sid / sub-add 单选模型）；
+    // 初始化就绪后应用一次设置（延迟/样式等在首帧前生效）
+    _subtitleController = SubtitleController(_player);
+    unawaited(_subtitleController.applyOnInit());
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
     // 而非落在最近关键帧）
@@ -359,7 +384,7 @@ class _PlayerPageState extends State<PlayerPage>
         _chapterTracker.onPositionChanged(p);
         // 片头片尾：竖屏页/听视频页打开期间让位（共享同一 Player，
         // 避免重复 seek / 切集）
-        if (_portraitActive || _audioActive) return;
+        if (_portraitActive || _audioActive.value) return;
         _handleIntroOutroPosition(p);
       }),
     );
@@ -473,6 +498,8 @@ class _PlayerPageState extends State<PlayerPage>
     _introOutroTracker.markReady();
     // 章节功能：open 完成后读取章节（此时时长已就绪；空章节静默清空）
     unawaited(_chapterTracker.load());
+    // 字幕功能：open 完成后刷新轨道/重新添加外挂字幕/应用设置
+    unawaited(_subtitleController.reapplyForMedia(_path));
     await _applyVideoOrientation();
   }
 
@@ -1236,6 +1263,8 @@ class _PlayerPageState extends State<PlayerPage>
     try {
       // 章节功能：先清空旧媒体的章节标记（防 open 期间旧数据闪现）
       _chapterTracker.clear();
+      // 字幕功能：清空旧媒体轨道（切集后重新加载）
+      _subtitleController.clear();
       // 片头片尾：重置跟踪状态（open 期间位置事件不评估）
       _introOutroTracker.reset();
       if (mounted) {
@@ -1293,6 +1322,8 @@ class _PlayerPageState extends State<PlayerPage>
       _introOutroTracker.markReady();
       // 章节功能：切集后重新读取新媒体的章节
       unawaited(_chapterTracker.load());
+      // 字幕功能：切集后重新添加外挂字幕 + 刷新轨道 + 应用设置
+      unawaited(_subtitleController.reapplyForMedia(path));
     } on AssertionError {
       // 播放器已被销毁（切集过程中退出）：静默返回，不写假崩溃日志
       return;
@@ -1539,6 +1570,7 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.aspect:
         _openFitPanel();
       case PlayerTopAction.subtitle:
+        _openSubtitlePanel();
       case PlayerTopAction.danmaku:
       case PlayerTopAction.audio:
       case PlayerTopAction.equalizer:
@@ -1569,6 +1601,33 @@ class _PlayerPageState extends State<PlayerPage>
           body: PlayerChapterPanel(
             tracker: _chapterTracker,
             onSelect: (chapter) => _chapterTracker.seekToChapter(chapter),
+          ),
+        ),
+      ],
+    );
+    _resetHideTimer();
+  }
+
+  /// 打开字幕面板（顶栏/更多「字幕」动作，工作.md 阶段1 第 3 点）：
+  /// 右侧滑入（[showPlayerPanel]），一级面板集成字幕轨道 + 外挂导入 + 设置入口。
+  Future<void> _openSubtitlePanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(
+      context,
+      pages: [
+        PlayerPanelPage(
+          title: '字幕',
+          body: Builder(
+            builder: (panelContext) {
+              final navigator = PlayerPanelNavigator.of(panelContext);
+              return PlayerSubtitlePanel(
+                controller: _subtitleController,
+                onPushSubPage: (title, body) => navigator.push(
+                  PlayerPanelPage(title: title, body: body),
+                ),
+                onPopSubPage: () => navigator.pop(),
+              );
+            },
           ),
         ),
       ],
@@ -1708,6 +1767,8 @@ class _PlayerPageState extends State<PlayerPage>
           chapterTracker: _chapterTracker,
           // 片头片尾：共享横屏页跟踪器（同一 Player，状态一致）
           introOutroTracker: _introOutroTracker,
+          // 字幕功能：共享横屏页控制器（同一 Player，切集后统一重新应用）
+          subtitleController: _subtitleController,
         ),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -1751,6 +1812,10 @@ class _PlayerPageState extends State<PlayerPage>
     await _saveProgress(forcePersist: true);
     await _restoreDeviceState();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // 先停掉播放器（停声 + 停出帧 + 释放视频纹理），再 pop 两层——
+    // 否则 mpv 在 pop 转场/引擎销毁期间仍在出帧，触发 Flutter 引擎
+    // 「FlutterJNI is not attached to native」崩溃（flutter#188300）。
+    await _disposePlayer();
     if (!mounted) return;
     Navigator.of(context).pop(); // 关竖屏页（淡出 200ms）
     if (mounted) Navigator.of(context).pop(); // 关横屏页（淡出 200ms，重叠）
@@ -1764,7 +1829,7 @@ class _PlayerPageState extends State<PlayerPage>
   /// 方向与沉浸式全屏。
   Future<void> _openAudioPlayer() async {
     _hideTimer?.cancel();
-    _audioActive = true;
+    _audioActive.value = true;
     if (mounted) setState(() {});
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     if (!mounted) return; // 防异步间隙后使用过期 context
@@ -1795,7 +1860,7 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     if (!mounted) return;
-    _audioActive = false;
+    _audioActive.value = false;
     setState(() {});
     // 听视频页可能已切集：按当前媒体状态重新初始化片头片尾跟踪
     // （位置 > 0 按恢复点处理不跳片头；新集从头播则正常评估）
@@ -1880,7 +1945,7 @@ class _PlayerPageState extends State<PlayerPage>
   void _onPlaybackCompleted() {
     // 竖屏页/听视频页打开期间：横竖屏/听视频共享同一 Player，completed
     // 由对应页面处理（本页再处理会重复切集/退出）
-    if (_portraitActive || _audioActive) return;
+    if (_portraitActive || _audioActive.value) return;
     if (_isSwitchingVideo || _isHandlingEndOfFile) return;
     if (!mounted) return;
     if (_duration <= Duration.zero) return;
@@ -1946,9 +2011,24 @@ class _PlayerPageState extends State<PlayerPage>
     // 2. 保存进度 + 恢复设备状态（音量/亮度）
     await _saveProgress(forcePersist: true);
     await _restoreDeviceState();
-    // 3. 恢复系统 UI 后立即 pop（无延时、无黑屏；淡出转场吸收剩余旋转）
+    // 3. 恢复系统 UI，先停播放器再 pop（防退出后仍在出声/出帧导致崩溃）
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    await _disposePlayer();
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// 退出前销毁播放器：停声、停出帧、释放视频纹理（SurfaceProducer）。
+  /// 幂等（widget dispose 兜底会再调一次，这里用标志防重复销毁）。
+  Future<void> _disposePlayer() async {
+    if (_playerDisposed) return;
+    _playerDisposed = true;
+    try {
+      await _player.dispose();
+    } on AssertionError {
+      // 已被销毁（重复调用）：静默
+    } catch (_) {
+      // 退出路径：播放器销毁异常也不阻塞返回列表
+    }
   }
 
   /// 记录播放进度（播了一部分才记，避免污染"没看过的视频"）。
@@ -1988,6 +2068,8 @@ class _PlayerPageState extends State<PlayerPage>
     _durationNotifier.dispose();
     _dragPositionNotifier.dispose();
     _chapterTracker.dispose();
+    _subtitleController.dispose();
+    _audioActive.dispose();
     _thumbHideTimer?.cancel();
     _cancelThumbPrefetch();
     // 兜底保存进度（正常退出已走 _exitPlayer 的强制落盘，这里防异常路径；
@@ -1999,10 +2081,9 @@ class _PlayerPageState extends State<PlayerPage>
     // 退出时强制恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    // 异步销毁并保持引用（risk_audit #4）：Player.dispose() 是异步的，
-    // 快速「退出→进入」循环时新实例创建与旧实例销毁并行，不 await 阻塞
-    // UI 线程；Future 本身持有播放器内部引用直到销毁完成，不会被 GC 提前回收。
-    unawaited(_player.dispose());
+    // 兜底销毁播放器（正常退出已在 _exitPlayer/_finishExitWithPortrait 中
+    // await 过，这里防异常路径泄漏；幂等，不会重复销毁）
+    unawaited(_disposePlayer());
     super.dispose();
   }
 
@@ -2061,7 +2142,7 @@ class _PlayerPageState extends State<PlayerPage>
                 // 仍保持 4:3」——用 ValueKey(fit) 强制重建 Video。
                 Positioned.fill(
                   child: ListenableBuilder(
-                    listenable: _settings,
+                    listenable: Listenable.merge([_settings, _audioActive]),
                     builder: (context, _) => Transform(
                       transform: _zoomMatrix(),
                       child: Video(
@@ -2070,6 +2151,9 @@ class _PlayerPageState extends State<PlayerPage>
                         controls: NoVideoControls,
                         fit: _settings.videoFit.boxFit,
                         aspectRatio: _settings.videoFit.aspectRatio,
+                        // 听视频页打开期间退后台不暂停（后台播放）；否则保持
+                        // 默认「退后台暂停」。
+                        pauseUponEnteringBackgroundMode: !_audioActive.value,
                       ),
                     ),
                   ),
@@ -2124,7 +2208,9 @@ class _PlayerPageState extends State<PlayerPage>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const PlayerStatusBar(),
+                            PlayerStatusBar(
+                              isOnlinePlayback: isOnlineMedia(_path),
+                            ),
                             PlayerTopBar(                            title: _title,
                               onBack: _exitPlayer,
                               onMore: _openMorePanel,

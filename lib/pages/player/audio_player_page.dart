@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/pages/player/views/audio_player_panels.dart';
+import 'package:moumou/pages/player/views/player_play_pause_button.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/playback_progress_service.dart';
@@ -14,19 +16,21 @@ import 'package:moumou/utils/audio_shuffle.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/widgets/raw_thumb_image.dart';
 
-/// 听视频界面（工作.md 第 10 点，参考小喵 KT 项目 AudioPlayerScreen）：
+/// 听视频界面（工作.md 第 10 点 + 阶段1 第 2 点重设计，参考小喵 KT 项目 AudioPlayerScreen）：
 ///
 /// - 竖屏全屏独立界面，**共享横屏/竖屏播放页的同一个 [Player]**——
 ///   不新建播放器、不 open、不恢复进度（同一会话音频零中断）；
+/// - **后台播放**（阶段1 第 2 点）：进入本页即启动前台服务保活进程，
+///   退到后台后像音乐播放器一样继续播放，退出本页时停止服务；
 /// - 只播放音频不显示视频：整页被封面高斯模糊背景覆盖，画面完全隐藏，
 ///   退出后播放页从当前进度继续显示视频；
-/// - 布局：顶栏（返回 + 「听视频」）+ 居中封面（16:9 圆角）+ 标题 +
+/// - 布局：顶栏（返回 + 「听视频」）+ 居中封面（1:1 圆角）+ 标题 +
 ///   进度条（拖动 seek）+ 底部控制卡（倍速 | 上一集 | 播放/暂停 | 下一集 |
-///   播放列表）；
-/// - 倍速范围 **0.5 – 3.0，步进 0.5**；倍速面板与播放列表面板**纯白背景**
-///   从底部弹出（带进出场动画，showModalBottomSheet 自带）；
-/// - 列表面板支持**随机播放**（时间刻算法 [audioShuffleNextIndex]）与
-///   **列表循环**；
+///   播放列表）；播放/暂停与其余按钮同尺寸同水平线，切换带图标形变动画；
+/// - 倍速范围 **0.5 – 3.0，步进 0.5**；倍速/播放列表面板为**深色胶囊风格**
+///   （见 [audio_player_panels.dart]），均带右上角关闭按钮；
+/// - **定时关闭**（阶段1 第 2 点）：15/30/60 分钟或播完当前曲目，到时自动暂停；
+/// - 列表面板支持**随机播放**（时间刻算法 [audioShuffleNextIndex]）与**列表循环**；
 /// - 本界面内切歌**不恢复上次进度**（每首从 0 开始，像听歌一样）；
 ///   切走前保存原视频进度，退出界面后播放页从对应进度继续。
 ///
@@ -84,7 +88,21 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
 
   /// 循环模式（本页局部状态）：off / 单曲循环 / 列表循环，
   /// 列表面板里点击循环按钮三态切换（用户反馈：缺少单曲循环）
-  _AudioRepeatMode _repeatMode = _AudioRepeatMode.off;
+  AudioRepeatMode _repeatMode = AudioRepeatMode.off;
+
+  // ── 定时关闭（工作.md 阶段1 第 2 点）────────────────────
+
+  /// 当前定时关闭预设（默认关闭）
+  AudioSleepPreset _sleepPreset = AudioSleepPreset.off;
+
+  /// 倒计时剩余时长（仅定时预设激活时非 null）
+  Duration? _sleepRemaining;
+
+  /// 倒计时定时器（每秒递减 [_sleepRemaining]）
+  Timer? _sleepTimer;
+
+  /// 「播完当前曲目」标志：到 EOF 时暂停且不切下一首
+  bool _sleepPauseAtTrackEnd = false;
 
   /// 切歌防重入（open 期间旧文件可能触发 completed）
   bool _isSwitching = false;
@@ -97,10 +115,11 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
   bool get _hasNext {
     if (_videos.isEmpty) return false;
     return _currentIndex < _videos.length - 1 ||
-        _repeatMode == _AudioRepeatMode.loopAll;
+        _repeatMode == AudioRepeatMode.loopAll;
   }
 
-  bool get _hasPrevious => _currentIndex > 0 || _repeatMode == _AudioRepeatMode.loopAll;
+  bool get _hasPrevious =>
+      _currentIndex > 0 || _repeatMode == AudioRepeatMode.loopAll;
 
   @override
   void initState() {
@@ -133,6 +152,10 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     _enterFullscreen();
 
     _loadCover();
+
+    // 后台播放（工作.md 阶段1 第 2 点）：启动前台服务保活进程，
+    // 使音频在退到后台后像音乐播放器一样继续播放；退出本页时停止。
+    DeviceServices.startBackgroundPlayback(title: _title);
 
     _subs.add(
       _player.stream.playing.listen((p) {
@@ -232,13 +255,15 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
       });
     }
     widget.onVideoChanged?.call(video.path, video.name);
+    // 后台播放：刷新前台服务通知标题为新曲目（服务已在运行，重复启动仅更新）
+    DeviceServices.startBackgroundPlayback(title: video.name);
     _loadCover();
   }
 
   /// 下一首：随机模式用时间刻算法；单曲循环回到当前；否则顺序（列表循环回绕）
   void _next() {
     if (_videos.isEmpty) return;
-    if (_repeatMode == _AudioRepeatMode.single) {
+    if (_repeatMode == AudioRepeatMode.single) {
       // 单曲循环：seek 0 重播
       _player.seek(Duration.zero);
       return;
@@ -254,7 +279,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     }
     if (_currentIndex < _videos.length - 1) {
       _switchTo(_currentIndex + 1);
-    } else if (_repeatMode == _AudioRepeatMode.loopAll) {
+    } else if (_repeatMode == AudioRepeatMode.loopAll) {
       _switchTo(0);
     }
   }
@@ -262,7 +287,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
   /// 上一首：随机模式用时间刻算法；单曲循环回到当前；否则顺序（列表循环回绕）
   void _previous() {
     if (_videos.isEmpty) return;
-    if (_repeatMode == _AudioRepeatMode.single) {
+    if (_repeatMode == AudioRepeatMode.single) {
       _player.seek(Duration.zero);
       return;
     }
@@ -277,7 +302,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     }
     if (_currentIndex > 0) {
       _switchTo(_currentIndex - 1);
-    } else if (_repeatMode == _AudioRepeatMode.loopAll) {
+    } else if (_repeatMode == AudioRepeatMode.loopAll) {
       _switchTo(_videos.length - 1);
     }
   }
@@ -292,7 +317,16 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
       return;
     }
     if (_videos.isEmpty) return;
-    if (_repeatMode == _AudioRepeatMode.single) {
+    if (_sleepPauseAtTrackEnd) {
+      // 定时关闭「播完当前曲目」：暂停并清除标志，不切下一首（工作.md 阶段1 第 2 点）
+      _sleepPauseAtTrackEnd = false;
+      _sleepPreset = AudioSleepPreset.off;
+      unawaited(_saveProgress());
+      _player.pause();
+      if (mounted) setState(() {});
+      return;
+    }
+    if (_repeatMode == AudioRepeatMode.single) {
       // 单曲循环：seek 0 重播（media_kit seek 会重置 completed，可再次触发）
       _player.seek(Duration.zero);
       return;
@@ -308,7 +342,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     }
     if (_currentIndex < _videos.length - 1) {
       _switchTo(_currentIndex + 1);
-    } else if (_repeatMode == _AudioRepeatMode.loopAll) {
+    } else if (_repeatMode == AudioRepeatMode.loopAll) {
       _switchTo(0);
     } else {
       // 最后一首且不循环：停在末尾
@@ -327,193 +361,89 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     _player.setRate(v);
   }
 
-  // ── 底部白色面板（倍速 / 播放列表）────────────────────────
+  // ── 定时关闭（工作.md 阶段1 第 2 点）────────────────────
 
-  /// 倍速面板：0.5 – 3.0 步进 0.5，纯白背景，底部弹出带进出场动画。
-  /// 用 DraggableScrollableSheet 的控制器限制高度 + 可滚动，避免底部溢出
-  ///（用户反馈：Bottom overflowed by 3 pixels）。
+  /// 应用定时关闭预设：
+  /// - off：取消倒计时与「播完当前」标志；
+  /// - min15/30/60 / custom：启动每秒倒计时，归零后暂停播放；
+  ///   custom 用 [custom] 指定时长；
+  /// - trackEnd：到当前曲目 EOF 时暂停（见 [_onCompleted]）。
+  void _applySleepPreset(AudioSleepPreset p, {Duration? custom}) {
+    _sleepTimer?.cancel();
+    _sleepTimer = null;
+    _sleepRemaining = null;
+    _sleepPauseAtTrackEnd = false;
+    _sleepPreset = p;
+    switch (p) {
+      case AudioSleepPreset.off:
+        break;
+      case AudioSleepPreset.trackEnd:
+        _sleepPauseAtTrackEnd = true;
+        break;
+      case AudioSleepPreset.custom:
+        _sleepRemaining = custom ?? const Duration(minutes: 15);
+        _startSleepCountdown();
+        break;
+      case AudioSleepPreset.min15:
+      case AudioSleepPreset.min30:
+      case AudioSleepPreset.min60:
+        _sleepRemaining = p.duration;
+        _startSleepCountdown();
+        break;
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// 启动每秒倒计时，归零后暂停播放
+  void _startSleepCountdown() {
+    _sleepTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final rem = _sleepRemaining;
+      if (rem == null) return;
+      final next = rem - const Duration(seconds: 1);
+      if (next <= Duration.zero) {
+        // 到时：暂停播放并清除定时
+        _sleepTimer?.cancel();
+        _sleepTimer = null;
+        _sleepRemaining = null;
+        _sleepPreset = AudioSleepPreset.off;
+        _player.pause();
+        if (mounted) setState(() {});
+      } else {
+        _sleepRemaining = next;
+        if (mounted) setState(() {});
+      }
+    });
+  }
+
+  // ── 底部面板（倍速 / 播放列表，胶囊式重设计，工作.md 阶段1 第 2 点）──
+
+  static List<double> _speedOptions() =>
+      [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0];
+
+  /// 倍速面板：倍速档位胶囊 + 定时关闭预设，右上角关闭按钮
   void _openSpeedSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 20, 24, 8),
-              child: Text(
-                '播放速度',
-                style: TextStyle(
-                  color: Color(0xFF1A1A1A),
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFFE0E0E0)),
-            // 可滚动区：6 档 + 关闭，小屏不溢出
-            Flexible(
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    for (final s in _speedOptions()) ...[
-                      ListTile(
-                        title: Text(
-                          '${s.toStringAsFixed(1)}x',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: (s - _speed).abs() < 0.001
-                                ? const Color(0xFF4FC3F7)
-                                : const Color(0xFF1A1A1A)
-                                    .withValues(alpha: 0.8),
-                            fontSize: 16,
-                            fontWeight: (s - _speed).abs() < 0.001
-                                ? FontWeight.bold
-                                : FontWeight.normal,
-                          ),
-                        ),
-                        onTap: () {
-                          _setSpeed(s);
-                          Navigator.of(sheetContext).pop();
-                        },
-                      ),
-                      if (s != _speedOptions().last)
-                        const Divider(height: 1, color: Color(0xFFE0E0E0)),
-                    ],
-                    const Divider(height: 1, color: Color(0xFFE0E0E0)),
-                    ListTile(
-                      title: const Text(
-                        '关闭',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0x661A1A1A),
-                          fontSize: 14,
-                        ),
-                      ),
-                      onTap: () => Navigator.of(sheetContext).pop(),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    showAudioSpeedSheet(
+      context,
+      speed: _speed,
+      options: _speedOptions(),
+      onSpeed: _setSpeed,
+      sleepPreset: _sleepPreset,
+      onSleepPreset: _applySleepPreset,
+      sleepRemaining: _sleepRemaining ?? Duration.zero,
     );
   }
 
-  static List<double> _speedOptions() => [0.5, 1.0, 1.5, 2.0, 2.5, 3.0];
-
-  /// 播放列表面板：纯白背景 + 随机播放/循环模式 + 点击切歌。
-  /// 高度 = 屏幕 55% 且不超过剩余空间，避免 overflowed（用户反馈）。
+  /// 播放列表面板：曲目列表 + 随机/循环胶囊，右上角关闭按钮
   void _openPlaylistSheet() {
-    final bottomInset = MediaQuery.paddingOf(context).bottom;
-    final sheetHeight =
-        (MediaQuery.sizeOf(context).height * 0.55 - bottomInset)
-            .clamp(240.0, double.infinity);
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: Colors.white,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (sheetContext, setSheetState) => SafeArea(
-          child: SizedBox(
-            height: sheetHeight,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(24, 20, 24, 8),
-                  child: Text(
-                    '播放列表',
-                    style: TextStyle(
-                      color: Color(0xFF1A1A1A),
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFFE0E0E0)),
-                // 列表
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _videos.length,
-                    itemBuilder: (context, i) {
-                      final cur = i == _currentIndex;
-                      final v = _videos[i];
-                      return ListTile(
-                        dense: true,
-                        leading: cur
-                            ? const _EqualizerBars(color: Color(0xFF4FC3F7))
-                            : const SizedBox(width: 14, height: 14),
-                        title: Text(
-                          v.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: cur
-                                ? const Color(0xFF4FC3F7)
-                                : const Color(0xFF1A1A1A)
-                                    .withValues(alpha: 0.85),
-                            fontSize: 14,
-                            fontWeight:
-                                cur ? FontWeight.bold : FontWeight.normal,
-                          ),
-                        ),
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          _switchTo(i);
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const Divider(height: 1, color: Color(0xFFE0E0E0)),
-                // 底部：随机播放 / 循环模式（关闭→单曲→列表，三态切换）
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      _SheetToggle(
-                        icon: Icons.shuffle_rounded,
-                        label: '随机播放',
-                        active: _shuffle,
-                        onTap: () {
-                          setSheetState(() => _shuffle = !_shuffle);
-                        },
-                      ),
-                      const SizedBox(width: 16),
-                      _SheetToggle(
-                        icon: _repeatMode == _AudioRepeatMode.single
-                            ? Icons.repeat_one_rounded
-                            : Icons.repeat_rounded,
-                        label: _repeatMode.label,
-                        active: _repeatMode != _AudioRepeatMode.off,
-                        onTap: () {
-                          setSheetState(() {
-                            _repeatMode = _repeatMode.next;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    showAudioPlaylistSheet(
+      context,
+      videos: _videos,
+      currentIndex: _currentIndex,
+      shuffle: _shuffle,
+      repeatMode: _repeatMode,
+      onSelect: _switchTo,
+      onToggleShuffle: () => setState(() => _shuffle = !_shuffle),
+      onCycleRepeat: () => setState(() => _repeatMode = _repeatMode.next),
     );
   }
 
@@ -529,6 +459,9 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
     for (final s in _subs) {
       s.cancel();
     }
+    // 定时关闭定时器清理 + 后台播放前台服务停止（工作.md 阶段1 第 2 点）
+    _sleepTimer?.cancel();
+    DeviceServices.stopBackgroundPlayback();
     unawaited(_saveProgress()); // dispose 无法 await，交给后台链完成
     _positionNotifier.dispose();
     _durationNotifier.dispose();
@@ -619,23 +552,27 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // 居中封面 16:9
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
-                            child: AspectRatio(
-                              aspectRatio: 16 / 9,
-                              child: Container(
-                                color: const Color(0xFF2A2A2A),
-                                child: _coverFrame == null
-                                    ? const Icon(
-                                        Icons.headphones_outlined,
-                                        color: Colors.white24,
-                                        size: 48,
-                                      )
-                                    : RawThumbImage(
-                                        frame: _coverFrame!,
-                                        fit: BoxFit.cover,
-                                      ),
+                          // 居中封面 1:1 圆角（缩小：约屏宽 50%、上限 240dp，避免过大）
+                          SizedBox(
+                            width: (MediaQuery.sizeOf(context).width * 0.5)
+                                .clamp(0.0, 240.0),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(18),
+                              child: AspectRatio(
+                                aspectRatio: 1,
+                                child: Container(
+                                  color: const Color(0xFF2A2A2A),
+                                  child: _coverFrame == null
+                                      ? const Icon(
+                                          Icons.headphones_outlined,
+                                          color: Colors.white24,
+                                          size: 40,
+                                        )
+                                      : RawThumbImage(
+                                          frame: _coverFrame!,
+                                          fit: BoxFit.cover,
+                                        ),
+                                ),
                               ),
                             ),
                           ),
@@ -755,17 +692,27 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
                                   enabled: _hasPrevious,
                                   onTap: _previous,
                                 ),
-                                // 播放/暂停（大按钮）
-                                IconButton(
-                                  iconSize: 44,
-                                  icon: Icon(
-                                    _playing
-                                        ? Icons.pause_circle_filled_rounded
-                                        : Icons.play_circle_filled_rounded,
-                                    color: Colors.white,
-                                    size: 48,
+                                // 播放/暂停：与其它四按钮同 52×52 触摸区、同内部结构
+                                //（图标 26 + 14 标签槽），保证五个按钮图标在同一水平线；
+                                // 用 [PlayerPlayPauseButton] 图标形变动画消除生硬切换。
+                                SizedBox(
+                                  width: 52,
+                                  height: _AudioControlButton.height,
+                                  child: InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: _togglePlay,
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        PlayerPlayPauseButton(
+                                          playing: _playing,
+                                          iconSize: 26,
+                                        ),
+                                        const SizedBox(height: 14),
+                                      ],
+                                    ),
                                   ),
-                                  onPressed: _togglePlay,
                                 ),
                                 _AudioControlButton(
                                   icon: Icons.skip_next_rounded,
@@ -793,26 +740,8 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
   }
 }
 
-/// 听视频循环模式：关闭 → 单曲循环 → 列表循环（点击循环按钮循环切换）
-enum _AudioRepeatMode {
-  off('循环关闭'),
-  single('单曲循环'),
-  loopAll('列表循环');
-
-  final String label;
-  const _AudioRepeatMode(this.label);
-
-  /// 三态循环：off → single → loopAll → off
-  _AudioRepeatMode get next => switch (this) {
-        _AudioRepeatMode.off => _AudioRepeatMode.single,
-        _AudioRepeatMode.single => _AudioRepeatMode.loopAll,
-        _AudioRepeatMode.loopAll => _AudioRepeatMode.off,
-      };
-}
-
 /// 底部控制卡里的小按钮：图标 +（可选）小字标签，48×48 触摸区。
-/// 全部按钮统一 [height]（含标签的倍速按钮与纯图标按钮高度一致，
-/// 用户反馈：上一版倍速按钮因下方倍数文本比其他按钮高、不平行）。
+/// 全部按钮统一 [height]（含标签）；无标签按钮图标垂直居中同一高度
 class _AudioControlButton extends StatelessWidget {
   final IconData icon;
   final String? label;
@@ -862,134 +791,5 @@ class _AudioControlButton extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-/// 播放列表面板底部的开关胶囊（随机播放 / 列表循环）
-class _SheetToggle extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _SheetToggle({
-    required this.icon,
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    const accentColor = Color(0xFF64B5F6);
-    const inactiveColor = Color(0xFF1A1A1A);
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        width: 96,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: active
-              ? accentColor.withValues(alpha: 0.12)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: active
-                ? accentColor
-                : const Color(0xFFD9D9DE),
-          ),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              icon,
-              size: 22,
-              color: active ? accentColor : inactiveColor.withValues(alpha: 0.4),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? accentColor : inactiveColor,
-                fontSize: 11,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 当前播放项的等化器跳动动画（三根竖条交错跳动，用户反馈旧版
-/// 只有一节在跳——用正弦错相让三根条各自独立起伏，更灵动好看）。
-class _EqualizerBars extends StatefulWidget {
-  final Color color;
-
-  const _EqualizerBars({required this.color});
-
-  @override
-  State<_EqualizerBars> createState() => _EqualizerBarsState();
-}
-
-class _EqualizerBarsState extends State<_EqualizerBars>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 14,
-      height: 14,
-      child: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final t = _controller.value;
-          // ⚠️ 用 spaceBetween + 不加 padding：3 根条共 9px 放进 14px 容器，
-          // 剩余空间均分，永不会溢出。旧实现每根条带 1px 左右 padding
-          //（3+2）×3 = 15px > 14px，触发行溢出
-          //（用户反馈 v4：播放列表面板最左侧 right overflowed by 1 pixels）。
-          return Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              for (var i = 0; i < 3; i++)
-                Container(
-                  width: 3,
-                  // 三根条相位各差 1/3 周期，正弦独立起伏（0.35–1.0）
-                  height: 4 + 10 * _barFactor(t, i),
-                  decoration: BoxDecoration(
-                    color: widget.color,
-                    borderRadius: BorderRadius.circular(1.5),
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  /// 三根条错相起伏：0 / 1/3 / 2/3 相位差的正弦，恒 > 0 不触底
-  double _barFactor(double t, int index) {
-    final phase = (t + index / 3) % 1.0;
-    // 0.35 + 0.65 * ((1 - cos(2π·phase)) / 2)：0.35..1.0 平滑起伏
-    return 0.35 + 0.65 * (1 - _cos2pi(phase * 2)) / 2;
-  }
-
-  static double _cos2pi(double x) {
-    // 简易余弦近似（-1..1），避免引入额外依赖
-    final xx = x - x.roundToDouble();
-    return 1 - 2 * xx * xx * (3 - 2 * xx.abs());
   }
 }

@@ -52,7 +52,12 @@ class PlayerControlsSettings extends ChangeNotifier {
   // 视频方向（自动/锁定竖屏/锁定横屏）+ 播放界面动画开关
   static const _keyVideoOrientation = 'player_controls_video_orientation';
   static const _keyPlayerAnimations = 'player_controls_player_animations';
-  // 播放界面顶部信息栏（工作.md 第 12 点：时间/电量显示）
+  // 播放界面顶部信息栏（工作.md 阶段1 第 1 点：时间/电量/网速/数据类型多选）
+  static const _keyShowTopTime = 'player_controls_show_top_time';
+  static const _keyShowTopBattery = 'player_controls_show_top_battery';
+  static const _keyShowTopNetSpeed = 'player_controls_show_top_net_speed';
+  static const _keyShowTopNetType = 'player_controls_show_top_net_type';
+  // 旧版顶部信息单选枚举 key（仅用于一次性迁移到新多选）
   static const _keyTopStatusDisplay = 'player_controls_top_status_display';
   // 章节功能：进度条章节标记（默认开启，工作.md 章节功能）
   static const _keyShowChapterProgress =
@@ -74,9 +79,12 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const double minSpeed = 0.25;
   static const double maxSpeed = 4.0;
 
-  /// 长按倍速：设置内可调范围 1.0 – 6.0，步进 0.1（离散）
+  /// 长按倍速：设置内可调范围 1.0 – 4.0，步进 0.5（离散，工作.md 阶段1 第 4 点）
   static const double minLongPressSpeed = 1.0;
-  static const double maxLongPressSpeed = 6.0;
+  static const double maxLongPressSpeed = 4.0;
+
+  /// 长按倍速步进（0.5，离散档位：1.0 / 1.5 / 2.0 / 2.5 / 3.0 / 3.5 / 4.0）
+  static const double longPressSpeedStep = 0.5;
 
   /// 长按期间左右滑动临时调速的范围：1.5 – 4.0，间隔 0.5（离散档位）
   static const double minDynamicSpeed = 1.5;
@@ -153,8 +161,12 @@ class PlayerControlsSettings extends ChangeNotifier {
   /// 播放界面动画（默认开启）：关闭后控制层/面板等不再显示进出场动画
   bool _playerAnimations = true;
 
-  /// 播放界面顶部信息栏显示内容（默认：时间与电量同时显示）
-  TopStatusDisplay _topStatusDisplay = TopStatusDisplay.both;
+  /// 播放界面顶部信息栏多选开关（工作.md 阶段1 第 1 点，默认四项全选）：
+  /// 时间 / 电量 / 网速详情 / 数据类型（WiFi/移动数据图标）。
+  bool _showTopTime = true;
+  bool _showTopBattery = true;
+  bool _showTopNetSpeed = true;
+  bool _showTopNetType = true;
 
   /// 显示章节进度条（默认开启）：进度条上标记章节节点、显示当前章节名称
   bool _showChapterProgress = true;
@@ -183,7 +195,10 @@ class PlayerControlsSettings extends ChangeNotifier {
   LoopMode get loopMode => _loopMode;
   VideoOrientationMode get videoOrientation => _videoOrientation;
   bool get playerAnimations => _playerAnimations;
-  TopStatusDisplay get topStatusDisplay => _topStatusDisplay;
+  bool get showTopTime => _showTopTime;
+  bool get showTopBattery => _showTopBattery;
+  bool get showTopNetSpeed => _showTopNetSpeed;
+  bool get showTopNetType => _showTopNetType;
   bool get showChapterProgress => _showChapterProgress;
 
   /// 启动时加载（main.dart 调用）
@@ -220,8 +235,11 @@ class PlayerControlsSettings extends ChangeNotifier {
         .whereType<double>()
         .where((v) => v >= minSpeed && v <= maxSpeed)
         .toList();
-    _longPressSpeed = (prefs.getDouble(_keyLongPressSpeed) ?? 2.0)
-        .clamp(minLongPressSpeed, maxLongPressSpeed);
+    // 长按倍速：范围 1.0 – 4.0、步进 0.5（工作.md 阶段1 第 4 点）。旧版本以 0.1 粒度、
+    // 上限 6.0 保存，读入后先钳制再就近对齐 0.5 档位（如 4.6 → 4.0，2.3 → 2.5）
+    _longPressSpeed = _roundLongPressSpeed(
+      prefs.getDouble(_keyLongPressSpeed) ?? 2.0,
+    ).clamp(minLongPressSpeed, maxLongPressSpeed);
     _showSpeedIndicator = prefs.getBool(_keyShowSpeedIndicator) ?? true;
     _speedHintShown = prefs.getBool(_keySpeedHintShown) ?? false;
     _saveVolumeToSystem = prefs.getBool(_keySaveVolumeToSystem) ?? true;
@@ -253,13 +271,26 @@ class PlayerControlsSettings extends ChangeNotifier {
       _videoOrientation = VideoOrientationMode.values[orientation];
     }
     _playerAnimations = prefs.getBool(_keyPlayerAnimations) ?? true;
-    final topStatus = prefs.getInt(_keyTopStatusDisplay);
-    if (topStatus != null &&
-        topStatus >= 0 &&
-        topStatus < TopStatusDisplay.values.length) {
-      _topStatusDisplay = TopStatusDisplay.values[topStatus];
-    }
+    // 顶部信息多选（工作.md 阶段1 第 1 点）：新 key 优先；无新 key 时从旧单选枚举
+    // 迁移时间/电量两项，网速/数据类型默认开启。
+    final migrated = _migrateTopStatus(prefs.getInt(_keyTopStatusDisplay));
+    _showTopTime = prefs.getBool(_keyShowTopTime) ?? migrated.$1;
+    _showTopBattery = prefs.getBool(_keyShowTopBattery) ?? migrated.$2;
+    _showTopNetSpeed = prefs.getBool(_keyShowTopNetSpeed) ?? true;
+    _showTopNetType = prefs.getBool(_keyShowTopNetType) ?? true;
     notifyListeners();
+  }
+
+  /// 从旧版顶部信息单选枚举（0=关闭 1=时间 2=电量 3=两者）迁移出时间/电量的初始勾选。
+  /// 无旧值时默认时间+电量均勾选（与旧默认 both 一致）。
+  static (bool, bool) _migrateTopStatus(int? old) {
+    return switch (old) {
+      0 => (false, false),
+      1 => (true, false),
+      2 => (false, true),
+      3 => (true, true),
+      _ => (true, true),
+    };
   }
 
   Future<void> setDoubleTapMode(DoubleTapMode v) async {
@@ -339,16 +370,21 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setInt(_keySeek, clamped);
   }
 
-  /// 长按倍速（1.0 – 6.0，步进 0.1，离散）
+  /// 长按倍速（1.0 – 4.0，步进 0.5，离散）。任意输入就近对齐到 0.5 档位并钳制范围。
   Future<void> setLongPressSpeed(double v) async {
     await ensureLoaded();
-    final clamped = ((v * 10).roundToDouble() / 10)
+    final clamped = _roundLongPressSpeed(v)
         .clamp(minLongPressSpeed, maxLongPressSpeed);
     if ((_longPressSpeed - clamped).abs() < 0.001) return;
     _longPressSpeed = clamped;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_keyLongPressSpeed, clamped);
+  }
+
+  /// 按 0.5 步进取整到最近档位（避免浮点误差，与 load 迁移同一对齐逻辑）
+  static double _roundLongPressSpeed(double v) {
+    return (v / longPressSpeedStep).round() * longPressSpeedStep;
   }
 
   /// 倍速播放指示器开关（长按倍速时是否显示「正在 X.Xx 倍速播放」）
@@ -496,14 +532,24 @@ class PlayerControlsSettings extends ChangeNotifier {
     await prefs.setBool(_keyPlayerAnimations, v);
   }
 
-  /// 播放界面顶部信息栏显示内容（只显示时间 / 只显示电量 / 时间与电量）
-  Future<void> setTopStatusDisplay(TopStatusDisplay v) async {
+  /// 播放界面顶部信息栏：时间/电量/网速/数据类型四项多选开关（工作.md 阶段1 第 1 点）
+  Future<void> setShowTopTime(bool v) => _setTopFlag(_keyShowTopTime, v, (x) => _showTopTime = x, _showTopTime);
+  Future<void> setShowTopBattery(bool v) => _setTopFlag(_keyShowTopBattery, v, (x) => _showTopBattery = x, _showTopBattery);
+  Future<void> setShowTopNetSpeed(bool v) => _setTopFlag(_keyShowTopNetSpeed, v, (x) => _showTopNetSpeed = x, _showTopNetSpeed);
+  Future<void> setShowTopNetType(bool v) => _setTopFlag(_keyShowTopNetType, v, (x) => _showTopNetType = x, _showTopNetType);
+
+  Future<void> _setTopFlag(
+    String key,
+    bool v,
+    void Function(bool) assign,
+    bool current,
+  ) async {
     await ensureLoaded();
-    if (_topStatusDisplay == v) return;
-    _topStatusDisplay = v;
+    if (current == v) return;
+    assign(v);
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_keyTopStatusDisplay, v.index);
+    await prefs.setBool(key, v);
   }
 
   /// 添加自定义倍速预设（去重、限制范围与数量）
@@ -620,7 +666,10 @@ class PlayerControlsSettings extends ChangeNotifier {
     _loopMode = LoopMode.off;
     _videoOrientation = VideoOrientationMode.auto;
     _playerAnimations = true;
-    _topStatusDisplay = TopStatusDisplay.both;
+    _showTopTime = true;
+    _showTopBattery = true;
+    _showTopNetSpeed = true;
+    _showTopNetType = true;
     _showChapterProgress = true;
     notifyListeners();
   }

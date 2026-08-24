@@ -4,6 +4,13 @@
         android:maxSdkVersion="32"/>
     <!-- 播放时调节系统媒体音量（normal 权限，安装即授予） -->
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+    <!-- 播放界面顶部读取网络类型（WiFi/移动数据，normal 权限，安装即授予） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- 听视频后台播放：前台服务保活（工作.md 阶段1 第 2 点） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/>
+    <!-- Android 13+ 后台播放通知需要通知权限（未授予时服务仍可运行，仅不显示通知） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <!-- 允许此 App 管理所有文件（All files access），首次授权由用户主动点击触发 -->
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"/>
     <application
@@ -34,6 +41,11 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <!-- 听视频后台播放前台服务（保活进程，实际音频由 libmpv 播放） -->
+        <service
+            android:name=".BackgroundPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback"/>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

@@ -119,6 +119,137 @@ class DeviceServices {
     }
   }
 
+  /// 读取当前网络类型（播放界面顶部信息行「数据类型」图标用，工作.md 阶段1 第 1 点）。
+  /// 返回 'wifi' / 'cellular' / 'ethernet' / 'none'；失败/无网络返回 'none'。
+  static Future<String> getNetworkType() async {
+    try {
+      final v = await _channel.invokeMethod<String>('getNetworkType');
+      return v ?? 'none';
+    } catch (_) {
+      return 'none';
+    }
+  }
+
+  // ── 听视频后台播放（前台服务保活，工作.md 阶段1 第 2 点）────
+
+  /// 启动后台播放前台服务：保活进程，使音频在退到后台后继续播放（像音乐播放器）。
+  /// [title] 为通知标题（当前曲目名）。进入听视频界面时调用。
+  static Future<void> startBackgroundPlayback({String title = ''}) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'startBackgroundPlayback',
+        {'title': title},
+      );
+    } catch (_) {
+      // 非 Android / 服务不可用时静默忽略（退后台可能暂停，不影响前台使用）
+    }
+  }
+
+  /// 停止后台播放前台服务。退出听视频界面时调用。
+  static Future<void> stopBackgroundPlayback() async {
+    try {
+      await _channel.invokeMethod<void>('stopBackgroundPlayback');
+    } catch (_) {
+      // 静默忽略
+    }
+  }
+
+  // ── 字幕功能（工作.md 阶段1 第 3 点）──────────────────
+
+  /// 当前 Android SDK 版本（外挂字幕按版本选文件选择器：≤11 系统选择器，>11 自建）
+  static Future<int> getSdkInt() async {
+    try {
+      final v = await _channel.invokeMethod<int>('getSdkInt');
+      return v ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 列举目录内容（自建字幕文件选择器用）；失败返回空列表。
+  static Future<List<SubtitleDirEntry>> listDirectory(String path) async {
+    try {
+      final list = await _channel.invokeMethod<List<dynamic>>(
+        'listDirectory',
+        {'path': path},
+      );
+      if (list == null) return const [];
+      return [
+        for (final item in list)
+          if (item is Map)
+            SubtitleDirEntry(
+              name: (item['name'] as String?) ?? '',
+              path: (item['path'] as String?) ?? '',
+              isDirectory: (item['isDirectory'] as bool?) ?? false,
+              size: ((item['size'] as num?) ?? 0).toInt(),
+              modifiedMs: ((item['modifiedMs'] as num?) ?? 0).toInt(),
+            ),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 系统字体列表（字幕字体设置用）；失败返回空列表。
+  static Future<List<String>> getSystemFonts() async {
+    try {
+      final list = await _channel.invokeMethod<List<dynamic>>('getSystemFonts');
+      if (list == null) return const [];
+      return [for (final f in list) if (f is String) f];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 把 content:// 字幕 uri 拷贝为应用内真实路径（libmpv 无法直接读 content://）；
+  /// 返回真实绝对路径，失败返回 null。
+  static Future<String?> copySubtitleFromUri(String uri, String name) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'copySubtitleFromUri',
+        {'uri': uri, 'name': name},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 打开系统文件选择器（ACTION_OPEN_DOCUMENT）：返回所选 content:// uri；
+  /// 用户取消/不可用返回 null。
+  static Future<String?> openDocumentPicker() async {
+    try {
+      return await _channel.invokeMethod<String>('openDocumentPicker');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 打开「字体」系统文件选择器：MIME 含 font/*（.ttf/.otf 不再置灰）。
+  static Future<String?> openFontPicker() async {
+    try {
+      return await _channel.invokeMethod<String>('openFontPicker');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 导入字幕字体（工作.md 阶段1 第 3 点）：系统选择器选 .ttf/.otf →
+  /// 拷贝到应用 fonts 目录，返回真实绝对路径；取消/失败返回 null。
+  static Future<String?> importFontFile() async {
+    try {
+      final uri = await openFontPicker();
+      if (uri == null) return null;
+      final name = uri.split('/').where((s) => s.isNotEmpty).last;
+      final fileName = name.isEmpty ? 'font.ttf' : name;
+      return await _channel.invokeMethod<String>(
+        'copyFontFromUri',
+        {'uri': uri, 'name': fileName},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── 任意时刻抓帧（FFmpeg 快速引擎，RGBA 直通）────────
 
   /// 提取本地视频 [path] 在 [timeMs] 时刻的画面（RGBA 帧，最长边约 [maxWidth]）。
@@ -266,4 +397,21 @@ class DeviceServices {
   static void clearFrameCache() {
     debugClearFrames();
   }
+}
+
+/// 目录条目（自建字幕文件选择器用，工作.md 阶段1 第 3 点）
+class SubtitleDirEntry {
+  final String name;
+  final String path;
+  final bool isDirectory;
+  final int size;
+  final int modifiedMs;
+
+  const SubtitleDirEntry({
+    required this.name,
+    required this.path,
+    required this.isDirectory,
+    required this.size,
+    required this.modifiedMs,
+  });
 }
