@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:moumou/pages/home/home_page.dart';
+import 'package:moumou/services/media_scan_settings.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -39,6 +40,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
+    MediaScanSettings.instance.reset();
     PermissionHandlerPlatform.instance = MockPermissionHandlerPlatform();
     // 扫描接口 mock：默认返回空视频库
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -110,17 +112,20 @@ void main() {
 /// 等待首页后台 isolate（compute）建树完成：
 /// 轮询（真实异步）直到出现结果或无视频提示，避免 FakeAsync 下
 /// pumpAndSettle 对未完成的 compute 永远 settle 不下来而超时。
-Future<void> _waitScan(WidgetTester tester) async {
+Future<void> _waitScan(
+  WidgetTester tester, {
+  String target = '没有找到视频',
+}) async {
   await tester.runAsync(() async {
-    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
     while (DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 50));
       await tester.pump();
-      if (find.text('没有找到视频').evaluate().isNotEmpty ||
-          find.text('需要授予存储权限才能扫描视频').evaluate().isNotEmpty) {
+      if (find.text(target).evaluate().isNotEmpty) {
         break;
       }
     }
   });
   await tester.pumpAndSettle();
 }
+

@@ -6,6 +6,7 @@ import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
+import 'package:moumou/services/media_scan_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/subtitle_settings.dart';
@@ -73,6 +74,8 @@ class _MoumouAppState extends State<MoumouApp> {
     // 字幕设置（工作.md 阶段1 第 3 点）：同 ensureLoaded 模式（面板 setter
     // 与这里共享同一 load Future，防竞态）
     SubtitleSettings.instance.ensureLoaded();
+    // 媒体扫描设置：同 ensureLoaded 模式
+    MediaScanSettings.instance.ensureLoaded();
     SuperResolutionService.instance.load();
   }
 

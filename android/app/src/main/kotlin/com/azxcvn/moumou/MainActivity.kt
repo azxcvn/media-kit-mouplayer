@@ -15,6 +15,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.provider.Settings
 import android.util.Log
@@ -154,7 +155,11 @@ class MainActivity : FlutterActivity() {
                             }.start()
                         }
                     }
-                    "getVideos" -> result.success(getVideos())
+                    "getVideos" -> {
+                        val includeNoMedia = call.argument<Boolean>("includeNoMedia") ?: false
+                        val includeHidden = call.argument<Boolean>("includeHidden") ?: false
+                        result.success(getVideos(includeNoMedia, includeHidden))
+                    }
                     "getSystemVolume" -> result.success(getSystemVolume())
                     "setSystemVolume" -> {
                         setSystemVolume(call.argument<Double>("volume") ?: 0.0)
@@ -196,6 +201,25 @@ class MainActivity : FlutterActivity() {
                             call.argument<String>("name") ?: "font.ttf",
                         )
                         result.success(path)
+                    }
+                    // 字幕字体导入：文件路径拷贝到 filesDir/fonts/（返回真实路径）
+                    "copyFontFromFile" -> {
+                        val path = copyFontFromFile(
+                            call.argument<String>("path") ?: "",
+                            call.argument<String>("name") ?: "font.ttf",
+                        )
+                        result.success(path)
+                    }
+                    // 获取内部字体目录绝对路径
+                    "getFontsDirectory" -> {
+                        val fontDir = File(filesDir, "fonts")
+                        if (!fontDir.exists()) fontDir.mkdirs()
+                        ensureFallbackFont(fontDir)
+                        result.success(fontDir.absolutePath)
+                    }
+                    // 读取字体内部家族名（libass 的 sub-font 按家族名匹配，不能直接用文件名）
+                    "getFontFamilyName" -> {
+                        result.success(getFontFamilyName(call.argument<String>("path") ?: ""))
                     }
                     "openDocumentPicker" -> {
                         if (pendingDocumentPickerResult != null) {
@@ -681,6 +705,168 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    /**
+     * 把文件路径的字体文件（.ttf/.otf/.ttc）拷贝到 filesDir/fonts/<name>，返回真实绝对路径。
+     * 自建选择器选择字体后安全复制到私有目录，确保 libass 始终能读取。
+     */
+    private fun copyFontFromFile(sourcePath: String, name: String): String? {
+        return try {
+            val src = File(sourcePath)
+            if (!src.exists()) return null
+            val fontDir = File(filesDir, "fonts")
+            if (!fontDir.exists()) fontDir.mkdirs()
+            val safeName = name.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            val target = File(fontDir, safeName)
+            src.copyTo(target, overwrite = true)
+            if (target.exists() && target.length() > 0) target.absolutePath else null
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copyFontFromFile failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun ensureFallbackFont(fontsDir: File) {
+        try {
+            val fallbackFile = File(fontsDir, ".system_fallback.ttc")
+            if (fallbackFile.exists() && fallbackFile.length() > 0) return
+            val systemCandidates = listOf(
+                File("/system/fonts/NotoSansCJK-Regular.ttc"),
+                File("/system/fonts/NotoSansSC-Regular.otf"),
+                File("/system/fonts/NotoSansHans-Regular.otf"),
+                File("/system/fonts/DroidSansFallback.ttf")
+            )
+            for (candidate in systemCandidates) {
+                if (candidate.exists() && candidate.canRead()) {
+                    try {
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+                            android.system.Os.symlink(candidate.absolutePath, fallbackFile.absolutePath)
+                            return
+                        }
+                    } catch (_: Exception) {}
+                    try {
+                        candidate.copyTo(fallbackFile, overwrite = true)
+                        return
+                    } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "ensureFallbackFont failed: ${e.message}")
+        }
+    }
+
+    /**
+     * 读取字体文件的内部家族名（family name，name 表 nameID=1 / 16 / 4）。
+     * libass 的 sub-font / ASS 样式 Fontname 均按家族名匹配。
+     * 支持 TTF/OTF/TTC（TTC 取第一个 face）；解析失败返回文件名无后缀。
+     */
+    private fun getFontFamilyName(fontPath: String): String {
+        return try {
+            val fontFile = File(fontPath)
+            if (!fontFile.exists() || fontFile.length() < 12) return ""
+            val bytes = fontFile.readBytes()
+            if (bytes.size < 12) return fontFile.nameWithoutExtension
+            var tableOffset = 0
+            if (bytes[0] == 't'.code.toByte() && bytes[1] == 't'.code.toByte() &&
+                bytes[2] == 'c'.code.toByte() && bytes[3] == 'f'.code.toByte()
+            ) {
+                // TTC：'ttcf' + version(4) + numFonts(4 BE) + offsets...
+                if (bytes.size < 16) return fontFile.nameWithoutExtension
+                val numFonts = be32(bytes, 8)
+                if (numFonts <= 0) return fontFile.nameWithoutExtension
+                tableOffset = be32(bytes, 12)
+            }
+            if (tableOffset + 12 > bytes.size) return fontFile.nameWithoutExtension
+            val numTables = be16(bytes, tableOffset + 4)
+            var nameOffset = -1
+            var nameLength = 0
+            for (i in 0 until numTables) {
+                val rec = tableOffset + 12 + i * 16
+                if (rec + 16 > bytes.size) break
+                if (bytes[rec] == 'n'.code.toByte() && bytes[rec + 1] == 'a'.code.toByte() &&
+                    bytes[rec + 2] == 'm'.code.toByte() && bytes[rec + 3] == 'e'.code.toByte()
+                ) {
+                    nameOffset = be32(bytes, rec + 8)
+                    nameLength = be32(bytes, rec + 12)
+                    break
+                }
+            }
+            if (nameOffset < 0 || nameOffset + nameLength > bytes.size || nameLength < 6) {
+                return fontFile.nameWithoutExtension
+            }
+            val count = be16(bytes, nameOffset + 2)
+            val stringOffsetBase = nameOffset + be16(bytes, nameOffset + 4)
+            var englishFamilyName: String? = null
+            var localizedFamilyName: String? = null
+            var fullName: String? = null
+
+            for (i in 0 until count) {
+                val nr = nameOffset + 6 + i * 12
+                if (nr + 12 > nameOffset + nameLength) break
+                val platform = be16(bytes, nr)
+                val langId = be16(bytes, nr + 4)
+                val nameId = be16(bytes, nr + 6)
+                if (nameId != 1 && nameId != 16 && nameId != 4) continue
+                val len = be16(bytes, nr + 8)
+                val off = stringOffsetBase + be16(bytes, nr + 10)
+                if (off + len > bytes.size) continue
+                val str = decodeName(bytes, off, len, platform)
+                if (str.isNullOrBlank()) continue
+
+                if (nameId == 1 || nameId == 16) {
+                    if (langId == 0x0409 || platform == 1) {
+                        englishFamilyName = str
+                    } else {
+                        localizedFamilyName = str
+                    }
+                } else if (nameId == 4 && fullName == null) {
+                    fullName = str
+                }
+            }
+            val best = englishFamilyName ?: localizedFamilyName ?: fullName
+            best?.ifBlank { null } ?: fontFile.nameWithoutExtension
+        } catch (e: Exception) {
+            Log.w("MainActivity", "getFontFamilyName failed: ${e.message}")
+            try {
+                File(fontPath).nameWithoutExtension
+            } catch (_: Exception) {
+                ""
+            }
+        }
+    }
+
+    private fun be16(b: ByteArray, off: Int): Int =
+        ((b.getOrNull(off)?.toInt() ?: 0) and 0xFF) shl 8 or
+            ((b.getOrNull(off + 1)?.toInt() ?: 0) and 0xFF)
+
+    private fun be32(b: ByteArray, off: Int): Int =
+        ((b.getOrNull(off)?.toInt() ?: 0) and 0xFF) shl 24 or
+            ((b.getOrNull(off + 1)?.toInt() ?: 0) and 0xFF) shl 16 or
+            ((b.getOrNull(off + 2)?.toInt() ?: 0) and 0xFF) shl 8 or
+            ((b.getOrNull(off + 3)?.toInt() ?: 0) and 0xFF)
+
+    /**
+     * 按平台解码 name 字符串：platform 3 (Windows) 为 UTF-16BE；其余按 Latin1/UTF-8 容错。
+     */
+    private fun decodeName(b: ByteArray, off: Int, len: Int, platform: Int): String? {
+        if (off + len > b.size) return null
+        return try {
+            if (platform == 3) {
+                // UTF-16BE（允许奇数长度容错）
+                val chars = CharArray(len / 2)
+                for (i in 0 until len / 2) {
+                    val hi = (b[off + i * 2].toInt() and 0xFF)
+                    val lo = (b[off + i * 2 + 1].toInt() and 0xFF)
+                    chars[i] = ((hi shl 8) or lo).toChar()
+                }
+                String(chars).trim()
+            } else {
+                String(b, off, len, Charsets.UTF_8).trim()
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     // ── 缩略图缓存管理（列表封面，手动清理）───────────────
     // 进度条缩略图已切换为 FFmpeg 快速引擎（libmpv.so 内核）+ Dart 内存缓存，
     // 不再产生磁盘缓存；此处仅管理列表封面（cacheDir/thumbs/）。
@@ -863,9 +1049,32 @@ class MainActivity : FlutterActivity() {
         return final
     }
 
-    /** 通过 MediaStore 查询所有本地视频（快，系统索引） */
-    private fun getVideos(): List<Map<String, Any>> {
+    /** 通过 MediaStore 查询所有本地视频（可配置是否包含 .nomedia 与隐藏文件夹） */
+    private fun getVideos(
+        includeNoMedia: Boolean = false,
+        includeHidden: Boolean = false
+    ): List<Map<String, Any>> {
         val videos = mutableListOf<Map<String, Any>>()
+        val visitedPaths = mutableSetOf<String>()
+        val noMediaDirCache = mutableMapOf<String, Boolean>()
+
+        fun checkDirectoryHasNoMedia(dir: File): Boolean {
+            val dirPath = dir.absolutePath
+            noMediaDirCache[dirPath]?.let { return it }
+            var curr: File? = dir
+            var hasNoMedia = false
+            while (curr != null && curr.path != "/" && curr.path != "/storage/emulated") {
+                val test = File(curr, ".nomedia")
+                if (test.exists()) {
+                    hasNoMedia = true
+                    break
+                }
+                curr = curr.parentFile
+            }
+            noMediaDirCache[dirPath] = hasNoMedia
+            return hasNoMedia
+        }
+
         val projection = arrayOf(
             MediaStore.Video.Media._ID,
             MediaStore.Video.Media.DISPLAY_NAME,
@@ -893,41 +1102,114 @@ class MainActivity : FlutterActivity() {
             val widthCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.WIDTH)
             val heightCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.HEIGHT)
             val dateCol = c.getColumnIndexOrThrow(MediaStore.Video.Media.DATE_MODIFIED)
-            val dataCol = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                c.getColumnIndexOrThrow(MediaStore.Video.Media.DATA)
-            } else -1
+            val dataCol = c.getColumnIndex(MediaStore.Video.Media.DATA)
             val relCol = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                c.getColumnIndexOrThrow(MediaStore.Video.Media.RELATIVE_PATH)
+                c.getColumnIndex(MediaStore.Video.Media.RELATIVE_PATH)
             } else -1
 
             while (c.moveToNext()) {
-                val name = c.getString(nameCol) ?: continue
+                val origName = c.getString(nameCol) ?: continue
                 val duration = c.getLong(durCol)
-                val size = c.getLong(sizeCol)
                 val width = c.getInt(widthCol)
                 val height = c.getInt(heightCol)
-                val dateModified = c.getLong(dateCol) * 1000L // 秒 → 毫秒
 
-                val path = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val rel = if (relCol >= 0) c.getString(relCol) ?: "" else ""
-                    "/storage/emulated/0/$rel$name"
+                // 优先读取 DATA 绝对路径（兼容 SD 卡与内置存储），找不到再通过 RELATIVE_PATH 拼接
+                val dataPath = if (dataCol >= 0) c.getString(dataCol) else null
+                val path = if (!dataPath.isNullOrEmpty()) {
+                    dataPath
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && relCol >= 0) {
+                    val rel = c.getString(relCol) ?: ""
+                    "/storage/emulated/0/$rel$origName"
                 } else {
-                    c.getString(dataCol) ?: continue
+                    continue
                 }
 
-                videos.add(
-                    mapOf(
-                        "path" to path,
-                        "name" to name,
-                        "durationMs" to duration,
-                        "size" to size,
-                        "width" to width,
-                        "height" to height,
-                        "dateModifiedMs" to dateModified,
+                // 核心防脏数据校验：
+                // 1. 检查物理文件是否真实存在且大小非空
+                val file = File(path)
+                if (!file.exists() || !file.isFile || file.length() == 0L) {
+                    continue
+                }
+
+                val realName = file.name
+
+                // 2. 隐藏文件/隐藏目录过滤策略（根据开关判断）
+                val isHiddenItem = realName.startsWith(".") || path.split("/").any { it.startsWith(".") && it.isNotEmpty() }
+                if (!includeHidden && isHiddenItem) {
+                    continue
+                }
+
+                // 3. .nomedia 目录过滤策略（根据开关判断）
+                if (!includeNoMedia && file.parentFile != null && checkDirectoryHasNoMedia(file.parentFile!!)) {
+                    continue
+                }
+
+                val realSize = file.length()
+                val realDateModified = file.lastModified()
+                val normPath = file.absolutePath
+
+                if (visitedPaths.add(normPath)) {
+                    videos.add(
+                        mapOf(
+                            "path" to normPath,
+                            "name" to realName,
+                            "durationMs" to duration,
+                            "size" to realSize,
+                            "width" to width,
+                            "height" to height,
+                            "dateModifiedMs" to if (realDateModified > 0) realDateModified else (c.getLong(dateCol) * 1000L),
+                        )
                     )
-                )
+                }
             }
         }
+
+        // 4. 如果开启了 includeNoMedia 或 includeHidden，针对文件系统进行补充扫描（因为 MediaStore 绝不会自动索引 .nomedia 目录）
+        if (includeNoMedia || includeHidden) {
+            val supportedExts = setOf("mp4", "mkv", "avi", "mov", "wmv", "flv", "ts", "m4v", "webm", "3gp", "mpg", "mpeg")
+            fun scanFsFolder(folder: File, depth: Int) {
+                if (depth > 6 || !folder.exists() || !folder.isDirectory || !folder.canRead()) return
+                val folderName = folder.name
+                val isHiddenFolder = folderName.startsWith(".")
+                if (!includeHidden && isHiddenFolder) return
+
+                val files = folder.listFiles() ?: return
+                for (f in files) {
+                    if (f.isDirectory) {
+                        scanFsFolder(f, depth + 1)
+                    } else if (f.isFile && f.length() > 0) {
+                        val ext = f.extension.lowercase()
+                        if (ext in supportedExts) {
+                            val fName = f.name
+                            if (!includeHidden && fName.startsWith(".")) continue
+                            val normPath = f.absolutePath
+                            if (visitedPaths.add(normPath)) {
+                                videos.add(
+                                    mapOf(
+                                        "path" to normPath,
+                                        "name" to fName,
+                                        "durationMs" to 0L,
+                                        "size" to f.length(),
+                                        "width" to 0,
+                                        "height" to 0,
+                                        "dateModifiedMs" to f.lastModified(),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            try {
+                @Suppress("DEPRECATION")
+                val primaryStorage = Environment.getExternalStorageDirectory()
+                if (primaryStorage != null && primaryStorage.exists()) {
+                    scanFsFolder(primaryStorage, 0)
+                }
+            } catch (_: Exception) {}
+        }
+
         return videos
     }
 }

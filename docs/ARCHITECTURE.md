@@ -16,8 +16,8 @@ Flutter 本地视频播放器（Android），核心能力：
 - 播放器：media_kit，横屏沉浸式全屏，播放进度持久化；**听视频**（共享 Player 只播音频，
   封面模糊背景 + 1:1 圆角封面 + 胶囊式底部倍速/列表面板 + 定时关闭 + 后台播放（前台服务保活）+ 时间刻随机播放）
 - **字幕**（阶段1 第 3 点）：内嵌轨道 + 外挂字幕导入（Android≤11 系统选择器 / >11 自建选择器带排序与文件夹记忆），
-  主+次双字幕，延迟/样式/杂项/字体四类设置，样式支持预设 + RGBA 滑杆调色与强制覆盖开关，内嵌样式字幕默认尊重自带样式
-  （libass 原生渲染，见 §7 已知注意事项）
+  单选模型，延迟/样式/杂项三类设置，样式支持预设 + RGBA 滑杆调色与 ASS 强制覆盖开关，内嵌样式字幕默认尊重自带样式
+  （libass 原生渲染 + 系统字库直通，见 §7 已知注意事项）
 - **进度条缩略图**：自建 libmpv 内核（含 `mk_thumbnail_*` 快速抓帧接口）+ FFmpeg/MediaCodec
   硬解独立解码实例（~85ms/帧），拖动实时预览、松手精确落帧、空闲预取邻近帧（§4.9）
 - 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
@@ -59,7 +59,8 @@ lib/
 │   ├── chapter_tracker.dart   # 章节跟踪器（mpv chapter-list 读取 + 当前位置/片段/胶囊窗口状态）
 │   ├── intro_outro_settings.dart # 片头片尾全局设置（开关/片头秒数/片尾秒数/各自范围，ChangeNotifier + 持久化）
 │   ├── intro_outro_tracker.dart  # 片头片尾跟踪器（就绪/已处理状态 + 恢复点感知 + 动作决策）
-│   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/字体/内嵌样式覆盖/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
+│   ├── media_scan_settings.dart  # 媒体扫描与过滤设置（.nomedia/隐藏文件夹/黑白名单，ChangeNotifier + 持久化）
+│   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
 │   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
@@ -109,8 +110,8 @@ lib/
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（胶囊样式）
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容
 │   │       ├── audio_player_panels.dart       # 听视频倍速/列表面板（胶囊式 + 定时关闭预设 + 统一关闭按钮）
-│   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置/字体自建选择器）
-│   │       ├── subtitle_file_picker.dart      # 外挂字幕/字体选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器）
+│   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置）
+│   │       ├── subtitle_file_picker.dart      # 外挂字幕选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器）
 │   │       ├── player_resume_indicator.dart   # 恢复进度指示器（胶囊样式，2.5s 自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层
 │   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（RGBA 直渲 + 淡入淡出）
@@ -123,6 +124,7 @@ lib/
 │       ├── settings_page.dart #   设置主页（分组结构）
 │       ├── appearance_page.dart      # 外观设置子页
 │       ├── player_settings_page.dart # 播放器设置子页（手势/视频方向/顶部信息/播放行为/阈值）
+│       ├── media_scan_settings_page.dart # 媒体扫描与过滤设置子页（.nomedia/隐藏文件夹/黑白名单）
 │       ├── about_page.dart           # 关于页（软件信息/工具/信息）
 │       ├── license_page.dart         # 许可证书页（列表 + 二级详情页，非折叠式）
 │       ├── error_log_page.dart       # 错误日志页
@@ -441,13 +443,12 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | mpv 章节子属性返回字符串、平台可能为 null | `NativePlayer.getProperty('chapter-list/$i/title'…)` 自行 parse；非 NativePlayer 静默无章节 |
 | 底栏/控制组件错位跑到屏幕顶部 | Stack 非 Positioned 子项默认 topLeft 摆放：底栏等固定定位组件必须包 `Positioned(left/right/bottom)` |
 | Stack 条件子项插入/移出导致无 key 兄弟错位重建（指示器动画重播） | 条件渲染的 Stack 子项（如缩略图气泡）前的有状态组件加稳定 key（`ValueKey`），防按索引错位丢 State |
-| media_kit 默认 `libass:false` → mpv `sub-visibility=no`，无 SubtitleView 时字幕完全不渲染 | 播放器 `PlayerConfiguration(libass: true)` 走原生 libass 字幕管线（`player_page.dart`）；Android 捆绑回退字体 `NotoSansCJKsc` 经 `libassAndroidFont` 供 libass 使用 |
-| Android libass 拿不到系统字体，普通文本字幕无字体不显示 | 核心捆绑 NotoSansCJKsc 回退字体；`sub-font-provider` 统一 `auto`（勿设 `none`），内嵌字幕嵌入字体亦可用 |
+| media_kit 默认 `libass:false` → mpv `sub-visibility=no`，无 SubtitleView 时字幕完全不渲染 | 播放器 `PlayerConfiguration(libass: true)` 走原生 libass 字幕管线（`player_page.dart`）；`sub-fonts-dir` 统一指向 `/system/fonts`，`sub-font` 统一为 `Noto Sans CJK SC`（路线 C：零 APK 资源开销，100% 稳定） |
+| Android libass 字体解析 | `sub-fonts-dir=/system/fonts` 直通系统字库，`sub-font-provider=auto`，`embeddedfonts=yes`，所有文字样式实时生效且不依赖外部字库 |
 | mpv 颜色 8 位为 `#AARRGGBB`（alpha 在前），6 位 = 不透明 | `rgbaToMpvColor`/`mpvColorToRgba`（`subtitle_track.dart`）统一转换，alpha==255 输出 6 位保兼容 |
 | 打开视频后 ASS 内嵌字幕被强制覆盖样式（需切轨道才恢复原生样式） | 选中态与 mpv 实际 `sid` 同步（`reload`/`_syncActiveFromMpv`），样式策略按真实轨道判断，首帧即生效 |
 | 主/次字幕功能乱且难维护 | 改单选模型（只设 `sid`）：轨道点击两态循环 选中↔关闭；移除 secondary-sid 全部逻辑 |
-| 导入的外挂字幕退出播放后丢失 | `SubtitleSettings` 记忆路径列表（SharedPreferences），`SubtitleController` 构造时恢复、`reapply` 时以 `sub-add auto` 重挂（不抢占自带字幕） |
-| 系统选择器把 .ttf/.otf 置灰不可选 | 原生新增字体 MIME 选择器 `openFontPicker`（font/* + octet-stream）；SDK≤30 用它拷贝，≥31 自建文件夹选择器过滤 `isFontFile` |
+| 导入的外挂字幕退出播放后丢失 | `SubtitleSettings` 记忆路径列表（SharedPreferences），`SubtitleController` 构造时恢复、`reapply` 时以 `sub-add auto` 重挂（按视频独立隔离存储） |
 | 重置延迟/样式不生效（apply 竞态） | 先 await 设置变更、后 await `applyAllSettings()`，禁止同一事件内不等待的并行修改 |
 
 ---

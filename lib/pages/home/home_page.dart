@@ -29,7 +29,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
   List<TreeNode> _roots = []; // 树状模式：完整目录树
   List<TreeNode> _folders = []; // 列表模式：含直接视频的文件夹
   bool _loading = true;
@@ -46,13 +46,23 @@ class _HomePageState extends State<HomePage>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 从系统文件管理器或其他应用切回时，自动刷新视频列表（感知外部重命名/移动/删除）
+    if (state == AppLifecycleState.resumed && mounted && !_loading) {
+      _load();
+    }
   }
 
   Future<void> _load() async {

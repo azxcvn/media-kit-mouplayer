@@ -255,3 +255,52 @@ class SettingsRadioTile extends StatelessWidget {
     );
   }
 }
+
+/// 开关设置项行（trailing 显示 Switch 开关）
+class SettingsSwitchTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final Widget? subtitle;
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+
+  const SettingsSwitchTile({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.value,
+    this.subtitle,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ListTile(
+      onTap: onChanged == null ? null : () => onChanged!(!value),
+      leading: Container(
+        width: 40,
+        height: 40,
+        decoration: BoxDecoration(
+          color: value ? scheme.primaryContainer : scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(
+          icon,
+          size: 22,
+          color: value ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+        ),
+      ),
+      title: Text(
+        title,
+        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+      ),
+      subtitle: subtitle,
+      trailing: Switch(
+        value: value,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+

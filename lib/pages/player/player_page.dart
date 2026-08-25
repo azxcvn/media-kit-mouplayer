@@ -305,13 +305,10 @@ class _PlayerPageState extends State<PlayerPage>
     _title = widget.title;
     // 开启 libass：走 mpv 原生字幕渲染（sub-visibility=yes），而非 Flutter
     // SubtitleView。这也是内嵌字幕原生样式 / 各种 sub-* 样式属性生效的前提
-    // （media_kit 默认 libass:false 会把 sub-visibility 关掉，字幕完全不渲染——
-    // 历史「字幕一塌糊涂」的根因）。Android 捆绑回退字体给 libass 使用。
+    // （对齐小喵 player：零 APK 体积消耗，直接通过 sub-fonts-dir 读取系统字库 /system/fonts）。
     _player = Player(
       configuration: const PlayerConfiguration(
         libass: true,
-        libassAndroidFont: 'assets/fonts/NotoSansCJKsc-Regular.otf',
-        libassAndroidFontName: 'Noto Sans CJK SC',
       ),
     );
     _controller = VideoController(_player);

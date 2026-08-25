@@ -129,20 +129,6 @@ class PlayerSubtitlePanel extends StatelessWidget {
                 SubtitleMiscPanel(controller: controller),
               ),
             ),
-            _SubtitleSettingsEntry(
-              icon: Icons.font_download_outlined,
-              label: '字幕字体',
-              subtitle: '选择字幕渲染字体',
-              onTap: () => _pushSubPage(
-                context,
-                '字幕字体',
-                SubtitleFontPanel(
-                  controller: controller,
-                  onPushSubPage: onPushSubPage,
-                  onCloseSubPage: onPopSubPage,
-                ),
-              ),
-            ),
           ],
         );
       },
@@ -383,7 +369,6 @@ class _SettingSlider extends StatelessWidget {
   final double value;
   final double min;
   final double max;
-  final int? divisions;
   final ValueChanged<double> onChanged;
 
   const _SettingSlider({
@@ -392,7 +377,6 @@ class _SettingSlider extends StatelessWidget {
     required this.value,
     required this.min,
     required this.max,
-    this.divisions,
     required this.onChanged,
   });
 
@@ -428,7 +412,6 @@ class _SettingSlider extends StatelessWidget {
             child: Slider(
               min: min,
               max: max,
-              divisions: divisions,
               value: value.clamp(min, max),
               onChanged: onChanged,
             ),
@@ -647,7 +630,7 @@ class SubtitleStylePanel extends StatelessWidget {
     return ListenableBuilder(
       listenable: settings,
       builder: (context, _) {
-        final mode = settings.borderStyle;
+        final hasBorder = settings.borderColor != null;
         return ListView(
           key: const PageStorageKey('subtitle_style'),
           padding: const EdgeInsets.all(16),
@@ -661,6 +644,7 @@ class SubtitleStylePanel extends StatelessWidget {
                     label: '文字颜色',
                     value: settings.color,
                     allowNone: false,
+                    presetColors: SubtitlePresetColor.textPresets,
                     onSelect: (c) =>
                         _apply(c, settings, (v) => settings.setColor(v ?? '#FFFFFF')),
                   ),
@@ -669,6 +653,8 @@ class SubtitleStylePanel extends StatelessWidget {
                     label: '描边颜色',
                     value: settings.borderColor,
                     allowNone: true,
+                    defaultColor: const (r: 0, g: 0, b: 0, a: 255),
+                    presetColors: SubtitlePresetColor.borderPresets,
                     onSelect: (c) =>
                         _apply(c, settings, (v) => settings.setBorderColor(v)),
                   ),
@@ -677,74 +663,16 @@ class SubtitleStylePanel extends StatelessWidget {
                     label: '背景颜色',
                     value: settings.backColor,
                     allowNone: true,
+                    defaultColor: const (r: 0, g: 0, b: 0, a: 128),
+                    presetColors: SubtitlePresetColor.backPresets,
                     onSelect: (c) =>
                         _apply(c, settings, (v) => settings.setBackColor(v)),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            // ── 描边模式 ─────────────────────────────
-            _PanelCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _CardLabel('描边模式'),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                    child: Row(
-                      children: [
-                        for (final m in SubtitleBorderStyle.values) ...[
-                          if (m != SubtitleBorderStyle.values.first)
-                            const SizedBox(width: 8),
-                          Expanded(
-                            child: GestureDetector(
-                              onTap: () {
-                                settings.setBorderStyle(m);
-                                controller.applyAllSettings();
-                              },
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                decoration: BoxDecoration(
-                                  color: mode == m
-                                      ? _accent
-                                      : Colors.white.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(999),
-                                ),
-                                child: Text(
-                                  m.label,
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: mode == m
-                                        ? Colors.black
-                                        : Colors.white70,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-                    child: Text(
-                      _modeHint(mode),
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.5),
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            // ── 描边粗细（仅「描边」模式）────────────
-            if (mode == SubtitleBorderStyle.outline) ...[
+            // ── 描边粗细（当设置了描边颜色时显示）──────────
+            if (hasBorder) ...[
               const SizedBox(height: 16),
               _PanelCard(
                 child: Column(
@@ -756,7 +684,6 @@ class SubtitleStylePanel extends StatelessWidget {
                       value: settings.borderSize,
                       min: 0,
                       max: 10,
-                      divisions: 40,
                       onChanged: (v) {
                         settings.setBorderSize(v);
                         controller.applyAllSettings();
@@ -832,7 +759,6 @@ class SubtitleStylePanel extends StatelessWidget {
                     value: settings.spacing,
                     min: 0,
                     max: 10,
-                    divisions: 20,
                     onChanged: (v) {
                       settings.setSpacing(v);
                       controller.applyAllSettings();
@@ -845,7 +771,6 @@ class SubtitleStylePanel extends StatelessWidget {
                     value: settings.blur,
                     min: 0,
                     max: 20,
-                    divisions: 40,
                     onChanged: (v) {
                       settings.setBlur(v);
                       controller.applyAllSettings();
@@ -878,21 +803,18 @@ class SubtitleStylePanel extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            // ── 不生效提示 ───────────────────────────
+            // ── 不生效提示（精炼文案）───────────────────
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
                 color: const Color(0xFF4A3A13),
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFF6B5618)),
               ),
               child: const Text(
-                '提示：调整样式后若不生效，通常是以下原因——\n'
-                '① 当前是 ASS/SSA 内嵌字幕且未开启「强制覆盖内嵌样式」，请开启该开关；\n'
-                '② 字幕自带内联样式标签（inline tag）时，全局样式无法覆盖，请改用不含内联标签的字幕；\n'
-                '③ 请确认已选中字幕轨道（面板顶部勾选）。',
-                style: TextStyle(color: Color(0xFFFFE082), fontSize: 12, height: 1.5),
+                '若样式调整无效果，可能为ASS字幕，需要启用强制字幕覆盖即可生效',
+                style: TextStyle(color: Color(0xFFFFE082), fontSize: 12, height: 1.4),
               ),
             ),
             const SizedBox(height: 16),
@@ -915,40 +837,38 @@ class SubtitleStylePanel extends StatelessWidget {
       },
     );
   }
-
-  /// 描边模式下该调节什么的指引文案
-  static String _modeHint(SubtitleBorderStyle mode) => switch (mode) {
-        SubtitleBorderStyle.none =>
-          '当前无描边、无背景框，仅显示文字颜色（在上方「文字颜色」调节）。',
-        SubtitleBorderStyle.outline =>
-          '经典描边：在上方「描边颜色」选色，用下方「描边粗细」滑块调整粗细。',
-        SubtitleBorderStyle.box =>
-          '字幕后方背景框：在上方「背景颜色」选色，拖动 A 通道可调透明度。',
-      };
 }
 
 /// 把 mpv 颜色串（`#RRGGBB` / `#AARRGGBB`，8 位时 alpha 在前）转成 Flutter
 /// [Color]（同样为 ARGB）。
 Color colorFromMpvHex(String hex) {
   final h = hex.replaceAll('#', '');
-  if (h.length == 8) return Color(int.parse(h, radix: 16));
-  return Color(0xFF000000 | int.parse(h, radix: 16));
+  if (h.length == 8) {
+    final val = int.tryParse(h, radix: 16);
+    return val != null ? Color(val) : Colors.white;
+  }
+  if (h.length == 6) {
+    final val = int.tryParse(h, radix: 16);
+    return val != null ? Color(0xFF000000 | val) : Colors.white;
+  }
+  return Colors.white;
 }
 
-/// 单个颜色的编辑行：标题 + 预设色点 + 「自定义」展开 RGBA 滑杆。
-///
-/// 预设/自定义两态切换带 [AnimatedSize] 平滑过渡；
-/// RGBA 四个通道滑杆与设置页同款外观。
+/// 单个颜色的编辑行：标题 + 预设色点 + 第二/三行全宽「自定义」展开 RGBA 滑杆。
 class _ColorEditorRow extends StatefulWidget {
   final String label;
   final String? value;
   final bool allowNone;
+  final SubtitleRgba defaultColor;
+  final List<SubtitlePresetColor> presetColors;
   final ValueChanged<String?> onSelect;
 
   const _ColorEditorRow({
     required this.label,
     required this.value,
     this.allowNone = false,
+    this.defaultColor = const (r: 255, g: 255, b: 255, a: 255),
+    this.presetColors = SubtitlePresetColor.textPresets,
     required this.onSelect,
   });
 
@@ -963,17 +883,18 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
   Widget build(BuildContext context) {
     final base = widget.value != null
         ? mpvColorToRgba(widget.value!)
-        : const (r: 255, g: 255, b: 255, a: 255);
+        : widget.defaultColor;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 标题 + 颜色预览点
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
           child: Row(
             children: [
               Container(
-                width: 22,
-                height: 22,
+                width: 20,
+                height: 20,
                 decoration: BoxDecoration(
                   color: widget.value == null
                       ? Colors.black26
@@ -986,99 +907,134 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
                   ),
                 ),
                 child: widget.value == null
-                    ? const Icon(Icons.block, size: 13, color: Colors.white70)
+                    ? const Icon(Icons.block, size: 12, color: Colors.white70)
                     : null,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   widget.label,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                ),
-              ),
-              // 自定义开关（带动画旋转的箭头）
-              GestureDetector(
-                onTap: () => setState(() => _custom = !_custom),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: _custom
-                        ? Colors.white.withValues(alpha: 0.16)
-                        : Colors.white.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color:
-                          _custom ? _accent : Colors.white12,
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _custom ? '收起' : '自定义',
-                        style: TextStyle(
-                          color: _custom ? Colors.white : Colors.white70,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      AnimatedRotation(
-                        turns: _custom ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 200),
-                        child: const Icon(Icons.keyboard_arrow_down,
-                            size: 16, color: Colors.white70),
-                      ),
-                    ],
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
             ],
           ),
         ),
-        // 预设 / RGBA 两态切换（动画过渡）
+        // 预设色胶囊（一行或两行排布）
+        _buildPresets(),
+        const SizedBox(height: 8),
+        // 下方独立一行全宽「自定义」胶囊（与预设胶囊总宽度一致）
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: GestureDetector(
+            onTap: () => setState(() => _custom = !_custom),
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              decoration: BoxDecoration(
+                color: _custom
+                    ? Colors.white.withValues(alpha: 0.16)
+                    : Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: _custom ? _accent : Colors.white12,
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _custom ? '收起自定义调色' : '自定义调色 (RGBA)',
+                    style: TextStyle(
+                      color: _custom ? Colors.white : Colors.white70,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  AnimatedRotation(
+                    turns: _custom ? 0.5 : 0,
+                    duration: const Duration(milliseconds: 200),
+                    child: const Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 16,
+                      color: Colors.white70,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        // 展开的 RGBA 四通道滑杆
         AnimatedSize(
           duration: const Duration(milliseconds: 220),
           curve: Curves.easeInOut,
           alignment: Alignment.topCenter,
-          child: _custom ? _buildChannels(base) : _buildPresets(),
+          child: _custom ? _buildChannels(base) : const SizedBox.shrink(),
         ),
         const SizedBox(height: 12),
       ],
     );
   }
 
-  /// 预设色点（允许「无」）
+  /// 预设色胶囊（多行自适应等宽）
   Widget _buildPresets() {
+    final allItems = <({String? hex, String label})>[
+      if (widget.allowNone) (hex: null, label: '无'),
+      for (final c in widget.presetColors) (hex: c.hex, label: c.label),
+    ];
+
+    final hasCurrent =
+        widget.value != null && !_matchesAnyPreset(widget.value!);
+
+    List<List<({String? hex, String label})>> rows;
+    if (allItems.length <= 4 && !hasCurrent) {
+      rows = [allItems];
+    } else if (allItems.length <= 4 && hasCurrent) {
+      rows = [
+        allItems,
+        [(hex: widget.value, label: '当前')],
+      ];
+    } else {
+      // 5项（如背景色）：第1行3项，第2行2项(+当前)
+      rows = [
+        allItems.sublist(0, 3),
+        [
+          ...allItems.sublist(3),
+          if (hasCurrent) (hex: widget.value, label: '当前'),
+        ],
+      ];
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
+      child: Column(
         children: [
-          if (widget.allowNone)
-            _ColorDot(
-              hex: null,
-              label: '无',
-              selected: widget.value == null,
-              onTap: () => widget.onSelect(null),
+          for (var i = 0; i < rows.length; i++) ...[
+            if (i > 0) const SizedBox(height: 8),
+            Row(
+              children: [
+                for (var j = 0; j < rows[i].length; j++) ...[
+                  if (j > 0) const SizedBox(width: 8),
+                  Expanded(
+                    child: _ColorDot(
+                      hex: rows[i][j].hex,
+                      label: rows[i][j].label,
+                      selected: rows[i][j].hex == null
+                          ? widget.value == null
+                          : _matchesPreset(rows[i][j].hex!),
+                      onTap: () => widget.onSelect(rows[i][j].hex),
+                    ),
+                  ),
+                ],
+              ],
             ),
-          for (final c in SubtitlePresetColor.presets)
-            _ColorDot(
-              hex: c.hex,
-              label: c.label,
-              selected: _matchesPreset(c.hex),
-              onTap: () => widget.onSelect(c.hex),
-            ),
-          // 当前生效色（非预设时也可见）
-          if (widget.value != null && !_matchesAnyPreset(widget.value!))
-            _ColorDot(
-              hex: widget.value,
-              label: '当前',
-              selected: true,
-              onTap: null,
-            ),
+          ],
         ],
       ),
     );
@@ -1088,11 +1044,11 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
     if (widget.value == null) return false;
     final a = mpvColorToRgba(widget.value!);
     final b = mpvColorToRgba(hex);
-    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == 255;
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
   }
 
   bool _matchesAnyPreset(String hex) {
-    for (final c in SubtitlePresetColor.presets) {
+    for (final c in widget.presetColors) {
       if (_matchesPreset(c.hex)) return true;
     }
     return false;
@@ -1142,7 +1098,7 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
   }
 }
 
-/// 预设色点（小圆 + 名称；当前选中带勾）
+/// 预设色胶囊（圆形色块 + 名称，选中带勾）
 class _ColorDot extends StatelessWidget {
   final String? hex;
   final String label;
@@ -1161,7 +1117,7 @@ class _ColorDot extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 7),
         decoration: BoxDecoration(
           color: selected
               ? Colors.white.withValues(alpha: 0.16)
@@ -1172,28 +1128,35 @@ class _ColorDot extends StatelessWidget {
           ),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 18,
-              height: 18,
+              width: 14,
+              height: 14,
               decoration: BoxDecoration(
                 color: hex == null ? Colors.black26 : colorFromMpvHex(hex!),
                 shape: BoxShape.circle,
-                border: Border.all(color: Colors.white30),
+                border: Border.all(
+                  color: hex == null ? Colors.white24 : Colors.white38,
+                  width: 0.5,
+                ),
               ),
               child: hex == null
-                  ? const Icon(Icons.block, size: 11, color: Colors.white70)
+                  ? const Icon(Icons.block, size: 9, color: Colors.white70)
                   : (selected
-                      ? const Icon(Icons.check, size: 11, color: Colors.black54)
+                      ? const Icon(Icons.check, size: 9, color: Colors.black54)
                       : null),
             ),
             const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? Colors.white : Colors.white54,
-                fontSize: 11,
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? Colors.white : Colors.white70,
+                  fontSize: 11,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                ),
               ),
             ),
           ],
@@ -1242,7 +1205,6 @@ class _ChannelSlider extends StatelessWidget {
             child: Slider(
               min: 0,
               max: 255,
-              divisions: 255,
               value: value.toDouble(),
               onChanged: (v) => onChanged(v.round()),
             ),
@@ -1301,7 +1263,6 @@ class SubtitleMiscPanel extends StatelessWidget {
                     value: settings.scale,
                     min: SubtitleSettings.minScale,
                     max: SubtitleSettings.maxScale,
-                    divisions: 25,
                     onChanged: (v) {
                       settings.setScale(v);
                       controller.applyAllSettings();
@@ -1314,7 +1275,6 @@ class SubtitleMiscPanel extends StatelessWidget {
                     value: settings.position,
                     min: SubtitleSettings.minPos,
                     max: SubtitleSettings.maxPos,
-                    divisions: 100,
                     onChanged: (v) {
                       settings.setPosition(v);
                       controller.applyAllSettings();
@@ -1336,197 +1296,3 @@ class SubtitleMiscPanel extends StatelessWidget {
 // ────────────────────────────────────────────────────────────
 
 /// 字幕字体二级页：跟随默认 + 导入自己的字体（.ttf/.otf）+ 已导入字体列表。
-///
-/// 字体选择（参考小喵：让用户进文件夹选字体文件再拷贝）：
-/// - SDK ≤ 30：系统选择器（字体 MIME，不再置灰）；
-/// - SDK ≥ 31：自建文件夹选择器（[SubtitleFilePickerPanel] 过滤 .ttf/.otf）。
-class SubtitleFontPanel extends StatelessWidget {
-  final SubtitleController controller;
-
-  /// 面板内二级页推页回调（字体自建选择器用）
-  final void Function(String title, Widget body)? onPushSubPage;
-
-  /// 面板内二级页 pop 回调
-  final VoidCallback? onCloseSubPage;
-
-  const SubtitleFontPanel({
-    super.key,
-    required this.controller,
-    this.onPushSubPage,
-    this.onCloseSubPage,
-  });
-
-  Future<void> _import(BuildContext context) async {
-    final sdk = await DeviceServices.getSdkInt();
-    if (!context.mounted || sdk <= 0) return;
-    if (sdk <= 30) {
-      final path = await DeviceServices.importFontFile();
-      if (path == null || !context.mounted) return;
-      await SubtitleSettings.instance.importFont(path);
-      await controller.applyAllSettings();
-      return;
-    }
-    // 自建选择器：只显示 .ttf/.otf/.ttc，选中文件后把真实路径当作字体导入
-    final push = onPushSubPage;
-    if (push == null) return;
-    push(
-      '选择字体文件',
-      SubtitleFilePickerPanel(
-        fileFilter: isFontFile,
-        onPicked: (path) async {
-          await SubtitleSettings.instance.importFont(path);
-          await controller.applyAllSettings();
-        },
-        onClose: () => onCloseSubPage?.call(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final settings = SubtitleSettings.instance;
-    return ListenableBuilder(
-      listenable: settings,
-      builder: (context, _) {
-        final current = settings.font;
-        final imported = settings.importedFonts;
-        return ListView(
-          key: const PageStorageKey('subtitle_font'),
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          children: [
-            _FontTile(
-              label: '跟随默认',
-              selected: current == 'auto',
-              onTap: () {
-                settings.setFont('auto');
-                controller.applyAllSettings();
-              },
-            ),
-            const Divider(height: 1, color: Colors.white12),
-            ListTile(
-              leading: const Icon(Icons.file_upload_outlined,
-                  color: Colors.white, size: 22),
-              title: const Text(
-                '导入字体',
-                style: TextStyle(color: Colors.white, fontSize: 14),
-              ),
-              subtitle: const Text(
-                '.ttf / .otf（选择字体所在文件夹，自动拷贝）',
-                style: TextStyle(color: Colors.white38, fontSize: 12),
-              ),
-              onTap: () => _import(context),
-            ),
-            if (imported.isNotEmpty) ...[
-              const Divider(height: 1, color: Colors.white12),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text(
-                  '已导入字体',
-                  style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.5),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              for (final f in imported)
-                _ImportedFontTile(
-                  name: _fontDisplayName(f),
-                  selected: current == f,
-                  onSelect: () {
-                    settings.setFont(f);
-                    controller.applyAllSettings();
-                  },
-                  onDelete: () {
-                    settings.removeFont(f);
-                    controller.applyAllSettings();
-                  },
-                ),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// 字体文件路径 → 展示名（去掉目录）
-String _fontDisplayName(String path) {
-  final segs = path.split('/');
-  return segs.isEmpty ? path : segs.last;
-}
-
-/// 「跟随默认」字体选项行
-class _FontTile extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  const _FontTile({
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(
-        selected ? Icons.check_circle : Icons.circle_outlined,
-        color: selected ? _accent : Colors.white38,
-        size: 20,
-      ),
-      title: Text(
-        label,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-        ),
-      ),
-      onTap: onTap,
-    );
-  }
-}
-
-/// 已导入字体选项行（可删除）
-class _ImportedFontTile extends StatelessWidget {
-  final String name;
-  final bool selected;
-  final VoidCallback onSelect;
-  final VoidCallback onDelete;
-
-  const _ImportedFontTile({
-    required this.name,
-    required this.selected,
-    required this.onSelect,
-    required this.onDelete,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      leading: Icon(
-        selected ? Icons.check_circle : Icons.circle_outlined,
-        color: selected ? _accent : Colors.white38,
-        size: 20,
-      ),
-      title: Text(
-        name,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-        ),
-      ),
-      trailing: IconButton(
-        icon: const Icon(Icons.delete_outline, color: Colors.white38, size: 20),
-        tooltip: '删除',
-        onPressed: onDelete,
-      ),
-      onTap: onSelect,
-    );
-  }
-}

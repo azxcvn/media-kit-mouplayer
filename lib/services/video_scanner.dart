@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:moumou/models/tree_node.dart';
 import 'package:moumou/models/video_file.dart';
+import 'package:moumou/services/media_scan_settings.dart';
 
 /// 视频扫描器：通过原生 MediaStore 查询视频，并构建完整目录树
 class VideoScanner {
@@ -29,20 +30,39 @@ class VideoScanner {
     _cachedVideos = null;
   }
 
-  /// 查询所有本地视频（走 MediaStore 系统索引，快）
-  static Future<List<VideoFile>> scanVideos() async {
+  /// 查询所有本地视频（结合 MediaScanSettings 的 .nomedia、隐藏文件夹及黑白名单规则）
+  static Future<List<VideoFile>> scanVideos({
+    MediaScanSettings? scanSettings,
+  }) async {
     if (_cachedVideos != null) return _cachedVideos!;
 
-    final result = await _channel.invokeListMethod<dynamic>('getVideos');
+    final settings = scanSettings ?? MediaScanSettings.instance;
+    await settings.ensureLoaded();
+
+    final result = await _channel.invokeListMethod<dynamic>(
+      'getVideos',
+      {
+        'includeNoMedia': settings.scanNoMedia,
+        'includeHidden': settings.scanHiddenFolders,
+      },
+    );
     if (result == null) return [];
 
     final videos = <VideoFile>[];
     for (final item in result) {
       final map = Map<String, dynamic>.from(item as Map);
+      final path = map['path'] as String? ?? '';
+      if (path.isEmpty) continue;
+
+      // 应用黑名单 / 白名单过滤规则
+      if (!settings.isPathAllowed(path)) {
+        continue;
+      }
+
       final dateModifiedMs = (map['dateModifiedMs'] as num?)?.toInt();
       videos.add(
         VideoFile(
-          path: map['path'] as String? ?? '',
+          path: path,
           name: map['name'] as String? ?? '',
           durationMs: (map['durationMs'] as num?)?.toInt() ?? 0,
           size: (map['size'] as num?)?.toInt() ?? 0,

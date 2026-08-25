@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/settings/about_page.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
+import 'package:moumou/pages/settings/media_scan_settings_page.dart';
 import 'package:moumou/pages/settings/player_settings_page.dart';
 import 'package:moumou/theme/theme_controller.dart';
 import 'package:moumou/widgets/settings_ui.dart';
@@ -54,6 +55,22 @@ class SettingsPage extends StatelessWidget {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const PlayerSettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // ── 媒体扫描与过滤 ────────────────────────────
+              const SettingsGroupTitle(title: '媒体库'),
+              SettingsCard(
+                child: SettingsTile(
+                  icon: Icons.folder_outlined,
+                  title: '媒体扫描与过滤',
+                  subtitle: const Text('隐藏文件夹 / .nomedia / 黑白名单'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const MediaScanSettingsPage(),
                       ),
                     );
                   },

@@ -94,6 +94,13 @@ void main() {
       expect(SubtitlePresetColor.byHex('#ffffff').label, '白色');
       expect(SubtitlePresetColor.byHex('#000000').label, '白色');
     });
+
+    test('textPresets, borderPresets, backPresets 分组预设非空且数量合理', () {
+      expect(SubtitlePresetColor.textPresets.length, greaterThanOrEqualTo(4));
+      expect(SubtitlePresetColor.borderPresets.length, greaterThanOrEqualTo(3));
+      expect(SubtitlePresetColor.backPresets.length, greaterThanOrEqualTo(4));
+      expect(SubtitlePresetColor.presets, SubtitlePresetColor.textPresets);
+    });
   });
 
   group('RGBA 颜色转换（mpv #RRGGBB / #AARRGGBB）', () {

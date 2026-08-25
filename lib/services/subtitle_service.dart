@@ -1,36 +1,48 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart' hide SubtitleTrack;
 import 'package:moumou/models/subtitle_track.dart';
+import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/subtitle_settings.dart';
+
+/// 默认内置思源黑体家族名（Android libass 兜底中文字体）
+const String kDefaultFontName = 'Noto Sans CJK SC';
 
 /// 字幕控制器：绑定单个播放器（横竖屏共享同一实例），
 /// 维护「轨道列表 / 当前字幕轨道 / 外挂字幕路径」状态并直接驱动 mpv。
 ///
 /// - **单选模型**（只允许同时启用一条字幕轨道，参考 mpv `sid`）；
+/// - 外挂字幕按视频路径（`mediaPath`）独立隔离存储，避免 A 视频字幕串到 B 视频；
+/// - 记录并持久化每个视频最后选中的字幕轨道，重开视频自动恢复选中；
 /// - mpv 属性与命令（参考 mpvRx 的 SubtitleStyle / PlaybackSession）：
-///   - 轨道列表：`track-list/count` + `track-list/$i/{type,id,title,lang,codec,external}`；
+///   - 轨道列表：`track-list/count` + `track-list/$i/{type,id,title,lang,codec,external,selected}`；
 ///   - 当前字幕：`sid`（id 或 'no'；打开文件后 mpv 会自动选一条轨道，
-///     [reload] 会把 [primary] 同步成 mpv 实际生效的 sid，保证 UI 选中态
-///     与内嵌样式策略（[SubtitleSettings.overrideEmbeddedStyle]）以真实轨道为准）；
+///     [reload] 会把 [primary] 同步成 mpv 实际生效的 sid，保证 UI 选中态）；
 ///   - 外挂字幕：`sub-add <path> <flags>`（'select' = 立即选中；'auto' = 无字幕时才选，
 ///     重开文件恢复用），`sub-remove <id>` 移除；
 ///   - 设置：[SubtitleSettings] 各值映射 `sub-delay` / `sub-scale` / `sub-pos` /
 ///     `sub-color` / `sub-border-*` / `sub-back-color` / `sub-font` / `sub-ass-override`。
 ///
-/// 内嵌样式策略：当前轨道为 ASS/SSA 且设置未开启「强制覆盖内嵌样式」时，
-/// `sub-ass-override` 设为 `no`（启用字幕自带的样式与字体）；否则按用户样式渲染。
-/// 打开视频的第一帧就生效（无需手动切换轨道）。
+/// 内嵌样式策略：
+/// - 未开启「强制覆盖内嵌样式」时（默认），`sub-ass-override` 设为 `scale`
+///   （保留 ASS 原生字体、特效、位置和排版，同时响应缩放调节）；
+/// - 开启「强制覆盖内嵌样式」时，`sub-ass-override` 设为 `force`（用户样式强制生效）。
+/// - 普通文本字幕（SRT/VTT）在 scale 和 force 模式下均能正常响应用户样式。
 class SubtitleController extends ChangeNotifier {
   SubtitleController(this._player, {SubtitleSettings? settings})
       : _settings = settings ?? SubtitleSettings.instance {
-    // 恢复「曾导入的外挂字幕」（跨播放会话持久化，见 SubtitleSettings）
-    for (final p in _settings.importedSubtitlePaths) {
-      if (!_externalPaths.contains(p)) _externalPaths.add(p);
-    }
+    // 监听 media_kit 轨道流：mpv 解复用完成或轨道变动时自动刷新
+    _tracksSubscription = _player.stream.tracks.listen((_) {
+      reload();
+    });
   }
 
   final Player _player;
   final SubtitleSettings _settings;
+  StreamSubscription? _tracksSubscription;
+
+  /// 当前播放的媒体绝对路径
+  String? _currentMediaPath;
 
   /// 当前媒体的全部字幕轨道（空 = 无字幕）
   List<SubtitleTrack> _tracks = const [];
@@ -38,7 +50,7 @@ class SubtitleController extends ChangeNotifier {
   /// 当前生效的字幕轨道（null = 关闭；打开文件后与 mpv `sid` 同步）
   SubtitleTrack? _primary;
 
-  /// 已导入的外挂字幕绝对路径（跨会话记忆 + 切集/重开后重新 sub-add）
+  /// 当前视频已导入的外挂字幕绝对路径（按视频独立隔离）
   final List<String> _externalPaths = [];
 
   /// 选中外挂字幕的源路径（按路径恢复勾选，见 [_resolveSelectionBySource]）
@@ -50,8 +62,12 @@ class SubtitleController extends ChangeNotifier {
   /// 轨道读取是否进行中（防并发刷新互相覆盖）
   bool _loading = false;
 
+  /// 最近一次 fetchTracks 检测到被 mpv 选中的轨道 ID
+  String? _lastSelectedTrackId;
+
   List<SubtitleTrack> get tracks => List.unmodifiable(_tracks);
   SubtitleTrack? get primary => _primary;
+  String? get primarySourcePath => _primarySourcePath;
   List<String> get externalPaths => List.unmodifiable(_externalPaths);
 
   NativePlayer? get _native {
@@ -67,6 +83,7 @@ class SubtitleController extends ChangeNotifier {
     final count = int.tryParse(countStr) ?? 0;
     if (count <= 0) return const [];
     final result = <SubtitleTrack>[];
+    String? selectedSubId;
     for (var i = 0; i < count; i++) {
       final type = await native.getProperty('track-list/$i/type');
       if (type != 'sub') continue;
@@ -76,8 +93,12 @@ class SubtitleController extends ChangeNotifier {
       final lang = await native.getProperty('track-list/$i/lang');
       final codec = await native.getProperty('track-list/$i/codec');
       final external = await native.getProperty('track-list/$i/external');
+      final selected = await native.getProperty('track-list/$i/selected');
       final sourcePath =
           await native.getProperty('track-list/$i/external-filename');
+      if (selected == 'yes') {
+        selectedSubId = id;
+      }
       result.add(
         SubtitleTrack(
           id: id,
@@ -89,6 +110,7 @@ class SubtitleController extends ChangeNotifier {
         ),
       );
     }
+    _lastSelectedTrackId = selectedSubId;
     return result;
   }
 
@@ -108,7 +130,13 @@ class SubtitleController extends ChangeNotifier {
   /// 也要反映到 UI 选中态 + 内嵌样式策略）。
   Future<void> _syncActiveFromMpv() async {
     final sid = await _readActiveSid();
-    final resolved = _resolveSelection(sid);
+    SubtitleTrack? resolved;
+    if (sid != 'no' && sid.isNotEmpty) {
+      resolved = _resolveSelection(sid);
+    }
+    if (resolved == null && sid != 'no' && _lastSelectedTrackId != null) {
+      resolved = _resolveSelection(_lastSelectedTrackId);
+    }
     _primary = resolved;
     _primarySourcePath = resolved?.sourcePath;
     notifyListeners();
@@ -162,6 +190,12 @@ class SubtitleController extends ChangeNotifier {
     }
     _primary = track;
     _primarySourcePath = track?.sourcePath;
+    if (_currentMediaPath != null) {
+      await _settings.setSelectedSubtitleFor(
+        _currentMediaPath!,
+        track?.sourcePath ?? track?.id ?? 'no',
+      );
+    }
     await _applyStyleForCurrent();
     notifyListeners();
   }
@@ -176,8 +210,7 @@ class SubtitleController extends ChangeNotifier {
   }
 
   /// 导入外挂字幕：原生侧先把 content:// 拷贝为真实路径（若需要），
-  /// 再 `sub-add <path> select` 并刷新轨道列表；成功后记忆路径（跨会话持久化，
-  /// 退出播放后再进来仍会恢复，见 [SubtitleSettings.addImportedSubtitle]）。
+  /// 再 `sub-add <path> select` 并刷新轨道列表；成功后记忆路径（绑定当前视频）。
   Future<bool> addExternalSubtitle(String subtitlePath) async {
     final native = _native;
     if (native == null || subtitlePath.isEmpty) return false;
@@ -188,14 +221,17 @@ class SubtitleController extends ChangeNotifier {
     }
     if (!_externalPaths.contains(subtitlePath)) {
       _externalPaths.add(subtitlePath);
-      await _settings.addImportedSubtitle(subtitlePath);
+    }
+    if (_currentMediaPath != null) {
+      await _settings.addImportedSubtitleFor(_currentMediaPath!, subtitlePath);
+      await _settings.setSelectedSubtitleFor(_currentMediaPath!, subtitlePath);
     }
     await reload();
     notifyListeners();
     return true;
   }
 
-  /// 移除已导入的外挂字幕：`sub-remove` + 从记忆列表删除（持久化）。
+  /// 移除已导入的外挂字幕：`sub-remove` + 从当前视频记忆列表删除。
   Future<void> removeExternalSubtitle(SubtitleTrack track) async {
     final native = _native;
     if (native == null || track.id.isEmpty) return;
@@ -203,8 +239,11 @@ class SubtitleController extends ChangeNotifier {
       await native.command(['sub-remove', track.id]);
     } catch (_) {}
     final source = track.sourcePath;
-    if (source != null && _externalPaths.remove(source)) {
-      await _settings.removeImportedSubtitle(source);
+    if (source != null) {
+      _externalPaths.remove(source);
+      if (_currentMediaPath != null) {
+        await _settings.removeImportedSubtitleFor(_currentMediaPath!, source);
+      }
     }
     _primarySourcePath = null;
     await reload();
@@ -212,41 +251,48 @@ class SubtitleController extends ChangeNotifier {
   }
 
   /// 打开媒体 / 切集后调用（由播放页在 open 完成后触发）：
-  /// - 按媒体路径去重（横竖屏共享同一实例时只应用一次）；
-  /// - 重新添加会话内/历史导入的外挂字幕（mpv 打开新媒体后外挂字幕被清空，
-  ///   用 'auto' 标志避免抢占视频自带字幕的自动选择）；
-  /// - 刷新轨道列表并恢复当前选中（外挂按源路径、内嵌按 id，尽力而为；
-  ///   否则跟随 mpv 自动选择，保证内嵌样式策略以真实轨道为准）；
+  /// - 按媒体路径独立加载该视频专属的外挂字幕；
+  /// - 恢复该视频最后一次选中的字幕轨道；
   /// - 应用全部字幕设置。
   Future<void> reapplyForMedia(String mediaPath) async {
     if (_appliedMedia == mediaPath) return;
     _appliedMedia = mediaPath;
+    _currentMediaPath = mediaPath;
     final native = _native;
     if (native == null) return;
-    // 重新添加外挂字幕（打开新文件后原 track-list 已被清空）
+
+    // 获取当前视频专属导入的外挂字幕
+    final videoSubs = _settings.getImportedSubtitlesFor(mediaPath);
+    _externalPaths.clear();
+    _externalPaths.addAll(videoSubs);
+
+    // 挂载属于当前视频的外挂字幕
     for (final path in _externalPaths) {
       try {
         await native.command(['sub-add', path, 'auto']);
       } catch (_) {}
     }
     await reload();
-    // 尽力恢复上次选中：外挂按源路径（重新 sub-add 后 id 变化）；
-    // 内嵌按原 id；都找不到则维持 mpv 的自动选择
-    if (_primarySourcePath != null) {
-      final t = _resolveSelectionBySource(_primarySourcePath);
+
+    // 恢复该视频最后一次选中的字幕
+    final savedSub = _settings.getSelectedSubtitleFor(mediaPath);
+    if (savedSub == 'no') {
+      try {
+        await native.setProperty('sid', 'no');
+      } catch (_) {}
+      _primary = null;
+      _primarySourcePath = null;
+    } else if (savedSub != null && savedSub.isNotEmpty) {
+      final t = _resolveSelectionBySource(savedSub) ?? _resolveSelection(savedSub);
       if (t != null) {
         try {
           await native.setProperty('sid', t.id);
         } catch (_) {}
-      }
-    } else if (_primary?.id != null) {
-      final t = _resolveSelection(_primary!.id);
-      if (t != null) {
-        try {
-          await native.setProperty('sid', t.id);
-        } catch (_) {}
+        _primary = t;
+        _primarySourcePath = t.sourcePath;
       }
     }
+
     await _syncActiveFromMpv();
     await applyAllSettings();
   }
@@ -256,6 +302,7 @@ class SubtitleController extends ChangeNotifier {
     _tracks = const [];
     _primary = null;
     _primarySourcePath = null;
+    _externalPaths.clear();
     notifyListeners();
   }
 
@@ -273,72 +320,47 @@ class SubtitleController extends ChangeNotifier {
       // 描边
       await native.setProperty('sub-border-style', s.borderStyle.mpvValue);
       await native.setProperty('sub-border-size', _fmtDouble(s.borderSize));
-      if (s.borderColor != null) {
-        await native.setProperty('sub-border-color', s.borderColor!);
-      }
+      await native.setProperty('sub-border-color', s.borderColor ?? '#000000');
       // 阴影
       await native.setProperty('sub-shadow-offset', _fmtDouble(s.shadowOffset));
-      if (s.shadowColor != null) {
-        await native.setProperty('sub-shadow-color', s.shadowColor!);
-      }
+      await native.setProperty('sub-shadow-color', s.shadowColor ?? '#00000000');
       // 背景
-      if (s.backColor != null) {
-        await native.setProperty('sub-back-color', s.backColor!);
-      }
+      await native.setProperty('sub-back-color', s.backColor ?? '#00000000');
       // 粗细 / 斜体 / 字间距 / 模糊
       await native.setProperty('sub-bold', s.bold ? 'yes' : 'no');
       await native.setProperty('sub-italic', s.italic ? 'yes' : 'no');
       await native.setProperty('sub-spacing', _fmtDouble(s.spacing));
       await native.setProperty('sub-blur', _fmtDouble(s.blur));
-      // 字体：'auto' 跟随默认；否则设字体目录 + 字体名（自导入）
-      if (s.font != 'auto' && s.font.isNotEmpty) {
-        final dir = _fontDirOf(s.font);
-        if (dir != null && dir.isNotEmpty) {
-          await native.setProperty('sub-fonts-dir', dir);
-        }
-        await native.setProperty('sub-font', _fontNameOf(s.font));
-      }
+      // 字体设置（路线 C：默认直通系统字库 /system/fonts，零 APK 开销，100% 稳定）
+      await native.setProperty('sub-font-provider', 'auto');
+      await native.setProperty('embeddedfonts', 'yes');
+      await native.setProperty('sub-fonts-dir', '/system/fonts');
+      await native.setProperty('sub-font', kDefaultFontName);
       await _applyStyleForCurrent();
     } catch (_) {
       // 播放器不可用（已销毁）时静默
     }
   }
 
-  /// 内嵌样式策略：当前轨道为 ASS/SSA 且未开启强制覆盖 → `no`
-  /// （尊重字幕自带样式与字体）；否则 `force`（用户样式生效）。
-  ///
-  /// 以 [primary] 为准——打开文件后已与 mpv 实际 sid 同步，首帧即生效。
+  /// 内嵌样式策略：
+  /// - 开启「强制覆盖内嵌样式」→ `force`（用户样式生效，强制覆盖 ASS 样式与字体）；
+  /// - 未开启「强制覆盖内嵌样式」→ `scale`（默认：mpv 完美保留 ASS 原生字体、特效、位置和排版，同时响应缩放调节）。
+  /// - 普通文本字幕（SRT/VTT）在 scale 和 force 模式下均能正常响应用户样式。
   Future<void> _applyStyleForCurrent() async {
     final native = _native;
     if (native == null) return;
-    final styled = _primary?.isStyled ?? false;
-    final value = (styled && !_settings.overrideEmbeddedStyle) ? 'no' : 'force';
+    final value = _settings.overrideEmbeddedStyle ? 'force' : 'scale';
     try {
       await native.setProperty('sub-ass-override', value);
-      // 统一用 auto：既让内嵌字幕的嵌入字体可用，也能用回退字体渲染普通文本
-      // （Android libass 拿不到系统字体，回退字体由 media_kit 经
-      //  libassAndroidFont 拷入 sub-fonts-dir / sub-font，见 player_page）。
       await native.setProperty('sub-font-provider', 'auto');
+      await native.command(['sub-reload']);
     } catch (_) {}
-  }
-
-  /// 字体文件路径 → 字体名（去掉目录与扩展名，libass 按名称匹配）
-  static String _fontNameOf(String path) {
-    final segs = path.split('/');
-    final name = segs.isEmpty ? path : segs.last;
-    final dot = name.lastIndexOf('.');
-    return dot > 0 ? name.substring(0, dot) : name;
-  }
-
-  /// 字体文件路径 → 所在目录（用于 mpv sub-fonts-dir）
-  static String? _fontDirOf(String path) {
-    final idx = path.lastIndexOf('/');
-    return idx <= 0 ? null : path.substring(0, idx);
   }
 
   /// 播放器初始就绪时应用一次设置（初始化越早越好，避免首帧无字幕样式）
   Future<void> applyOnInit() async {
     await _settings.ensureLoaded();
+    await DeviceServices.ensureDefaultFontCopied();
     await applyAllSettings();
   }
 
@@ -349,6 +371,7 @@ class SubtitleController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _tracksSubscription?.cancel();
     _tracks = const [];
     _primary = null;
     super.dispose();

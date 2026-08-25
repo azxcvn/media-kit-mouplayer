@@ -139,14 +139,31 @@ class SubtitlePresetColor {
 
   const SubtitlePresetColor(this.label, this.hex);
 
-  static const List<SubtitlePresetColor> presets = [
+  /// 文字颜色常用预设（3~4 种常用色，对齐小喵 player 需求）
+  static const List<SubtitlePresetColor> textPresets = [
     SubtitlePresetColor('白色', '#FFFFFF'),
     SubtitlePresetColor('黄色', '#FFEB3B'),
     SubtitlePresetColor('青色', '#4DD0E1'),
     SubtitlePresetColor('绿色', '#81C784'),
-    SubtitlePresetColor('粉色', '#F48FB1'),
-    SubtitlePresetColor('橙色', '#FFB74D'),
   ];
+
+  /// 描边颜色常用预设（黑色、白色、黄色，去除了红色）
+  static const List<SubtitlePresetColor> borderPresets = [
+    SubtitlePresetColor('黑色', '#000000'),
+    SubtitlePresetColor('白色', '#FFFFFF'),
+    SubtitlePresetColor('黄色', '#FFEB3B'),
+  ];
+
+  /// 背景颜色常用预设（对齐小喵 player 需求）
+  static const List<SubtitlePresetColor> backPresets = [
+    SubtitlePresetColor('半透明黑', '#80000000'),
+    SubtitlePresetColor('纯黑', '#FF000000'),
+    SubtitlePresetColor('半透明白', '#80FFFFFF'),
+    SubtitlePresetColor('半透明蓝', '#801A2332'),
+  ];
+
+  /// 兼容旧引用
+  static const List<SubtitlePresetColor> presets = textPresets;
 
   static SubtitlePresetColor byHex(String hex) {
     final upper = hex.toUpperCase();

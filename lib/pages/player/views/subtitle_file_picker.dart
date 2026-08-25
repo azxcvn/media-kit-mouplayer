@@ -50,8 +50,7 @@ class SubtitleFilePickerPanel extends StatefulWidget {
   final Future<void> Function(String path) onPicked;
   final VoidCallback onClose;
 
-  /// 文件过滤器（只显示目录 + 通过过滤的文件）。默认只显示字幕文件；
-  /// 字体导入时传入 [isFontFile] 过滤 .ttf/.otf。
+  /// 文件过滤器（只显示目录 + 通过过滤的文件）。默认只显示字幕文件
   final bool Function(String filename) fileFilter;
 
   const SubtitleFilePickerPanel({

@@ -1,6 +1,8 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
+import 'package:path_provider/path_provider.dart';
 
 /// 设备能力服务：系统音量 / 窗口亮度 / 任意时刻视频抓帧（本地文件）/ 画中画（PiP）。
 ///
@@ -233,22 +235,38 @@ class DeviceServices {
     }
   }
 
-  /// 导入字幕字体（工作.md 阶段1 第 3 点）：系统选择器选 .ttf/.otf →
-  /// 拷贝到应用 fonts 目录，返回真实绝对路径；取消/失败返回 null。
-  static Future<String?> importFontFile() async {
+  /// 读取字体文件内部家族名（libass 的 sub-font 按家族名匹配，非文件名）。
+  /// 失败返回空串。
+  static Future<String> getFontFamilyName(String path) async {
     try {
-      final uri = await openFontPicker();
-      if (uri == null) return null;
-      final name = uri.split('/').where((s) => s.isNotEmpty).last;
-      final fileName = name.isEmpty ? 'font.ttf' : name;
-      return await _channel.invokeMethod<String>(
-        'copyFontFromUri',
-        {'uri': uri, 'name': fileName},
-      );
+      return await _channel.invokeMethod<String>('getFontFamilyName', {
+        'path': path,
+      }) ?? '';
     } catch (_) {
-      return null;
+      return '';
     }
   }
+
+  /// 获取应用内部字体目录路径
+  static Future<String> getFontsDirectory() async {
+    try {
+      final dir = await _channel.invokeMethod<String>('getFontsDirectory');
+      if (dir != null && dir.isNotEmpty) return dir;
+    } catch (_) {}
+    try {
+      final appDir = await getApplicationSupportDirectory();
+      final fontDir = Directory('${appDir.path}/fonts');
+      if (!await fontDir.exists()) {
+        await fontDir.create(recursive: true);
+      }
+      return fontDir.path;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 确保应用内部字体目录可用（路线 C：直通系统字库 /system/fonts）
+  static Future<String> ensureDefaultFontCopied() async => '';
 
   // ── 任意时刻抓帧（FFmpeg 快速引擎，RGBA 直通）────────
 

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:moumou/models/subtitle_track.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,7 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   `sub-bold`/`sub-italic`（粗细/斜体）、`sub-spacing`（字间距）、`sub-blur`（模糊）、
 ///   `sub-ass-override`（是否强制覆盖内嵌样式，默认关闭 = 尊重内嵌样式）；
 /// - 杂项 → `sub-pos`（垂直位置）、`sub-align-x`（水平对齐）、`sub-margin-x`/`sub-margin-y`（边距）；
-/// - 字体 → `sub-font`（'auto' 或自导入字体路径）+ `sub-fonts-dir`。
+/// - 字体 → `sub-font`（'auto' 或自导入字体族名）+ `sub-fonts-dir`。
 class SubtitleSettings extends ChangeNotifier {
   static final SubtitleSettings instance = SubtitleSettings._();
 
@@ -29,7 +30,6 @@ class SubtitleSettings extends ChangeNotifier {
   static const _keyPos = 'subtitle_settings_pos';
   static const _keyAlign = 'subtitle_settings_align';
   static const _keyColor = 'subtitle_settings_color';
-  static const _keyFont = 'subtitle_settings_font';
   static const _keyOverride = 'subtitle_settings_override';
   static const _keyBorderColor = 'subtitle_settings_border_color';
   static const _keyBorderSize = 'subtitle_settings_border_size';
@@ -42,9 +42,10 @@ class SubtitleSettings extends ChangeNotifier {
   static const _keyBlur = 'subtitle_settings_blur';
   static const _keyMarginX = 'subtitle_settings_margin_x';
   static const _keyMarginY = 'subtitle_settings_margin_y';
-  static const _keyImportedFonts = 'subtitle_settings_imported_fonts';
   static const _keyBorderStyle = 'subtitle_settings_border_style';
   static const _keyImportedSubtitles = 'subtitle_settings_imported_subtitles';
+  static const _keyVideoSubtitles = 'subtitle_settings_video_subtitles';
+  static const _keyVideoSelectedSub = 'subtitle_settings_video_selected_sub';
 
   /// 字幕延迟范围：-60 – +60 秒（工作.md 阶段1 第 3 点）
   static const double minDelay = -60;
@@ -83,12 +84,14 @@ class SubtitleSettings extends ChangeNotifier {
   double _marginY = 0;
   SubtitleBorderStyle _borderStyle = SubtitleBorderStyle.none;
 
-  /// 已导入的字体文件路径列表（用户自导入，见 [importFont]）
-  List<String> _importedFonts = [];
-
-  /// 已导入的外挂字幕绝对路径列表（跨播放会话持久化，
-  /// 见 [SubtitleController.addExternalSubtitle]）
+  /// 已导入的外挂字幕绝对路径列表（兼容旧引用）
   List<String> _importedSubtitlePaths = [];
+
+  /// 每个视频独立导入的外挂字幕路径映射：{ videoPath: [subPath1, subPath2] }
+  Map<String, List<String>> _videoSubtitles = {};
+
+  /// 每个视频最后选中的字幕标识（外挂字幕路径或轨道 id 或 'no'）
+  Map<String, String> _videoSelectedSub = {};
 
   double get delay => _delay;
   double get scale => _scale;
@@ -110,7 +113,6 @@ class SubtitleSettings extends ChangeNotifier {
   double get marginX => _marginX;
   double get marginY => _marginY;
   SubtitleBorderStyle get borderStyle => _borderStyle;
-  List<String> get importedFonts => List.unmodifiable(_importedFonts);
   List<String> get importedSubtitlePaths =>
       List.unmodifiable(_importedSubtitlePaths);
 
@@ -121,7 +123,6 @@ class SubtitleSettings extends ChangeNotifier {
     _position = (prefs.getDouble(_keyPos) ?? 100).clamp(minPos, maxPos);
     _align = SubtitleAlign.byMpvValue(prefs.getString(_keyAlign) ?? 'center');
     _color = prefs.getString(_keyColor) ?? '#FFFFFF';
-    _font = prefs.getString(_keyFont) ?? 'auto';
     _overrideEmbeddedStyle = prefs.getBool(_keyOverride) ?? false;
     _borderColor = prefs.getString(_keyBorderColor);
     _borderSize = (prefs.getDouble(_keyBorderSize) ?? 2.5)
@@ -138,8 +139,36 @@ class SubtitleSettings extends ChangeNotifier {
     _marginY = (prefs.getDouble(_keyMarginY) ?? 0).clamp(0, 100);
     _borderStyle =
         SubtitleBorderStyle.byMpvValue(prefs.getString(_keyBorderStyle) ?? 'flat');
-    _importedFonts = prefs.getStringList(_keyImportedFonts) ?? [];
     _importedSubtitlePaths = prefs.getStringList(_keyImportedSubtitles) ?? [];
+
+    // 加载每个视频独立的外挂字幕映射
+    try {
+      final rawSubMap = prefs.getString(_keyVideoSubtitles);
+      if (rawSubMap != null && rawSubMap.isNotEmpty) {
+        final decoded = jsonDecode(rawSubMap) as Map<String, dynamic>;
+        _videoSubtitles = decoded.map(
+          (k, v) => MapEntry(k, (v as List).map((e) => e.toString()).toList()),
+        );
+      } else {
+        _videoSubtitles = {};
+      }
+    } catch (_) {
+      _videoSubtitles = {};
+    }
+
+    // 加载每个视频最后选中的字幕轨道
+    try {
+      final rawSelMap = prefs.getString(_keyVideoSelectedSub);
+      if (rawSelMap != null && rawSelMap.isNotEmpty) {
+        final decoded = jsonDecode(rawSelMap) as Map<String, dynamic>;
+        _videoSelectedSub = decoded.map((k, v) => MapEntry(k, v.toString()));
+      } else {
+        _videoSelectedSub = {};
+      }
+    } catch (_) {
+      _videoSelectedSub = {};
+    }
+
     notifyListeners();
   }
 
@@ -335,44 +364,74 @@ class SubtitleSettings extends ChangeNotifier {
   }
 
   // ── 字体 ──────────────────────────────────────────────
+  // 路线 C：默认直通系统字库 /system/fonts（零 APK 资源开销，100% 稳定）
+  Future<void> setFont(String font) async {}
 
-  /// 字体（'auto' = 跟随 mpv 默认；否则为自导入字体文件路径）
-  Future<void> setFont(String font) async {
-    await ensureLoaded();
-    if (_font == font) return;
-    _font = font;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyFont, font);
+  // ── 外挂字幕记忆（按视频路径独立隔离）────────────────────
+
+  /// 获取指定视频已导入的外挂字幕路径列表
+  List<String> getImportedSubtitlesFor(String videoPath) {
+    if (videoPath.isEmpty) return const [];
+    return List.unmodifiable(_videoSubtitles[videoPath] ?? const []);
   }
 
-  /// 导入一个字体文件路径：去重加入列表并选中。
-  Future<void> importFont(String path) async {
+  /// 为指定视频添加一条已导入的外挂字幕路径
+  Future<void> addImportedSubtitleFor(String videoPath, String subPath) async {
+    if (videoPath.isEmpty || subPath.isEmpty) return;
     await ensureLoaded();
-    if (!_importedFonts.contains(path)) {
-      _importedFonts = [..._importedFonts, path];
+    final list = List<String>.from(_videoSubtitles[videoPath] ?? []);
+    if (!list.contains(subPath)) {
+      list.add(subPath);
+      _videoSubtitles[videoPath] = list;
+      notifyListeners();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyVideoSubtitles, jsonEncode(_videoSubtitles));
     }
-    _font = path;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_keyImportedFonts, _importedFonts);
-    await prefs.setString(_keyFont, path);
   }
 
-  /// 移除一个已导入字体；若正被选中则回到「跟随默认」。
-  Future<void> removeFont(String path) async {
+  /// 为指定视频移除一条已导入的外挂字幕路径
+  Future<void> removeImportedSubtitleFor(String videoPath, String subPath) async {
+    if (videoPath.isEmpty || subPath.isEmpty) return;
     await ensureLoaded();
-    _importedFonts = _importedFonts.where((f) => f != path).toList();
-    if (_font == path) _font = 'auto';
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_keyImportedFonts, _importedFonts);
-    await prefs.setString(_keyFont, _font);
+    final list = List<String>.from(_videoSubtitles[videoPath] ?? []);
+    if (list.remove(subPath)) {
+      if (list.isEmpty) {
+        _videoSubtitles.remove(videoPath);
+      } else {
+        _videoSubtitles[videoPath] = list;
+      }
+      // 如果移除的是当前选中的字幕，清除选中记忆
+      if (_videoSelectedSub[videoPath] == subPath) {
+        _videoSelectedSub.remove(videoPath);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_keyVideoSelectedSub, jsonEncode(_videoSelectedSub));
+      }
+      notifyListeners();
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_keyVideoSubtitles, jsonEncode(_videoSubtitles));
+    }
   }
 
-  // ── 外挂字幕记忆 ──────────────────────────────────────
+  /// 获取指定视频最后选中的字幕标识（外挂路径或轨道 id，null 表示跟随默认）
+  String? getSelectedSubtitleFor(String videoPath) {
+    if (videoPath.isEmpty) return null;
+    return _videoSelectedSub[videoPath];
+  }
 
-  /// 记忆一条导入的外挂字幕路径（跨播放会话；见 [SubtitleController]）。
+  /// 记录指定视频选中的字幕标识
+  Future<void> setSelectedSubtitleFor(String videoPath, String? identifier) async {
+    if (videoPath.isEmpty) return;
+    await ensureLoaded();
+    if (identifier == null) {
+      _videoSelectedSub.remove(videoPath);
+    } else {
+      _videoSelectedSub[videoPath] = identifier;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyVideoSelectedSub, jsonEncode(_videoSelectedSub));
+  }
+
+  /// 记忆一条导入的外挂字幕路径（兼容旧接口）。
   Future<void> addImportedSubtitle(String path) async {
     await ensureLoaded();
     if (_importedSubtitlePaths.contains(path)) return;
@@ -382,7 +441,7 @@ class SubtitleSettings extends ChangeNotifier {
     await prefs.setStringList(_keyImportedSubtitles, _importedSubtitlePaths);
   }
 
-  /// 忘记一条已导入的外挂字幕路径。
+  /// 忘记一条已导入的外挂字幕路径（兼容旧接口）。
   Future<void> removeImportedSubtitle(String path) async {
     await ensureLoaded();
     _importedSubtitlePaths =
@@ -394,8 +453,8 @@ class SubtitleSettings extends ChangeNotifier {
 
   // ── 重置 ──────────────────────────────────────────────
 
-  /// 重置所有字幕「样式」（文字颜色/描边/阴影/背景/粗细/斜体/间距/模糊/
-  /// 描边模式/内嵌样式覆盖），保留 延迟/缩放/位置/字体 不重置。
+  /// 重置所有字幕「样式」（文字颜色/描边/阴影/背景/粗细/斜体/间距/模糊），
+  /// 保留 延迟/缩放/位置/字体/强制覆盖内嵌样式开关 不重置。
   Future<void> resetStyles() async {
     await ensureLoaded();
     const clamp0 = 0.0;
@@ -410,7 +469,7 @@ class SubtitleSettings extends ChangeNotifier {
     _italic = false;
     _spacing = clamp0;
     _blur = clamp0;
-    _overrideEmbeddedStyle = false;
+    // 注意：_overrideEmbeddedStyle 保持当前开关状态，不被重置
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyColor, _color);
@@ -424,7 +483,6 @@ class SubtitleSettings extends ChangeNotifier {
     await prefs.setBool(_keyItalic, _italic);
     await prefs.setDouble(_keySpacing, _spacing);
     await prefs.setDouble(_keyBlur, _blur);
-    await prefs.setBool(_keyOverride, _overrideEmbeddedStyle);
   }
 
   /// 测试用：恢复默认值（单例在测试间共享，避免状态泄漏）
@@ -450,8 +508,9 @@ class SubtitleSettings extends ChangeNotifier {
     _marginX = 0;
     _marginY = 0;
     _borderStyle = SubtitleBorderStyle.none;
-    _importedFonts = [];
     _importedSubtitlePaths = [];
+    _videoSubtitles = {};
+    _videoSelectedSub = {};
     notifyListeners();
   }
 }

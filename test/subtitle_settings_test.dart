@@ -69,12 +69,9 @@ void main() {
     expect(s.position, SubtitleSettings.maxPos);
   });
 
-  test('字幕字体：设置并持久化', () async {
+  test('字幕字体：默认 auto 跟随系统字库 /system/fonts', () async {
     final s = SubtitleSettings.instance;
-    await s.setFont('NotoSansCJK');
-    expect(s.font, 'NotoSansCJK');
-    await s.load();
-    expect(s.font, 'NotoSansCJK');
+    expect(s.font, 'auto');
     await s.setFont('auto');
     expect(s.font, 'auto');
   });
@@ -103,7 +100,43 @@ void main() {
     expect(s.importedSubtitlePaths, ['/a/2.ass']);
   });
 
-  test('重置所有样式：颜色/描边/效果回默认，保留延迟/缩放/位置/字体', () async {
+  test('按视频独立外挂字幕记忆与选中轨道：添加/去重/移除/持久化', () async {
+    final s = SubtitleSettings.instance;
+    const videoA = '/storage/emulated/0/Movies/A.mp4';
+    const videoB = '/storage/emulated/0/Movies/B.mp4';
+
+    expect(s.getImportedSubtitlesFor(videoA), isEmpty);
+    expect(s.getImportedSubtitlesFor(videoB), isEmpty);
+
+    // 为 A 视频添加外挂字幕
+    await s.addImportedSubtitleFor(videoA, '/a/1.srt');
+    await s.addImportedSubtitleFor(videoA, '/a/1.srt'); // 去重
+    await s.addImportedSubtitleFor(videoA, '/a/2.ass');
+    await s.setSelectedSubtitleFor(videoA, '/a/2.ass');
+
+    // 为 B 视频添加外挂字幕
+    await s.addImportedSubtitleFor(videoB, '/b/sub.vtt');
+    await s.setSelectedSubtitleFor(videoB, 'track_1');
+
+    expect(s.getImportedSubtitlesFor(videoA), ['/a/1.srt', '/a/2.ass']);
+    expect(s.getSelectedSubtitleFor(videoA), '/a/2.ass');
+    expect(s.getImportedSubtitlesFor(videoB), ['/b/sub.vtt']);
+    expect(s.getSelectedSubtitleFor(videoB), 'track_1');
+
+    // 模拟重启持久化加载
+    await s.load();
+    expect(s.getImportedSubtitlesFor(videoA), ['/a/1.srt', '/a/2.ass']);
+    expect(s.getSelectedSubtitleFor(videoA), '/a/2.ass');
+    expect(s.getImportedSubtitlesFor(videoB), ['/b/sub.vtt']);
+    expect(s.getSelectedSubtitleFor(videoB), 'track_1');
+
+    // 移除 A 视频某一条字幕
+    await s.removeImportedSubtitleFor(videoA, '/a/2.ass');
+    expect(s.getImportedSubtitlesFor(videoA), ['/a/1.srt']);
+    expect(s.getSelectedSubtitleFor(videoA), isNull); // 选中的字幕被删除后清除选中记忆
+  });
+
+  test('重置所有样式：颜色/描边/效果回默认，保留延迟/缩放/位置/字体以及强制覆盖内嵌样式开关', () async {
     final s = SubtitleSettings.instance;
     await s.setDelay(3);
     await s.setScale(1.5);
@@ -121,14 +154,16 @@ void main() {
     expect(s.borderStyle, SubtitleBorderStyle.none);
     expect(s.borderSize, 2.5);
     expect(s.bold, isFalse);
-    expect(s.overrideEmbeddedStyle, isFalse);
+    // 强制覆盖开关保持原选择（不被强制重置）
+    expect(s.overrideEmbeddedStyle, isTrue);
     // 不重置的部分保留
     expect(s.delay, 3);
     expect(s.scale, 1.5);
     expect(s.position, 80);
-    expect(s.font, 'myFont');
+    expect(s.font, 'auto');
     await s.load(); // 持久化一致
     expect(s.color, '#FFFFFF');
     expect(s.borderColor, isNull);
+    expect(s.overrideEmbeddedStyle, isTrue);
   });
 }
