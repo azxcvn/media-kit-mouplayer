@@ -62,6 +62,8 @@ dependencies {
     implementation("com.github.marlboro-advance:mediainfoAndroid:v1.1.0")
     // TrueType 字体解析（读取 family name，对齐小喵 player 的 truetypeparser）
     implementation("io.github.yubyf:truetypeparser-light:2.1.4")
+    // SAF 目录遍历（字幕字体目录选择，ACTION_OPEN_DOCUMENT_TREE）
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }
 
 flutter {

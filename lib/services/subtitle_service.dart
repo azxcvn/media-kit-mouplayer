@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart' hide SubtitleTrack;
 import 'package:moumou/models/subtitle_track.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/subtitle_settings.dart';
+import 'package:moumou/utils/subtitle_auto_match.dart';
+import 'package:path/path.dart' as p;
 
 /// 默认内置思源黑体家族名（Android libass 兜底中文字体）
 const String kDefaultFontName = 'Noto Sans CJK SC';
@@ -40,6 +43,10 @@ class SubtitleController extends ChangeNotifier {
   final Player _player;
   final SubtitleSettings _settings;
   StreamSubscription? _tracksSubscription;
+
+  /// 同名字幕自动加载成功后的回调（参数为字幕文件名），由播放页注入以弹提示。
+  /// 服务层不依赖 UI，提示的展示交给页面层。
+  void Function(String fileName)? onAutoLoadedSubtitle;
 
   /// 当前播放的媒体绝对路径
   String? _currentMediaPath;
@@ -253,6 +260,8 @@ class SubtitleController extends ChangeNotifier {
 
   /// 打开媒体 / 切集后调用（由播放页在 open 完成后触发）：
   /// - 按媒体路径独立加载该视频专属的外挂字幕；
+  /// - 若无任何已导入字幕，则自动加载同目录下的同名字幕（对齐小喵 player，
+  ///   简体系统优先 sc、繁体系统优先 tc）；
   /// - 恢复该视频最后一次选中的字幕轨道；
   /// - 应用全部字幕设置。
   Future<void> reapplyForMedia(String mediaPath) async {
@@ -267,35 +276,112 @@ class SubtitleController extends ChangeNotifier {
     _externalPaths.clear();
     _externalPaths.addAll(videoSubs);
 
-    // 挂载属于当前视频的外挂字幕
+    // 同名字幕自动加载：仅当该视频还没有任何已导入字幕时扫描，
+    // 避免覆盖用户手动导入的选择；找到后 sub-add select 并记忆路径。
+    String? autoLoadedPath;
+    if (videoSubs.isEmpty) {
+      autoLoadedPath = await _autoLoadSameNameSubtitle(mediaPath);
+      if (autoLoadedPath != null && !_externalPaths.contains(autoLoadedPath)) {
+        _externalPaths.add(autoLoadedPath);
+      }
+    }
+
+    // 挂载属于当前视频的外挂字幕（自动加载的那条已 select 挂载，跳过防重复）
     for (final path in _externalPaths) {
+      if (path == autoLoadedPath) continue;
       try {
         await native.command(['sub-add', path, 'auto']);
       } catch (_) {}
     }
     await reload();
 
-    // 恢复该视频最后一次选中的字幕
-    final savedSub = _settings.getSelectedSubtitleFor(mediaPath);
-    if (savedSub == 'no') {
-      try {
-        await native.setProperty('sid', 'no');
-      } catch (_) {}
-      _primary = null;
-      _primarySourcePath = null;
-    } else if (savedSub != null && savedSub.isNotEmpty) {
-      final t = _resolveSelectionBySource(savedSub) ?? _resolveSelection(savedSub);
-      if (t != null) {
+    // 恢复该视频最后一次选中的字幕（本次自动加载时已 select，无需再恢复）
+    if (autoLoadedPath == null) {
+      final savedSub = _settings.getSelectedSubtitleFor(mediaPath);
+      if (savedSub == 'no') {
         try {
-          await native.setProperty('sid', t.id);
+          await native.setProperty('sid', 'no');
         } catch (_) {}
-        _primary = t;
-        _primarySourcePath = t.sourcePath;
+        _primary = null;
+        _primarySourcePath = null;
+      } else if (savedSub != null && savedSub.isNotEmpty) {
+        final t =
+            _resolveSelectionBySource(savedSub) ?? _resolveSelection(savedSub);
+        if (t != null) {
+          try {
+            await native.setProperty('sid', t.id);
+          } catch (_) {}
+          _primary = t;
+          _primarySourcePath = t.sourcePath;
+        }
       }
     }
 
     await _syncActiveFromMpv();
     await applyAllSettings();
+  }
+
+  /// 扫描视频同目录下的同名字幕并自动加载最佳匹配（对齐小喵
+  /// `autoLoadSubtitleIfExists` 的本地文件路径）。
+  ///
+  /// 返回自动加载的字幕绝对路径；无匹配 / 失败返回 null。
+  Future<String?> _autoLoadSameNameSubtitle(String mediaPath) async {
+    final native = _native;
+    if (native == null) return null;
+    final videoFile = File(mediaPath);
+    try {
+      if (!videoFile.existsSync()) return null;
+    } catch (_) {
+      return null;
+    }
+    final videoDir = videoFile.parent;
+    final videoNameWithoutExt = p.basenameWithoutExtension(mediaPath);
+    if (videoNameWithoutExt.isEmpty) return null;
+
+    final names = <String>[];
+    final pathsByName = <String, String>{};
+    try {
+      await for (final e in videoDir.list()) {
+        if (e is! File) continue;
+        final path = e.path;
+        final name = p.basename(path);
+        names.add(name);
+        pathsByName[name] = path;
+      }
+    } catch (_) {
+      return null;
+    }
+    if (names.isEmpty) return null;
+
+    final bestName = findBestSubtitleFileName(
+      videoNameWithoutExt,
+      names,
+      systemLanguage: _systemLocaleString(),
+    );
+    if (bestName == null) return null;
+    final bestPath = pathsByName[bestName];
+    if (bestPath == null) return null;
+
+    try {
+      await native.command(['sub-add', bestPath, 'select']);
+    } catch (_) {
+      return null;
+    }
+    // 记忆路径 + 选中：下次打开跳过自动扫描、直接恢复（对齐小喵 setExternalSubtitle）
+    await _settings.addImportedSubtitleFor(mediaPath, bestPath);
+    await _settings.setSelectedSubtitleFor(mediaPath, bestPath);
+    onAutoLoadedSubtitle?.call(bestName);
+    return bestPath;
+  }
+
+  /// 当前系统首选 locale（转成小写 Android 风格串，如 `zh_cn`/`zh_tw`/`zh_hk`）。
+  String _systemLocaleString() {
+    final locales = PlatformDispatcher.instance.locales;
+    if (locales.isEmpty) return 'en_us';
+    final l = locales.first;
+    final country = l.countryCode;
+    if (country == null || country.isEmpty) return l.languageCode.toLowerCase();
+    return '${l.languageCode}_$country'.toLowerCase();
   }
 
   /// 切集前清空状态（与 ChapterTracker.clear 同思路，防旧媒体数据闪现）

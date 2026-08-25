@@ -22,6 +22,7 @@ import android.provider.Settings
 import android.util.Log
 import android.util.Rational
 import android.view.View
+import androidx.documentfile.provider.DocumentFile
 import com.yubyf.truetypeparser.TTFFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -38,6 +39,9 @@ class MainActivity : FlutterActivity() {
      * onActivityResult 里再 complete（返回 content:// uri 字符串或 null）。
      */
     private var pendingDocumentPickerResult: MethodChannel.Result? = null
+
+    /** 字体目录选择器（ACTION_OPEN_DOCUMENT_TREE）的待回结果。 */
+    private var pendingFontDirPickerResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -252,6 +256,31 @@ class MainActivity : FlutterActivity() {
                                 result.success(null)
                             }
                         }
+                    }
+                    // 字体目录选择器（ACTION_OPEN_DOCUMENT_TREE）：返回 tree uri
+                    "openFontDirectoryPicker" -> {
+                        if (pendingFontDirPickerResult != null) {
+                            result.error("BUSY", "picker already open", null)
+                        } else {
+                            pendingFontDirPickerResult = result
+                            try {
+                                startActivityForResult(buildOpenDocumentTreeIntent(), 2003)
+                            } catch (e: Exception) {
+                                pendingFontDirPickerResult = null
+                                result.success(null)
+                            }
+                        }
+                    }
+                    // 批量拷贝字体目录里的所有字体到私有 fonts/（返回成功拷贝数）
+                    "copyFontsFromDirectory" -> {
+                        result.success(copyFontsFromDirectory(call.argument<String>("uri") ?: ""))
+                    }
+                    // 列出私有 fonts/ 目录内的字体条目（族名 + 文件名）
+                    "listFontEntries" -> result.success(listFontEntries())
+                    // 清空私有 fonts/ 目录
+                    "clearFontsDirectory" -> {
+                        clearFontsDirectory()
+                        result.success(null)
                     }
                     "getCacheSizes" -> result.success(getCacheSizes())
                     "clearCache" -> {
@@ -603,14 +632,47 @@ class MainActivity : FlutterActivity() {
         return intent
     }
 
+    /**
+     * 系统目录选择器 Intent（ACTION_OPEN_DOCUMENT_TREE，无需权限）。
+     * 带上读/写 + 持久化 + 前缀授权标志，便于 takePersistableUriPermission。
+     */
+    private fun buildOpenDocumentTreeIntent(): Intent {
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
+        )
+        return intent
+    }
+
     /** 系统文件选择器结果回传（content:// uri 字符串或 null） */
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 2002) {
-            val pending = pendingDocumentPickerResult
-            pendingDocumentPickerResult = null
-            val uri = if (resultCode == Activity.RESULT_OK) data?.data?.toString() else null
-            pending?.success(uri)
+        when (requestCode) {
+            2002 -> {
+                val pending = pendingDocumentPickerResult
+                pendingDocumentPickerResult = null
+                val uri = if (resultCode == Activity.RESULT_OK) data?.data?.toString() else null
+                pending?.success(uri)
+            }
+            2003 -> {
+                val pending = pendingFontDirPickerResult
+                pendingFontDirPickerResult = null
+                val uri = if (resultCode == Activity.RESULT_OK) data?.data else null
+                if (uri != null) {
+                    // 持久化目录读权限，否则重启后 tree uri 失效无法刷新
+                    try {
+                        contentResolver.takePersistableUriPermission(
+                            uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    } catch (e: Exception) {
+                        Log.w("MainActivity", "takePersistableUriPermission failed: ${e.message}")
+                    }
+                }
+                pending?.success(uri?.toString())
+            }
         }
     }
 
@@ -793,6 +855,85 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {
                 ""
             }
+        }
+    }
+
+    /** 是否为字体文件（.ttf/.otf/.ttc/.otc，大小写不敏感）。 */
+    private fun isFontFile(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+            lower.endsWith(".ttc") || lower.endsWith(".otc")
+    }
+
+    /** 兜底系统字库文件名（列表里隐藏，仅用于渲染时缺字兜底）。 */
+    private val fallbackFontNames = setOf(
+        "NotoSansCJK-Regular.ttc",
+        "NotoSansSC-Regular.otf",
+        "NotoSansHans-Regular.otf",
+        "DroidSansFallback.ttf",
+    )
+
+    /**
+     * 把用户选中的目录（SAF tree uri）里所有 .ttf/.otf/.ttc/.otc 字体一次性
+     * 拷贝到 filesDir/fonts/（仅顶层文件，不递归），并补兜底字库；返回成功拷贝数。
+     */
+    private fun copyFontsFromDirectory(treeUriString: String): Int {
+        return try {
+            val treeUri = Uri.parse(treeUriString)
+            val fontDir = File(filesDir, "fonts")
+            if (!fontDir.exists()) fontDir.mkdirs()
+            var count = 0
+            val doc = DocumentFile.fromTreeUri(this, treeUri) ?: return 0
+            doc.listFiles()?.forEach { file ->
+                if (!file.isFile) return@forEach
+                val name = file.name ?: return@forEach
+                if (!isFontFile(name)) return@forEach
+                try {
+                    contentResolver.openInputStream(file.uri)?.use { input ->
+                        File(fontDir, name).outputStream().use { out -> input.copyTo(out) }
+                    }
+                    count++
+                } catch (e: Exception) {
+                    Log.w("MainActivity", "copyFont ${file.name} failed: ${e.message}")
+                }
+            }
+            ensureFallbackFont(fontDir)
+            count
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copyFontsFromDirectory failed: ${e.message}")
+            0
+        }
+    }
+
+    /**
+     * 列出 filesDir/fonts/ 内的自定义字体（族名 + 文件名），按族名去重、按族名排序；
+     * 隐藏兜底字库（fallbackFontNames）。
+     */
+    private fun listFontEntries(): List<Map<String, String>> {
+        val fontDir = File(filesDir, "fonts")
+        if (!fontDir.exists() || !fontDir.isDirectory) return emptyList()
+        val seen = mutableSetOf<String>()
+        val result = mutableListOf<Map<String, String>>()
+        fontDir.listFiles()
+            ?.filter { it.isFile && isFontFile(it.name) && it.name !in fallbackFontNames }
+            ?.sortedBy { it.name.lowercase() }
+            ?.forEach { f ->
+                val family = getFontFamilyName(f.absolutePath)
+                if (family.isNotEmpty() && seen.add(family)) {
+                    result.add(mapOf("family" to family, "file" to f.name))
+                }
+            }
+        return result
+    }
+
+    /** 清空 filesDir/fonts/ 下的全部文件（含兜底字库，下次拷贝会重建）。 */
+    private fun clearFontsDirectory() {
+        try {
+            val fontDir = File(filesDir, "fonts")
+            if (!fontDir.exists() || !fontDir.isDirectory) return
+            fontDir.listFiles()?.forEach { if (it.isFile) it.delete() }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "clearFontsDirectory failed: ${e.message}")
         }
     }
 

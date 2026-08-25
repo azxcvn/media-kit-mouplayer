@@ -17,6 +17,7 @@ void main() {
     expect(s.align, SubtitleAlign.center);
     expect(s.color, '#FFFFFF');
     expect(s.font, 'auto');
+    expect(s.fontSourceDir, '');
     // 默认尊重内嵌字幕自带样式与字体
     expect(s.overrideEmbeddedStyle, isFalse);
   });
@@ -74,6 +75,21 @@ void main() {
     expect(s.font, 'auto');
     await s.setFont('auto', '');
     expect(s.font, 'auto');
+  });
+
+  test('字体源目录：设置/持久化/清除（工作.md 第 1 点：目录选择记忆）', () async {
+    final s = SubtitleSettings.instance;
+    expect(s.fontSourceDir, '');
+    const uri =
+        'content://com.android.externalstorage.documents/tree/primary%3AFonts';
+    await s.setFontSourceDir(uri);
+    expect(s.fontSourceDir, uri);
+    await s.load(); // 模拟重启
+    expect(s.fontSourceDir, uri);
+    await s.setFontSourceDir(''); // 清除目录
+    expect(s.fontSourceDir, '');
+    await s.load();
+    expect(s.fontSourceDir, '');
   });
 
   test('描边模式：默认无，设置后持久化', () async {
@@ -160,7 +176,7 @@ void main() {
     expect(s.delay, 3);
     expect(s.scale, 1.5);
     expect(s.position, 80);
-    expect(s.font, 'auto');
+    expect(s.font, 'myFont');
     await s.load(); // 持久化一致
     expect(s.color, '#FFFFFF');
     expect(s.borderColor, isNull);

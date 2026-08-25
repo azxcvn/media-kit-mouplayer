@@ -324,6 +324,10 @@ class _PlayerPageState extends State<PlayerPage>
     // 字幕控制器：绑定同一播放器（track-list / sid / sub-add 单选模型）；
     // 初始化就绪后应用一次设置（延迟/样式等在首帧前生效）
     _subtitleController = SubtitleController(_player);
+    // 同名字幕自动加载成功后弹提示（服务层不依赖 UI，由页面层展示）
+    _subtitleController.onAutoLoadedSubtitle = (fileName) {
+      if (mounted) _toast('已自动加载字幕：$fileName');
+    };
     unawaited(_subtitleController.applyOnInit());
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，

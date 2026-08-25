@@ -15,9 +15,10 @@ Flutter 本地视频播放器（Android），核心能力：
 - 两种模式共用同一套卡片组件（视觉一致）
 - 播放器：media_kit，横屏沉浸式全屏，播放进度持久化；**听视频**（共享 Player 只播音频，
   封面模糊背景 + 1:1 圆角封面 + 胶囊式底部倍速/列表面板 + 定时关闭 + 后台播放（前台服务保活）+ 时间刻随机播放）
-- **字幕**（阶段1 第 3 点）：内嵌轨道 + 外挂字幕导入（Android≤11 系统选择器 / >11 自建选择器带排序与文件夹记忆），
+- **字幕**（阶段1 第 3 点）：内嵌轨道 + 外挂字幕导入（Android≤11 系统选择器 / >11 自建选择器带排序与文件夹记忆）
+  + 同名字幕自动加载（同目录按视频名前缀匹配，简体系统优先 sc、繁体优先 tc）；
   单选模型，延迟/样式/杂项/字体四类设置，样式支持预设 + RGBA 滑杆调色与 ASS 强制覆盖开关，内嵌样式字幕默认尊重自带样式；
-  自定义字体走 libass 原生渲染 + 运行时导入字体目录（§4.10）
+  自定义字体走 libass 原生渲染 + 运行时选择字体目录批量导入（§4.10）
 - **进度条缩略图**：自建 libmpv 内核（含 `mk_thumbnail_*` 快速抓帧接口）+ FFmpeg/MediaCodec
   硬解独立解码实例（~85ms/帧），拖动实时预览、松手精确落帧、空闲预取邻近帧（§4.9）
 - 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
@@ -51,7 +52,7 @@ lib/
 │   ├── video_info_service.dart# 列表封面缩略图（磁盘缓存）+ 基本元数据 + 完整媒体信息
 │   ├── playback_progress_service.dart  # 播放进度（ChangeNotifier + 持久化 + 串行写盘）
 │   ├── player_controls_settings.dart   # 播放器控制设置（槽位/手势/倍速/比例/长按/方向/顶部信息等）
-│   ├── device_services.dart   # 设备能力：音量/亮度/画中画/电量/网络类型/后台服务启停/字幕·字体文件操作（MethodChannel）+ 任意时刻抓帧（FFmpeg 引擎 + 秒桶内存 LRU）
+│   ├── device_services.dart   # 设备能力：音量/亮度/画中画/电量/网络类型/后台服务启停/字幕·字体文件与目录操作（MethodChannel）+ 任意时刻抓帧（FFmpeg 引擎 + 秒桶内存 LRU）
 │   ├── fast_thumbnails.dart   # FFmpeg 快速缩略图引擎（FFI 直连自建 libmpv.so 的 mk_thumbnail_*，单飞+顶旧调度）
 │   ├── crash_log_service.dart # 崩溃日志：列表/读取/删除/清空/导出
 │   ├── cache_manager_service.dart # 缓存管理：列表封面磁盘缓存查询/清除（进度条缩略图为纯内存，不占磁盘）
@@ -61,7 +62,7 @@ lib/
 │   ├── intro_outro_tracker.dart  # 片头片尾跟踪器（就绪/已处理状态 + 恢复点感知 + 动作决策）
 │   ├── media_scan_settings.dart  # 媒体扫描与过滤设置（.nomedia/隐藏文件夹/黑白名单，ChangeNotifier + 持久化）
 │   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/自定义字体/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
-│   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
+│   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 同名字幕自动加载 + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -110,7 +111,7 @@ lib/
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（胶囊样式）
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容
 │   │       ├── audio_player_panels.dart       # 听视频倍速/列表面板（胶囊式 + 定时关闭预设 + 统一关闭按钮）
-│   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置/自定义字体导入）
+│   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置/自定义字体目录导入+列表选择）
 │   │       ├── subtitle_file_picker.dart      # 外挂字幕选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器）
 │   │       ├── player_resume_indicator.dart   # 恢复进度指示器（胶囊样式，2.5s 自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层
@@ -144,6 +145,7 @@ lib/
     ├── chapter_utils.dart     #   章节纯函数（标题分类/片段派生/当前章节/跳过目标）
     ├── intro_outro_skip.dart  #   片头片尾动作决策纯函数（跳过片头/切下一集/无动作）
     ├── audio_shuffle.dart     #   听视频随机播放算法（结合当前时间刻，纯函数）
+    ├── subtitle_auto_match.dart # 同名字幕自动匹配纯函数（扩展名优先级 + 同名优先 + 简/繁语言后缀，对齐小喵）
     └── subtitle_sort.dart     #   自建字幕选择器排序纯函数（目录恒在前）
 ```
 
@@ -286,25 +288,29 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 
 ### 4.10 自定义字幕字体 —— media_kit 本地 fork + mpv_initialize 前注入
 
-**目标**：支持用户从存储导入 .ttf/.otf/.ttc 作为 libass 字幕字体（对齐 mpv-android-anime4k）。
+**目标**：对齐小喵 player——用户**先选择一个字体目录**（SAF 目录选择器，强制不选不用），
+把目录里所有 `.ttf/.otf/.ttc/.otc` 一次性拷贝到应用私有 `filesDir/fonts/`，再在字体列表里点击选择；
+目录可 ✕ 清除重选、可刷新重新拷贝（新增字体后）。字体仍作为 libass 字幕字体。
 
 **架构**（自下而上）：
 
 | 层 | 文件 | 职责 |
 |---|---|---|
 | media_kit 魔改 | `third_party/media_kit/`（本地 fork，`platform_player.dart` + `real.dart`） | 新增 `libassAndroidFontsDir` 字段，在 `mpv_initialize()` 前把目录注入 `sub-fonts-dir`（绕过只支持 asset 的 `AndroidAssetLoader`） |
-| 原生层 | `MainActivity.kt` | `copyFontFromUri`（查 DISPLAY_NAME 真实文件名 + 拷贝到 filesDir/fonts）、`ensureFallbackFont`（复制系统字库兜底）、`getFontFamilyName`（truetypeparser 解析族名）、`openFontPicker` |
-| 服务层 | `subtitle_settings.dart` / `device_services.dart` | 字体族名 + 目录持久化；`copyFontFromUri`/`openFontPicker`/`getFontFamilyName`/`getFontsDirectory` 封装 |
+| 原生层 | `MainActivity.kt` | `openFontDirectoryPicker`（`ACTION_OPEN_DOCUMENT_TREE` + `takePersistableUriPermission`）、`copyFontsFromDirectory`（`DocumentFile` 遍历顶层文件 + 批量拷贝 + 兜底字库）、`listFontEntries`（扫描私有目录 + truetypeparser 解析族名去重、隐藏兜底字库）、`clearFontsDirectory`；`ensureFallbackFont`/`getFontFamilyName` 沿用 |
+| 服务层 | `subtitle_settings.dart` / `device_services.dart` | 字体族名 + 私有目录 + **源目录 tree uri** 三者持久化（`setFontSourceDir`）；`openFontDirectoryPicker`/`copyFontsFromDirectory`/`listFontEntries`/`clearFontsDirectory` 封装 |
 | 播放器 | `player_page.dart` / `subtitle_service.dart` | Player 构造读字体设置注入配置；有自定义字体时不再运行时 `setProperty('sub-fonts-dir')` |
-| UI | `subtitle_panel.dart` | 「字幕字体」入口 + `SubtitleFontPanel`（导入/恢复默认 + 重启提示） |
+| UI | `subtitle_panel.dart` | 「字幕字体」入口 + `SubtitleFontPanel`（目录选择/刷新/清除 + 字体列表单选 + 重启提示） |
 
 **关键约束（勿违反）**：
 - **`sub-fonts-dir` 必须在 `mpv_initialize()` 前注入**——libass 只在初始化时扫一次字体目录，运行时 `setProperty('sub-fonts-dir')` 会打坏字体缓存导致字幕整条消失（Gemini 历史教训）。
 - **换字体需退出播放器重新进入**（重建 Player），与小喵一致。
+- **不选目录不允许用自定义字体**（工作.md 第 1 点）：源目录未选时字体列表为空，只有「默认字体」。
+- **目录授权需持久化**：`takePersistableUriPermission` + `FLAG_GRANT_PERSISTABLE_URI_PERMISSION`/`FLAG_GRANT_PREFIX_URI_PERMISSION`，否则重启后 tree uri 失效、无法刷新。
 - **族名解析用 truetypeparser**（`TTFFile.open(...).families.values.firstOrNull()`），手写 sfnt name 表解析器有偏移 bug（曾把 table offset 读成 0x1700583C）。
 - **兜底字库用复制、普通文件名**，不用 symlink + 隐藏文件名（fontconfig 跳过 `.` 开头文件且不 follow symlink）。
 
-**维护**：`third_party/media_kit` 是本地 fork（`pubspec.yaml` `dependency_overrides` 指向），升级 media_kit 时需手动把 `libassAndroidFontsDir` 这处魔改 merge 进新版本，禁止直接 `pub upgrade` 覆盖。依赖 `io.github.yubyf:truetypeparser-light:2.1.4`（`android/app/build.gradle.kts`）。
+**维护**：`third_party/media_kit` 是本地 fork（`pubspec.yaml` `dependency_overrides` 指向），升级 media_kit 时需手动把 `libassAndroidFontsDir` 这处魔改 merge 进新版本，禁止直接 `pub upgrade` 覆盖。依赖 `io.github.yubyf:truetypeparser-light:2.1.4` 与 `androidx.documentfile:documentfile:1.0.1`（`android/app/build.gradle.kts`）。
 
 ---
 
@@ -392,7 +398,8 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/intro_outro_panel_test.dart` — 片头片尾面板（开关展开/输入换算 mm:ss/滑杆/设为当前时间与剩余时间/一键重置）
   - `test/formatters_network_test.dart` — 网速格式化（KB/MB 自动切换两位小数）与在线媒体判定纯函数（阶段1 第 1 点）
   - `test/subtitle_track_test.dart` — 字幕轨道纯函数（展示名/ASS 样式判定/格式过滤/对齐/颜色 + RGBA↔mpv 颜色转换，阶段1 第 3 点）
-  - `test/subtitle_settings_test.dart` — 字幕设置服务（默认值/延迟叠加与钳制/描边模式/外挂字幕记忆/重置样式持久化）
+  - `test/subtitle_settings_test.dart` — 字幕设置服务（默认值/延迟叠加与钳制/描边模式/外挂字幕记忆/字体源目录记忆/重置样式持久化）
+  - `test/subtitle_auto_match_test.dart` — 同名字幕自动匹配纯函数（同名候选/扩展名优先级/完全同名优先/简繁语言后缀/短名优先/无匹配）
   - `test/subtitle_sort_test.dart` — 自建字幕选择器排序纯函数（目录恒在前/大小日期升降序）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
@@ -476,6 +483,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 手写 sfnt name 表解析器读到错误 offset（族名解析成文件名） | 族名解析用 `truetypeparser` 库，勿手写 name 表字节解析（§4.10） |
 | 系统字库兜底用 symlink+隐藏文件名 → fontconfig 不识别 → 缺字空白 | 兜底字库直接复制成普通文件名（§4.10） |
 | media_kit 本地 fork 被 `pub upgrade` 覆盖 | `third_party/media_kit` 的魔改需手动 merge；升级前先备份 diff（§4.10） |
+| SAF 目录选择器重启后 tree uri 失效、无法刷新字体 | `takePersistableUriPermission` + `FLAG_GRANT_PERSISTABLE_URI_PERMISSION`/`FLAG_GRANT_PREFIX_URI_PERMISSION`（§4.10） |
 
 ---
 

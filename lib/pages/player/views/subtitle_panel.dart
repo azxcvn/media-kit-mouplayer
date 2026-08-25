@@ -1373,48 +1373,125 @@ class SubtitleMiscPanel extends StatelessWidget {
 // 字幕字体（工作.md 阶段1 第 3 点）
 // ────────────────────────────────────────────────────────────
 
-/// 字幕字体二级页：跟随默认（系统字库）+ 导入自己的字体（.ttf/.otf/.ttc）。
+/// 字幕字体二级页：先强制选择一个「字体目录」（SAF 目录选择器），把目录里
+/// 所有 .ttf/.otf/.ttc/.otc 一次性拷贝到应用私有 fonts/，再在字体列表里点击
+/// 选择（含「默认字体」）；可刷新重新拷贝、可 ✕ 清除目录重选。
 ///
-/// 自定义字体通过 media_kit 的 `libassAndroidFontsDir` 在 Player 构造时注入
-/// （mpv_initialize 前），换字体需退出播放器重新进入生效（libass 机制，
-/// 与小喵 player 一致）。
-class SubtitleFontPanel extends StatelessWidget {
+/// 不选目录时自定义字体列表为空、无法使用自定义字体（工作.md 第 1 点：
+/// 强制性）。自定义字体通过 media_kit 的 `libassAndroidFontsDir` 在 Player
+/// 构造时注入（mpv_initialize 前），换字体需退出播放器重新进入生效
+/// （libass 机制，与小喵 player 一致）。
+class SubtitleFontPanel extends StatefulWidget {
   final SubtitleController controller;
 
   const SubtitleFontPanel({super.key, required this.controller});
 
-  /// 导入字体：选文件 → 拷贝到私有 fonts/ → 解析族名 → 持久化。
-  Future<void> _importFont(BuildContext context) async {
-    final uri = await DeviceServices.openFontPicker();
-    if (uri == null || !context.mounted) return;
-    final name = uri.split('/').where((s) => s.isNotEmpty).last;
-    final path = await DeviceServices.copyFontFromUri(
-      uri,
-      name.isEmpty ? 'font.ttf' : name,
-    );
-    if (path == null || !context.mounted) return;
-    final family = await DeviceServices.getFontFamilyName(path);
-    if (family.isEmpty) return;
+  @override
+  State<SubtitleFontPanel> createState() => _SubtitleFontPanelState();
+}
+
+class _SubtitleFontPanelState extends State<SubtitleFontPanel> {
+  List<SubtitleFontEntry> _entries = const [];
+  String _fontsDir = '';
+  bool _loading = false;
+  bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fontsDir = SubtitleSettings.instance.fontsDir;
+    _reloadEntries();
+  }
+
+  /// 重新扫描私有 fonts/ 目录，刷新字体列表（进入面板/导入/刷新后调用）。
+  Future<void> _reloadEntries() async {
+    final entries = await DeviceServices.listFontEntries();
+    if (!mounted) return;
+    setState(() => _entries = entries);
+  }
+
+  /// 选择字体目录 → 一次性拷贝全部字体 → 列出可选字体。
+  Future<void> _pickDirectory() async {
+    final uri = await DeviceServices.openFontDirectoryPicker();
+    if (uri == null || !mounted) return;
+    setState(() => _loading = true);
+    await SubtitleSettings.instance.setFontSourceDir(uri);
     final dir = await DeviceServices.getFontsDirectory();
-    await SubtitleSettings.instance.setFont(family, dir);
-    if (!context.mounted) return;
-    _showRestartHint(context);
+    final count = await DeviceServices.copyFontsFromDirectory(uri);
+    final entries = await DeviceServices.listFontEntries();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _fontsDir = dir;
+      _entries = entries;
+    });
+    _showMessage('已导入 $count 个字体文件，共 ${entries.length} 种字体');
   }
 
-  /// 恢复默认：回退系统字库。
-  Future<void> _resetFont(BuildContext context) async {
+  /// 刷新：从已记录的字体目录重新拷贝（目录里新增字体后点此）。
+  Future<void> _refresh() async {
+    final uri = SubtitleSettings.instance.fontSourceDir;
+    if (uri.isEmpty) return;
+    setState(() => _loading = true);
+    await DeviceServices.copyFontsFromDirectory(uri);
+    final entries = await DeviceServices.listFontEntries();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _entries = entries;
+    });
+    _showMessage('已刷新，共 ${entries.length} 种字体');
+  }
+
+  /// 清除：清空私有 fonts/ + 忘记源目录 + 回退默认字体。
+  Future<void> _clear() async {
+    await DeviceServices.clearFontsDirectory();
+    await SubtitleSettings.instance.setFontSourceDir('');
     await SubtitleSettings.instance.setFont('auto', '');
-    if (!context.mounted) return;
-    _showRestartHint(context);
+    if (!mounted) return;
+    setState(() {
+      _entries = const [];
+      _fontsDir = '';
+      _expanded = false;
+    });
+    _showMessage('已清除字体目录');
   }
 
-  void _showRestartHint(BuildContext context) {
+  Future<void> _selectFont(SubtitleFontEntry entry) async {
+    var dir = _fontsDir;
+    if (dir.isEmpty) dir = await DeviceServices.getFontsDirectory();
+    await SubtitleSettings.instance.setFont(entry.family, dir);
+    if (!mounted) return;
+    setState(() => _expanded = false);
+    _showRestartHint();
+  }
+
+  Future<void> _selectDefault() async {
+    await SubtitleSettings.instance.setFont('auto', '');
+    if (!mounted) return;
+    setState(() => _expanded = false);
+    _showRestartHint();
+  }
+
+  void _showRestartHint() {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
           content: Text('字体更改需退出播放器并重新进入后生效'),
           duration: Duration(milliseconds: 2000),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  void _showMessage(String msg) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(msg),
+          duration: const Duration(milliseconds: 2000),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -1427,10 +1504,67 @@ class SubtitleFontPanel extends StatelessWidget {
       listenable: settings,
       builder: (context, _) {
         final hasCustom = settings.font != 'auto';
+        final hasSource = settings.fontSourceDir.isNotEmpty;
         return ListView(
           key: const PageStorageKey('subtitle_font'),
           padding: const EdgeInsets.all(16),
           children: [
+            // ── 字体目录选择 ─────────────────────────
+            _PanelCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _CardLabel('字体目录'),
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.folder_open,
+                        color: Colors.white, size: 22),
+                    title: const Text(
+                      '选择字体目录',
+                      style: TextStyle(color: Colors.white, fontSize: 15),
+                    ),
+                    subtitle: Text(
+                      _loading
+                          ? '正在加载...'
+                          : (hasSource
+                              ? '已加载 ${_entries.length} 种字体'
+                              : '点击选择包含 .ttf/.otf 字体的目录'),
+                      style: TextStyle(
+                        color: _entries.isNotEmpty
+                            ? const Color(0xFF81C784)
+                            : Colors.white38,
+                        fontSize: 12,
+                      ),
+                    ),
+                    trailing: hasSource
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.refresh,
+                                    color: Color(0xFF64B5F6), size: 22),
+                                tooltip: '刷新',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: _loading ? null : _refresh,
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.close,
+                                    color: Color(0xFFEF5350), size: 22),
+                                tooltip: '清除目录',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: _loading ? null : _clear,
+                              ),
+                            ],
+                          )
+                        : const Icon(Icons.chevron_right,
+                            color: Colors.white54),
+                    onTap: () => _pickDirectory(),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            // ── 当前字体 + 选择列表 ─────────────────
             _PanelCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1441,41 +1575,46 @@ class SubtitleFontPanel extends StatelessWidget {
                     leading: const Icon(Icons.text_fields,
                         color: Colors.white, size: 22),
                     title: Text(
-                      hasCustom ? settings.font : '跟随默认（系统字库）',
+                      hasCustom ? settings.font : '默认字体',
                       style: const TextStyle(
                           color: Colors.white, fontSize: 15),
                     ),
+                    trailing: _entries.isNotEmpty
+                        ? Icon(
+                            _expanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
+                            color: Colors.white54,
+                          )
+                        : const Text(
+                            '请先选择字体目录',
+                            style: TextStyle(
+                                color: Colors.white38, fontSize: 11),
+                          ),
+                    onTap: _entries.isNotEmpty
+                        ? () => setState(() => _expanded = !_expanded)
+                        : null,
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            _PanelCard(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const _CardLabel('自定义字体'),
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.file_upload_outlined,
-                        color: Colors.white, size: 22),
-                    title: const Text(
-                      '导入字体文件',
-                      style: TextStyle(color: Colors.white, fontSize: 15),
+                  if (_expanded) ...[
+                    const Divider(
+                        height: 1,
+                        indent: 16,
+                        endIndent: 16,
+                        color: Colors.white12),
+                    _FontOptionTile(
+                      label: '默认字体',
+                      subtitle: '跟随系统字库',
+                      selected: !hasCustom,
+                      onTap: _selectDefault,
                     ),
-                    onTap: () => _importFont(context),
-                  ),
-                  if (hasCustom)
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.restart_alt,
-                          color: Colors.white54, size: 22),
-                      title: const Text(
-                        '恢复默认字体',
-                        style: TextStyle(color: Colors.white, fontSize: 15),
+                    for (final e in _entries)
+                      _FontOptionTile(
+                        label: e.family,
+                        subtitle: e.file,
+                        selected: settings.font == e.family,
+                        onTap: () => _selectFont(e),
                       ),
-                      onTap: () => _resetFont(context),
-                    ),
+                  ],
                 ],
               ),
             ),
@@ -1498,6 +1637,57 @@ class SubtitleFontPanel extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// 字体选项行（默认字体 / 自定义字体，单选高亮）。
+class _FontOptionTile extends StatelessWidget {
+  final String label;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _FontOptionTile({
+    required this.label,
+    required this.subtitle,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      dense: true,
+      leading: Container(
+        width: 20,
+        height: 20,
+        decoration: BoxDecoration(
+          color: selected ? _accent : Colors.transparent,
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: selected ? _accent : Colors.white24,
+          ),
+        ),
+        child: selected
+            ? const Icon(Icons.check, size: 13, color: Colors.black87)
+            : null,
+      ),
+      title: Text(
+        label,
+        style: TextStyle(
+          color: selected ? _accent : Colors.white,
+          fontSize: 14,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+        ),
+      ),
+      subtitle: subtitle.isEmpty
+          ? null
+          : Text(
+              subtitle,
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+      onTap: onTap,
     );
   }
 }

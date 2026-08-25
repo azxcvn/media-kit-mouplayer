@@ -281,6 +281,55 @@ class DeviceServices {
   /// 确保应用内部字体目录可用（路线 C：直通系统字库 /system/fonts）
   static Future<String> ensureDefaultFontCopied() async => '';
 
+  /// 打开系统目录选择器（ACTION_OPEN_DOCUMENT_TREE）：返回所选目录 tree uri；
+  /// 用户取消/不可用返回 null。
+  static Future<String?> openFontDirectoryPicker() async {
+    try {
+      return await _channel.invokeMethod<String>('openFontDirectoryPicker');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把用户选中目录里所有 .ttf/.otf/.ttc/.otc 字体一次性拷贝到应用私有
+  /// fonts/ 目录，返回成功拷贝的文件数（失败返回 0）。
+  static Future<int> copyFontsFromDirectory(String uri) async {
+    try {
+      final n = await _channel.invokeMethod<int>(
+        'copyFontsFromDirectory',
+        {'uri': uri},
+      );
+      return n ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 列出应用私有 fonts/ 目录内可用的字体（族名 + 文件名，按族名去重排序）。
+  static Future<List<SubtitleFontEntry>> listFontEntries() async {
+    try {
+      final list = await _channel.invokeMethod<List<dynamic>>('listFontEntries');
+      if (list == null) return const [];
+      return [
+        for (final item in list)
+          if (item is Map)
+            SubtitleFontEntry(
+              family: (item['family'] as String?) ?? '',
+              file: (item['file'] as String?) ?? '',
+            ),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 清空应用私有 fonts/ 目录（清除已导入的字体文件）。
+  static Future<void> clearFontsDirectory() async {
+    try {
+      await _channel.invokeMethod<void>('clearFontsDirectory');
+    } catch (_) {}
+  }
+
   // ── 任意时刻抓帧（FFmpeg 快速引擎，RGBA 直通）────────
 
   /// 提取本地视频 [path] 在 [timeMs] 时刻的画面（RGBA 帧，最长边约 [maxWidth]）。
@@ -445,4 +494,15 @@ class SubtitleDirEntry {
     required this.size,
     required this.modifiedMs,
   });
+}
+
+/// 已导入的自定义字体条目（字幕字体选择列表用，工作.md 第 1 点）。
+class SubtitleFontEntry {
+  /// libass `sub-font` 匹配用的家族名（truetypeparser 解析，非文件名）。
+  final String family;
+
+  /// 私有 fonts/ 目录内的字体文件名（展示用）。
+  final String file;
+
+  const SubtitleFontEntry({required this.family, required this.file});
 }

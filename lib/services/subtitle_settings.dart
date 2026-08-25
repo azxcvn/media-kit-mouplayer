@@ -48,6 +48,7 @@ class SubtitleSettings extends ChangeNotifier {
   static const _keyVideoSelectedSub = 'subtitle_settings_video_selected_sub';
   static const _keyFont = 'subtitle_settings_font';
   static const _keyFontDir = 'subtitle_settings_font_dir';
+  static const _keyFontSourceDir = 'subtitle_settings_font_source_dir';
 
   /// 字幕延迟范围：-60 – +60 秒（工作.md 阶段1 第 3 点）
   static const double minDelay = -60;
@@ -71,6 +72,7 @@ class SubtitleSettings extends ChangeNotifier {
   String _color = '#FFFFFF';
   String _font = 'auto';
   String _fontsDir = '';
+  String _fontSourceDir = '';
   bool _overrideEmbeddedStyle = false;
 
   // 扩展样式（工作.md 阶段1 第 3 点：补全小喵 player 的字幕样式项）
@@ -103,6 +105,8 @@ class SubtitleSettings extends ChangeNotifier {
   String get color => _color;
   String get font => _font;
   String get fontsDir => _fontsDir;
+  /// 用户选中的字体源目录（SAF tree uri，用于刷新时重新拷贝；空 = 未选择）。
+  String get fontSourceDir => _fontSourceDir;
   bool get overrideEmbeddedStyle => _overrideEmbeddedStyle;
 
   String? get borderColor => _borderColor;
@@ -175,6 +179,7 @@ class SubtitleSettings extends ChangeNotifier {
 
     _font = prefs.getString(_keyFont) ?? 'auto';
     _fontsDir = prefs.getString(_keyFontDir) ?? '';
+    _fontSourceDir = prefs.getString(_keyFontSourceDir) ?? '';
 
     notifyListeners();
   }
@@ -383,6 +388,16 @@ class SubtitleSettings extends ChangeNotifier {
     await prefs.setString(_keyFontDir, dir);
   }
 
+  /// 记录用户选中的字体源目录（SAF tree uri）。空串表示未选择/已清除。
+  Future<void> setFontSourceDir(String uri) async {
+    await ensureLoaded();
+    if (_fontSourceDir == uri) return;
+    _fontSourceDir = uri;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyFontSourceDir, uri);
+  }
+
   // ── 外挂字幕记忆（按视频路径独立隔离）────────────────────
 
   /// 获取指定视频已导入的外挂字幕路径列表
@@ -512,6 +527,7 @@ class SubtitleSettings extends ChangeNotifier {
     _color = '#FFFFFF';
     _font = 'auto';
     _fontsDir = '';
+    _fontSourceDir = '';
     _overrideEmbeddedStyle = false;
     _borderColor = null;
     _borderSize = 2.5;
