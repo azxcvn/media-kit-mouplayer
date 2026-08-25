@@ -332,11 +332,16 @@ class SubtitleController extends ChangeNotifier {
       await native.setProperty('sub-italic', s.italic ? 'yes' : 'no');
       await native.setProperty('sub-spacing', _fmtDouble(s.spacing));
       await native.setProperty('sub-blur', _fmtDouble(s.blur));
-      // 字体设置（路线 C：默认直通系统字库 /system/fonts，零 APK 开销，100% 稳定）
+      // 字体设置：自定义字体已在 Player 构造时通过 libassAndroidFontsDir 注入
+      // （mpv_initialize 前）。这里只处理默认系统字库场景，避免运行时
+      // setProperty('sub-fonts-dir') 覆盖构造注入、破坏 libass 字体缓存。
       await native.setProperty('sub-font-provider', 'auto');
       await native.setProperty('embeddedfonts', 'yes');
-      await native.setProperty('sub-fonts-dir', '/system/fonts');
-      await native.setProperty('sub-font', kDefaultFontName);
+      if (s.font == 'auto' || s.fontsDir.isEmpty) {
+        // 默认：直通系统字库 /system/fonts（零 APK 开销）
+        await native.setProperty('sub-fonts-dir', '/system/fonts');
+        await native.setProperty('sub-font', kDefaultFontName);
+      }
       // 只写 override 值，不 sub-reload：颜色/缩放/位置等 sub-* 属性即时生效，
       // 每次拖动都 sub-reload 会重新读盘解析外部字幕，导致卡顿。
       await _setOverrideProperty();

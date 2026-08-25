@@ -66,6 +66,10 @@ dev_dependencies:
   flutter_lints: ^6.0.0
 
 dependency_overrides:
+  # media_kit 换为本地魔改版：新增 libassAndroidFontsDir 字段，支持 Android
+  # 运行时用户字体目录（libass 在 mpv_initialize 前注入 sub-fonts-dir）。
+  media_kit:
+    path: third_party/media_kit
   # Android 视频内核换为自建版本（内含 mk_thumbnail_* 快速缩略图接口）。
   # 内核构建：https://github.com/azxcvn/libmpv-android-video-build（mk-thumbnail 分支）
   # 其余平台不受影响，仍走 pub 上游的 media_kit 系列。

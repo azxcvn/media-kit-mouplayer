@@ -17,10 +17,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.util.Log
 import android.util.Rational
 import android.view.View
+import com.yubyf.truetypeparser.TTFFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -693,7 +695,10 @@ class MainActivity : FlutterActivity() {
             val uri = Uri.parse(uriString)
             val fontDir = File(filesDir, "fonts")
             if (!fontDir.exists()) fontDir.mkdirs()
-            val safeName = name.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            // 优先用真实文件名（DISPLAY_NAME），回退到 Dart 传入的 name
+            // （后者可能是 document ID 而非文件名，如 "msf%3A..."）。
+            val displayName = queryDisplayName(uri) ?: name
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
             val target = File(fontDir, safeName)
             contentResolver.openInputStream(uri)?.use { input ->
                 target.outputStream().use { output -> input.copyTo(output) }
@@ -701,6 +706,18 @@ class MainActivity : FlutterActivity() {
             if (target.exists() && target.length() > 0) target.absolutePath else null
         } catch (e: Exception) {
             Log.w("MainActivity", "copyFontFromUri failed: ${e.message}")
+            null
+        }
+    }
+
+    /** 查询 content:// 的真实显示文件名（DISPLAY_NAME），失败返回 null。 */
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
+            }
+        } catch (e: Exception) {
             null
         }
     }
@@ -727,8 +744,6 @@ class MainActivity : FlutterActivity() {
 
     private fun ensureFallbackFont(fontsDir: File) {
         try {
-            val fallbackFile = File(fontsDir, ".system_fallback.ttc")
-            if (fallbackFile.exists() && fallbackFile.length() > 0) return
             val systemCandidates = listOf(
                 File("/system/fonts/NotoSansCJK-Regular.ttc"),
                 File("/system/fonts/NotoSansSC-Regular.otf"),
@@ -736,18 +751,17 @@ class MainActivity : FlutterActivity() {
                 File("/system/fonts/DroidSansFallback.ttf")
             )
             for (candidate in systemCandidates) {
-                if (candidate.exists() && candidate.canRead()) {
-                    try {
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
-                            android.system.Os.symlink(candidate.absolutePath, fallbackFile.absolutePath)
-                            return
-                        }
-                    } catch (_: Exception) {}
-                    try {
-                        candidate.copyTo(fallbackFile, overwrite = true)
-                        return
-                    } catch (_: Exception) {}
-                }
+                if (!candidate.exists() || !candidate.canRead()) continue
+                val target = File(fontsDir, candidate.name)
+                if (target.exists() && target.length() > 0) return
+                try {
+                    // 直接复制系统字库（不用 symlink + 隐藏文件名）：
+                    // fontconfig 可能跳过 `.` 开头的隐藏文件、且不 follow symlink，
+                    // 导致兜底字体不被识别 → sub-fonts-dir 指向私有目录后
+                    // ASS 字幕整条空白。复制成普通文件名可被 fontconfig 稳定识别。
+                    candidate.copyTo(target, overwrite = true)
+                    return
+                } catch (_: Exception) {}
             }
         } catch (e: Exception) {
             Log.w("MainActivity", "ensureFallbackFont failed: ${e.message}")
@@ -759,71 +773,19 @@ class MainActivity : FlutterActivity() {
      * libass 的 sub-font / ASS 样式 Fontname 均按家族名匹配。
      * 支持 TTF/OTF/TTC（TTC 取第一个 face）；解析失败返回文件名无后缀。
      */
+    /**
+     * 读取字体文件的家族名（family name），用 truetypeparser（对齐小喵 player）。
+     * libass 的 sub-font / ASS 样式 Fontname 均按家族名匹配。
+     * 解析失败返回文件名无后缀。
+     */
     private fun getFontFamilyName(fontPath: String): String {
         return try {
-            val fontFile = File(fontPath)
-            if (!fontFile.exists() || fontFile.length() < 12) return ""
-            val bytes = fontFile.readBytes()
-            if (bytes.size < 12) return fontFile.nameWithoutExtension
-            var tableOffset = 0
-            if (bytes[0] == 't'.code.toByte() && bytes[1] == 't'.code.toByte() &&
-                bytes[2] == 'c'.code.toByte() && bytes[3] == 'f'.code.toByte()
-            ) {
-                // TTC：'ttcf' + version(4) + numFonts(4 BE) + offsets...
-                if (bytes.size < 16) return fontFile.nameWithoutExtension
-                val numFonts = be32(bytes, 8)
-                if (numFonts <= 0) return fontFile.nameWithoutExtension
-                tableOffset = be32(bytes, 12)
+            val file = File(fontPath)
+            if (!file.exists() || file.length() < 12) return ""
+            val family = file.inputStream().use { input ->
+                TTFFile.open(input).families.values.firstOrNull()
             }
-            if (tableOffset + 12 > bytes.size) return fontFile.nameWithoutExtension
-            val numTables = be16(bytes, tableOffset + 4)
-            var nameOffset = -1
-            var nameLength = 0
-            for (i in 0 until numTables) {
-                val rec = tableOffset + 12 + i * 16
-                if (rec + 16 > bytes.size) break
-                if (bytes[rec] == 'n'.code.toByte() && bytes[rec + 1] == 'a'.code.toByte() &&
-                    bytes[rec + 2] == 'm'.code.toByte() && bytes[rec + 3] == 'e'.code.toByte()
-                ) {
-                    nameOffset = be32(bytes, rec + 8)
-                    nameLength = be32(bytes, rec + 12)
-                    break
-                }
-            }
-            if (nameOffset < 0 || nameOffset + nameLength > bytes.size || nameLength < 6) {
-                return fontFile.nameWithoutExtension
-            }
-            val count = be16(bytes, nameOffset + 2)
-            val stringOffsetBase = nameOffset + be16(bytes, nameOffset + 4)
-            var englishFamilyName: String? = null
-            var localizedFamilyName: String? = null
-            var fullName: String? = null
-
-            for (i in 0 until count) {
-                val nr = nameOffset + 6 + i * 12
-                if (nr + 12 > nameOffset + nameLength) break
-                val platform = be16(bytes, nr)
-                val langId = be16(bytes, nr + 4)
-                val nameId = be16(bytes, nr + 6)
-                if (nameId != 1 && nameId != 16 && nameId != 4) continue
-                val len = be16(bytes, nr + 8)
-                val off = stringOffsetBase + be16(bytes, nr + 10)
-                if (off + len > bytes.size) continue
-                val str = decodeName(bytes, off, len, platform)
-                if (str.isNullOrBlank()) continue
-
-                if (nameId == 1 || nameId == 16) {
-                    if (langId == 0x0409 || platform == 1) {
-                        englishFamilyName = str
-                    } else {
-                        localizedFamilyName = str
-                    }
-                } else if (nameId == 4 && fullName == null) {
-                    fullName = str
-                }
-            }
-            val best = englishFamilyName ?: localizedFamilyName ?: fullName
-            best?.ifBlank { null } ?: fontFile.nameWithoutExtension
+            family?.ifBlank { null } ?: file.nameWithoutExtension
         } catch (e: Exception) {
             Log.w("MainActivity", "getFontFamilyName failed: ${e.message}")
             try {
@@ -831,39 +793,6 @@ class MainActivity : FlutterActivity() {
             } catch (_: Exception) {
                 ""
             }
-        }
-    }
-
-    private fun be16(b: ByteArray, off: Int): Int =
-        ((b.getOrNull(off)?.toInt() ?: 0) and 0xFF) shl 8 or
-            ((b.getOrNull(off + 1)?.toInt() ?: 0) and 0xFF)
-
-    private fun be32(b: ByteArray, off: Int): Int =
-        ((b.getOrNull(off)?.toInt() ?: 0) and 0xFF) shl 24 or
-            ((b.getOrNull(off + 1)?.toInt() ?: 0) and 0xFF) shl 16 or
-            ((b.getOrNull(off + 2)?.toInt() ?: 0) and 0xFF) shl 8 or
-            ((b.getOrNull(off + 3)?.toInt() ?: 0) and 0xFF)
-
-    /**
-     * 按平台解码 name 字符串：platform 3 (Windows) 为 UTF-16BE；其余按 Latin1/UTF-8 容错。
-     */
-    private fun decodeName(b: ByteArray, off: Int, len: Int, platform: Int): String? {
-        if (off + len > b.size) return null
-        return try {
-            if (platform == 3) {
-                // UTF-16BE（允许奇数长度容错）
-                val chars = CharArray(len / 2)
-                for (i in 0 until len / 2) {
-                    val hi = (b[off + i * 2].toInt() and 0xFF)
-                    val lo = (b[off + i * 2 + 1].toInt() and 0xFF)
-                    chars[i] = ((hi shl 8) or lo).toChar()
-                }
-                String(chars).trim()
-            } else {
-                String(b, off, len, Charsets.UTF_8).trim()
-            }
-        } catch (e: Exception) {
-            null
         }
     }
 

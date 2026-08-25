@@ -38,6 +38,7 @@ import 'package:moumou/services/intro_outro_tracker.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/subtitle_service.dart';
+import 'package:moumou/services/subtitle_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/intro_outro_skip.dart';
@@ -304,11 +305,17 @@ class _PlayerPageState extends State<PlayerPage>
     _path = widget.path;
     _title = widget.title;
     // 开启 libass：走 mpv 原生字幕渲染（sub-visibility=yes），而非 Flutter
-    // SubtitleView。这也是内嵌字幕原生样式 / 各种 sub-* 样式属性生效的前提
-    // （对齐小喵 player：零 APK 体积消耗，直接通过 sub-fonts-dir 读取系统字库 /system/fonts）。
+    // SubtitleView。这也是内嵌字幕原生样式 / 各种 sub-* 样式属性生效的前提。
+    // 自定义字体必须在 mpv_initialize 前通过 libassAndroidFontsDir/Name 注入
+    // （运行时 setProperty 改 sub-fonts-dir 会破坏 libass 字体缓存导致字幕消失）。
+    final subFont = SubtitleSettings.instance.font;
+    final subFontsDir = SubtitleSettings.instance.fontsDir;
+    final useCustomFont = subFont != 'auto' && subFontsDir.isNotEmpty;
     _player = Player(
-      configuration: const PlayerConfiguration(
+      configuration: PlayerConfiguration(
         libass: true,
+        libassAndroidFontsDir: useCustomFont ? subFontsDir : null,
+        libassAndroidFontName: useCustomFont ? subFont : null,
       ),
     );
     _controller = VideoController(_player);

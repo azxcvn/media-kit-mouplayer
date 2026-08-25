@@ -141,6 +141,15 @@ class PlayerSubtitlePanel extends StatelessWidget {
                 SubtitleMiscPanel(controller: controller),
               ),
             ),
+            _SubtitleSettingsEntry(
+              icon: Icons.font_download_outlined,
+              label: '字幕字体',
+              onTap: () => _pushSubPage(
+                context,
+                '字幕字体',
+                SubtitleFontPanel(controller: controller),
+              ),
+            ),
           ],
         );
       },
@@ -1364,4 +1373,131 @@ class SubtitleMiscPanel extends StatelessWidget {
 // 字幕字体（工作.md 阶段1 第 3 点）
 // ────────────────────────────────────────────────────────────
 
-/// 字幕字体二级页：跟随默认 + 导入自己的字体（.ttf/.otf）+ 已导入字体列表。
+/// 字幕字体二级页：跟随默认（系统字库）+ 导入自己的字体（.ttf/.otf/.ttc）。
+///
+/// 自定义字体通过 media_kit 的 `libassAndroidFontsDir` 在 Player 构造时注入
+/// （mpv_initialize 前），换字体需退出播放器重新进入生效（libass 机制，
+/// 与小喵 player 一致）。
+class SubtitleFontPanel extends StatelessWidget {
+  final SubtitleController controller;
+
+  const SubtitleFontPanel({super.key, required this.controller});
+
+  /// 导入字体：选文件 → 拷贝到私有 fonts/ → 解析族名 → 持久化。
+  Future<void> _importFont(BuildContext context) async {
+    final uri = await DeviceServices.openFontPicker();
+    if (uri == null || !context.mounted) return;
+    final name = uri.split('/').where((s) => s.isNotEmpty).last;
+    final path = await DeviceServices.copyFontFromUri(
+      uri,
+      name.isEmpty ? 'font.ttf' : name,
+    );
+    if (path == null || !context.mounted) return;
+    final family = await DeviceServices.getFontFamilyName(path);
+    if (family.isEmpty) return;
+    final dir = await DeviceServices.getFontsDirectory();
+    await SubtitleSettings.instance.setFont(family, dir);
+    if (!context.mounted) return;
+    _showRestartHint(context);
+  }
+
+  /// 恢复默认：回退系统字库。
+  Future<void> _resetFont(BuildContext context) async {
+    await SubtitleSettings.instance.setFont('auto', '');
+    if (!context.mounted) return;
+    _showRestartHint(context);
+  }
+
+  void _showRestartHint(BuildContext context) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('字体更改需退出播放器并重新进入后生效'),
+          duration: Duration(milliseconds: 2000),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = SubtitleSettings.instance;
+    return ListenableBuilder(
+      listenable: settings,
+      builder: (context, _) {
+        final hasCustom = settings.font != 'auto';
+        return ListView(
+          key: const PageStorageKey('subtitle_font'),
+          padding: const EdgeInsets.all(16),
+          children: [
+            _PanelCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _CardLabel('当前字体'),
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.text_fields,
+                        color: Colors.white, size: 22),
+                    title: Text(
+                      hasCustom ? settings.font : '跟随默认（系统字库）',
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 15),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _PanelCard(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _CardLabel('自定义字体'),
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.file_upload_outlined,
+                        color: Colors.white, size: 22),
+                    title: const Text(
+                      '导入字体文件',
+                      style: TextStyle(color: Colors.white, fontSize: 15),
+                    ),
+                    onTap: () => _importFont(context),
+                  ),
+                  if (hasCustom)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.restart_alt,
+                          color: Colors.white54, size: 22),
+                      title: const Text(
+                        '恢复默认字体',
+                        style: TextStyle(color: Colors.white, fontSize: 15),
+                      ),
+                      onTap: () => _resetFont(context),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFF4A3A13),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF6B5618)),
+              ),
+              child: const Text(
+                '字体更改需退出播放器并重新进入后生效；内嵌 ASS 字幕需开启「强制覆盖内嵌样式」后字体设置才会生效。',
+                style: TextStyle(
+                    color: Color(0xFFFFE082), fontSize: 12, height: 1.4),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}

@@ -235,6 +235,19 @@ class DeviceServices {
     }
   }
 
+  /// 把字体 content:// uri 拷贝到应用私有 fonts/ 目录（libass 需真实路径），
+  /// 返回真实绝对路径，失败返回 null。
+  static Future<String?> copyFontFromUri(String uri, String name) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'copyFontFromUri',
+        {'uri': uri, 'name': name},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 读取字体文件内部家族名（libass 的 sub-font 按家族名匹配，非文件名）。
   /// 失败返回空串。
   static Future<String> getFontFamilyName(String path) async {

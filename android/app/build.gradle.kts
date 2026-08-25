@@ -60,6 +60,8 @@ kotlin {
 dependencies {
     // MediaInfoLib（Android 绑定）：媒体文件详细信息解析（参考 fam4k007 项目）
     implementation("com.github.marlboro-advance:mediainfoAndroid:v1.1.0")
+    // TrueType 字体解析（读取 family name，对齐小喵 player 的 truetypeparser）
+    implementation("io.github.yubyf:truetypeparser-light:2.1.4")
 }
 
 flutter {

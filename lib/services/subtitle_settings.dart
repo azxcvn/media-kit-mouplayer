@@ -46,6 +46,8 @@ class SubtitleSettings extends ChangeNotifier {
   static const _keyImportedSubtitles = 'subtitle_settings_imported_subtitles';
   static const _keyVideoSubtitles = 'subtitle_settings_video_subtitles';
   static const _keyVideoSelectedSub = 'subtitle_settings_video_selected_sub';
+  static const _keyFont = 'subtitle_settings_font';
+  static const _keyFontDir = 'subtitle_settings_font_dir';
 
   /// 字幕延迟范围：-60 – +60 秒（工作.md 阶段1 第 3 点）
   static const double minDelay = -60;
@@ -68,6 +70,7 @@ class SubtitleSettings extends ChangeNotifier {
   SubtitleAlign _align = SubtitleAlign.center;
   String _color = '#FFFFFF';
   String _font = 'auto';
+  String _fontsDir = '';
   bool _overrideEmbeddedStyle = false;
 
   // 扩展样式（工作.md 阶段1 第 3 点：补全小喵 player 的字幕样式项）
@@ -99,6 +102,7 @@ class SubtitleSettings extends ChangeNotifier {
   SubtitleAlign get align => _align;
   String get color => _color;
   String get font => _font;
+  String get fontsDir => _fontsDir;
   bool get overrideEmbeddedStyle => _overrideEmbeddedStyle;
 
   String? get borderColor => _borderColor;
@@ -168,6 +172,9 @@ class SubtitleSettings extends ChangeNotifier {
     } catch (_) {
       _videoSelectedSub = {};
     }
+
+    _font = prefs.getString(_keyFont) ?? 'auto';
+    _fontsDir = prefs.getString(_keyFontDir) ?? '';
 
     notifyListeners();
   }
@@ -364,8 +371,17 @@ class SubtitleSettings extends ChangeNotifier {
   }
 
   // ── 字体 ──────────────────────────────────────────────
-  // 路线 C：默认直通系统字库 /system/fonts（零 APK 资源开销，100% 稳定）
-  Future<void> setFont(String font) async {}
+  // 自定义字体：family 为字体族名，dir 为用户字体目录绝对路径。
+  // family='auto' / dir='' 表示回退系统字库 /system/fonts。
+  Future<void> setFont(String family, String dir) async {
+    await ensureLoaded();
+    _font = family;
+    _fontsDir = dir;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyFont, family);
+    await prefs.setString(_keyFontDir, dir);
+  }
 
   // ── 外挂字幕记忆（按视频路径独立隔离）────────────────────
 
@@ -495,6 +511,7 @@ class SubtitleSettings extends ChangeNotifier {
     _align = SubtitleAlign.center;
     _color = '#FFFFFF';
     _font = 'auto';
+    _fontsDir = '';
     _overrideEmbeddedStyle = false;
     _borderColor = null;
     _borderSize = 2.5;

@@ -72,7 +72,7 @@ void main() {
   test('字幕字体：默认 auto 跟随系统字库 /system/fonts', () async {
     final s = SubtitleSettings.instance;
     expect(s.font, 'auto');
-    await s.setFont('auto');
+    await s.setFont('auto', '');
     expect(s.font, 'auto');
   });
 
@@ -141,7 +141,7 @@ void main() {
     await s.setDelay(3);
     await s.setScale(1.5);
     await s.setPosition(80);
-    await s.setFont('myFont');
+    await s.setFont('myFont', '/data/fonts');
     await s.setColor('#FF0000');
     await s.setBorderColor('#00FF00');
     await s.setBorderStyle(SubtitleBorderStyle.outline);
