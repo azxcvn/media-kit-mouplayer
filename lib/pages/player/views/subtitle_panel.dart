@@ -69,15 +69,34 @@ class PlayerSubtitlePanel extends StatelessWidget {
                       : null,
                 ),
             if (hasSelection)
-              ListTile(
-                dense: true,
-                leading: const Icon(Icons.closed_caption_off_outlined,
-                    color: Colors.white54, size: 22),
-                title: const Text(
-                  '关闭字幕',
-                  style: TextStyle(color: Colors.white, fontSize: 15),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: GestureDetector(
+                  onTap: () => controller.selectTrack(null),
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 7),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.closed_caption_off_outlined,
+                            size: 16, color: Colors.white70),
+                        SizedBox(width: 6),
+                        Text(
+                          '关闭字幕',
+                          style: TextStyle(
+                              color: Colors.white70, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                onTap: () => controller.selectTrack(null),
               ),
             // ── 外挂字幕 ────────────────────────────────
             const Divider(height: 1, color: Colors.white12),
@@ -90,10 +109,6 @@ class PlayerSubtitlePanel extends StatelessWidget {
                 '导入外部字幕',
                 style: TextStyle(color: Colors.white, fontSize: 15),
               ),
-              subtitle: const Text(
-                'srt / ass / ssa / vtt 等格式（退出播放后仍会记住）',
-                style: TextStyle(color: Colors.white38, fontSize: 12),
-              ),
               onTap: () => _importExternalSubtitle(context),
             ),
             // ── 字幕设置 ────────────────────────────────
@@ -102,7 +117,6 @@ class PlayerSubtitlePanel extends StatelessWidget {
             _SubtitleSettingsEntry(
               icon: Icons.timer_outlined,
               label: '字幕延迟',
-              subtitle: '点按秒数直接输入，或快捷调整',
               onTap: () => _pushSubPage(
                 context,
                 '字幕延迟',
@@ -112,7 +126,6 @@ class PlayerSubtitlePanel extends StatelessWidget {
             _SubtitleSettingsEntry(
               icon: Icons.format_size,
               label: '字幕样式',
-              subtitle: '颜色、描边模式、粗细、重置',
               onTap: () => _pushSubPage(
                 context,
                 '字幕样式',
@@ -122,7 +135,6 @@ class PlayerSubtitlePanel extends StatelessWidget {
             _SubtitleSettingsEntry(
               icon: Icons.vertical_align_center,
               label: '字幕杂项',
-              subtitle: '缩放比例与垂直位置',
               onTap: () => _pushSubPage(
                 context,
                 '字幕杂项',
@@ -189,7 +201,9 @@ class PlayerSubtitlePanel extends StatelessWidget {
   }
 }
 
-/// 字幕轨道行（单选）：当前生效的轨道高亮 + 对勾；外挂轨道带「移除」按钮。
+/// 字幕轨道行（单选）：统一 CC 图标，选中态以主题色高亮（不再打勾）；
+/// 标题只显示干净的轨道名（外挂字幕去掉文件扩展名），外挂/格式/语言用胶囊标签；
+/// 移除按钮（垃圾桶）单独放最右。
 class _TrackTile extends StatelessWidget {
   final SubtitleTrack track;
   final bool selected;
@@ -209,44 +223,77 @@ class _TrackTile extends StatelessWidget {
     return ListTile(
       dense: true,
       leading: Icon(
-        track.external
-            ? (selected
-                ? Icons.subtitles_rounded
-                : Icons.subtitles_outlined)
-            : (selected
-                ? Icons.closed_caption_rounded
-                : Icons.closed_caption_outlined),
+        selected
+            ? Icons.closed_caption_rounded
+            : Icons.closed_caption_outlined,
         color: selected ? accent : Colors.white54,
         size: 22,
       ),
-      title: Text(
-        subtitleTrackLabel(track),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 15,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-        ),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
+      title: Row(
         children: [
-          if (onRemove != null)
-            IconButton(
+          Flexible(
+            child: Text(
+              _trackTitle(track),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: selected ? accent : Colors.white,
+                fontSize: 15,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+              ),
+            ),
+          ),
+          if (track.external) const _TrackTag('外挂'),
+          if (track.codec != null && track.codec!.trim().isNotEmpty)
+            _TrackTag(track.codec!.trim().toUpperCase()),
+          if (track.language != null &&
+              track.language!.trim().isNotEmpty &&
+              track.language!.trim() != track.displayTitle)
+            _TrackTag(track.language!.trim()),
+        ],
+      ),
+      trailing: onRemove != null
+          ? IconButton(
               icon: const Icon(Icons.delete_outline,
                   color: Colors.white38, size: 20),
               tooltip: '移除已导入的字幕',
               visualDensity: VisualDensity.compact,
               onPressed: onRemove,
-            ),
-          if (selected)
-            const Icon(Icons.check_circle, color: accent, size: 20)
-          else
-            const SizedBox(width: 20),
-        ],
-      ),
+            )
+          : null,
       onTap: onTap,
+    );
+  }
+}
+
+/// 轨道标题：外挂字幕的 title 通常是文件名，去掉扩展名（如 `xxx.ass` → `xxx`）。
+String _trackTitle(SubtitleTrack track) {
+  final t = track.displayTitle;
+  if (track.external && isSupportedSubtitleFile(t)) {
+    return t.substring(0, t.lastIndexOf('.'));
+  }
+  return t;
+}
+
+/// 轨道信息胶囊标签（外挂 / 格式 / 语言）。
+class _TrackTag extends StatelessWidget {
+  final String text;
+
+  const _TrackTag(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(left: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: Colors.white54, fontSize: 10),
+      ),
     );
   }
 }
@@ -277,13 +324,11 @@ class _SectionLabel extends StatelessWidget {
 class _SubtitleSettingsEntry extends StatelessWidget {
   final IconData icon;
   final String label;
-  final String subtitle;
   final VoidCallback onTap;
 
   const _SubtitleSettingsEntry({
     required this.icon,
     required this.label,
-    required this.subtitle,
     required this.onTap,
   });
 
@@ -294,10 +339,6 @@ class _SubtitleSettingsEntry extends StatelessWidget {
       title: Text(
         label,
         style: const TextStyle(color: Colors.white, fontSize: 15),
-      ),
-      subtitle: Text(
-        subtitle,
-        style: const TextStyle(color: Colors.white38, fontSize: 12),
       ),
       trailing: const Icon(Icons.chevron_right, color: Colors.white54),
       onTap: onTap,
@@ -370,6 +411,8 @@ class _SettingSlider extends StatelessWidget {
   final double min;
   final double max;
   final ValueChanged<double> onChanged;
+  final VoidCallback? onReset;
+  final bool displayCapsule;
 
   const _SettingSlider({
     required this.label,
@@ -378,6 +421,8 @@ class _SettingSlider extends StatelessWidget {
     required this.min,
     required this.max,
     required this.onChanged,
+    this.onReset,
+    this.displayCapsule = false,
   });
 
   @override
@@ -395,15 +440,48 @@ class _SettingSlider extends StatelessWidget {
                   style: const TextStyle(color: Colors.white70, fontSize: 13),
                 ),
               ),
-              Text(
-                display,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: [FontFeature.tabularFigures()],
+              if (displayCapsule)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    display,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                )
+              else
+                Text(
+                  display,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ),
+              if (onReset != null) ...[
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: onReset,
+                  child: const Text(
+                    '重置',
+                    style: TextStyle(
+                      color: _accent,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 2),
@@ -530,17 +608,8 @@ class _SubtitleDelayPanelState extends State<SubtitleDelayPanel> {
               ),
               onSubmitted: (_) => _applyInput(),
             ),
-            const SizedBox(height: 6),
-            Text(
-              '点按上方秒数可直接输入修改（延后为正、提前为负，范围 -60 ~ +60 秒）',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.45),
-                fontSize: 12,
-              ),
-            ),
             const SizedBox(height: 18),
-            const _SectionLabel('快捷调整（可叠加）'),
+            const _SectionLabel('快捷调整'),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
@@ -658,6 +727,24 @@ class SubtitleStylePanel extends StatelessWidget {
                     onSelect: (c) =>
                         _apply(c, settings, (v) => settings.setBorderColor(v)),
                   ),
+                  // 描边粗细：紧跟描边颜色（设置了描边颜色时才显示）
+                  if (hasBorder)
+                    _SettingSlider(
+                      label: '描边粗细',
+                      display: settings.borderSize.toStringAsFixed(1),
+                      value: settings.borderSize,
+                      min: 0,
+                      max: 10,
+                      onChanged: (v) {
+                        settings.setBorderSize(v);
+                        controller.applyAllSettings();
+                      },
+                      onReset: () {
+                        settings.setBorderSize(2.5);
+                        controller.applyAllSettings();
+                      },
+                      displayCapsule: true,
+                    ),
                   const Divider(height: 1, indent: 16, endIndent: 16, color: Colors.white12),
                   _ColorEditorRow(
                     label: '背景颜色',
@@ -671,45 +758,6 @@ class SubtitleStylePanel extends StatelessWidget {
                 ],
               ),
             ),
-            // ── 描边粗细（当设置了描边颜色时显示）──────────
-            if (hasBorder) ...[
-              const SizedBox(height: 16),
-              _PanelCard(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _SettingSlider(
-                      label: '描边粗细',
-                      display: settings.borderSize.toStringAsFixed(1),
-                      value: settings.borderSize,
-                      min: 0,
-                      max: 10,
-                      onChanged: (v) {
-                        settings.setBorderSize(v);
-                        controller.applyAllSettings();
-                      },
-                    ),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton.icon(
-                        onPressed: settings.borderSize == 2.5
-                            ? null
-                            : () {
-                                settings.setBorderSize(2.5);
-                                controller.applyAllSettings();
-                              },
-                        icon: const Icon(Icons.restart_alt, size: 16),
-                        label: const Text('重置默认'),
-                        style: TextButton.styleFrom(
-                          foregroundColor: Colors.white70,
-                          visualDensity: VisualDensity.compact,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
             const SizedBox(height: 16),
             // ── 文字效果 ─────────────────────────────
             _PanelCard(
@@ -718,36 +766,25 @@ class SubtitleStylePanel extends StatelessWidget {
                 children: [
                   const _CardLabel('文字效果'),
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
                     child: Row(
                       children: [
-                        Expanded(
-                          child: SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            activeThumbColor: _accent,
-                            title: const Text('粗体',
-                                style: TextStyle(color: Colors.white, fontSize: 14)),
-                            value: settings.bold,
-                            onChanged: (v) {
-                              settings.setBold(v);
-                              controller.applyAllSettings();
-                            },
-                          ),
+                        _LabelSwitch(
+                          label: '粗体',
+                          value: settings.bold,
+                          onChanged: (v) {
+                            settings.setBold(v);
+                            controller.applyAllSettings();
+                          },
                         ),
-                        Expanded(
-                          child: SwitchListTile(
-                            contentPadding: EdgeInsets.zero,
-                            dense: true,
-                            activeThumbColor: _accent,
-                            title: const Text('斜体',
-                                style: TextStyle(color: Colors.white, fontSize: 14)),
-                            value: settings.italic,
-                            onChanged: (v) {
-                              settings.setItalic(v);
-                              controller.applyAllSettings();
-                            },
-                          ),
+                        const SizedBox(width: 28),
+                        _LabelSwitch(
+                          label: '斜体',
+                          value: settings.italic,
+                          onChanged: (v) {
+                            settings.setItalic(v);
+                            controller.applyAllSettings();
+                          },
                         ),
                       ],
                     ),
@@ -798,7 +835,11 @@ class SubtitleStylePanel extends StatelessWidget {
                 value: settings.overrideEmbeddedStyle,
                 onChanged: (v) {
                   settings.setOverrideEmbeddedStyle(v);
-                  controller.applyAllSettings();
+                  // 只有切换 override 才需要重建轨道（sub-reload），
+                  // 避免把重载混进高频的样式拖动路径导致卡顿。
+                  // force 显式传目标值：setOverrideEmbeddedStyle 是异步的，
+                  // 若不显式传，applyStyleOverride 会读到旧的 override 值。
+                  controller.applyStyleOverride(force: v);
                 },
               ),
             ),
@@ -948,7 +989,7 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    _custom ? '收起自定义调色' : '自定义调色 (RGBA)',
+                    _custom ? '收起自定义调色' : '自定义调色',
                     style: TextStyle(
                       color: _custom ? Colors.white : Colors.white70,
                       fontSize: 12,
@@ -989,27 +1030,11 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
       for (final c in widget.presetColors) (hex: c.hex, label: c.label),
     ];
 
-    final hasCurrent =
-        widget.value != null && !_matchesAnyPreset(widget.value!);
-
-    List<List<({String? hex, String label})>> rows;
-    if (allItems.length <= 4 && !hasCurrent) {
-      rows = [allItems];
-    } else if (allItems.length <= 4 && hasCurrent) {
-      rows = [
-        allItems,
-        [(hex: widget.value, label: '当前')],
-      ];
-    } else {
-      // 5项（如背景色）：第1行3项，第2行2项(+当前)
-      rows = [
-        allItems.sublist(0, 3),
-        [
-          ...allItems.sublist(3),
-          if (hasCurrent) (hex: widget.value, label: '当前'),
-        ],
-      ];
-    }
+    // 一行最多 4 项，超过则 3 + 剩余 换行。
+    // 不再额外加「当前」胶囊——当前色已由左上角预览点体现。
+    final List<List<({String? hex, String label})>> rows = allItems.length <= 4
+        ? [allItems]
+        : [allItems.sublist(0, 3), allItems.sublist(3)];
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1045,13 +1070,6 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
     final a = mpvColorToRgba(widget.value!);
     final b = mpvColorToRgba(hex);
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
-  }
-
-  bool _matchesAnyPreset(String hex) {
-    for (final c in widget.presetColors) {
-      if (_matchesPreset(c.hex)) return true;
-    }
-    return false;
   }
 
   /// RGBA 四通道滑杆
@@ -1227,6 +1245,39 @@ class _ChannelSlider extends StatelessWidget {
   }
 }
 
+/// 紧凑的文字效果开关：标签紧跟开关（区别于 SwitchListTile 的左右分离布局）。
+class _LabelSwitch extends StatelessWidget {
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  const _LabelSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white, fontSize: 14),
+        ),
+        const SizedBox(width: 6),
+        Switch(
+          value: value,
+          onChanged: onChanged,
+          activeThumbColor: _accent,
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ],
+    );
+  }
+}
+
 // ────────────────────────────────────────────────────────────
 // 字幕杂项（工作.md 阶段1 第 3 点）
 // ────────────────────────────────────────────────────────────
@@ -1280,7 +1331,25 @@ class SubtitleMiscPanel extends StatelessWidget {
                       controller.applyAllSettings();
                     },
                   ),
-                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+                      child: TextButton.icon(
+                        onPressed: () async {
+                          await settings.setScale(1.0);
+                          await settings.setPosition(100);
+                          await controller.applyAllSettings();
+                        },
+                        icon: const Icon(Icons.restart_alt, size: 16),
+                        label: const Text('重置缩放与位置'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.white70,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),

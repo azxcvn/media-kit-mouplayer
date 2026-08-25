@@ -196,7 +196,8 @@ class SubtitleController extends ChangeNotifier {
         track?.sourcePath ?? track?.id ?? 'no',
       );
     }
-    await _applyStyleForCurrent();
+    // 切轨道后重建一次，让 sub-ass-override 对新轨道生效（低频操作，可接受）
+    await applyStyleOverride();
     notifyListeners();
   }
 
@@ -336,20 +337,41 @@ class SubtitleController extends ChangeNotifier {
       await native.setProperty('embeddedfonts', 'yes');
       await native.setProperty('sub-fonts-dir', '/system/fonts');
       await native.setProperty('sub-font', kDefaultFontName);
-      await _applyStyleForCurrent();
+      // 只写 override 值，不 sub-reload：颜色/缩放/位置等 sub-* 属性即时生效，
+      // 每次拖动都 sub-reload 会重新读盘解析外部字幕，导致卡顿。
+      await _setOverrideProperty();
     } catch (_) {
       // 播放器不可用（已销毁）时静默
     }
   }
 
+  /// 只写内嵌样式策略值（`force`/`scale`），不重建轨道。
+  /// 颜色/缩放/位置等 sub-* 属性通过 setProperty 即时生效，无需 sub-reload。
+  Future<void> _setOverrideProperty() async {
+    final native = _native;
+    if (native == null) return;
+    final value = _settings.overrideEmbeddedStyle ? 'force' : 'scale';
+    try {
+      await native.setProperty('sub-ass-override', value);
+    } catch (_) {}
+  }
+
+  /// 应用内嵌样式策略并重建字幕轨道（`sub-reload`）。
+  ///
   /// 内嵌样式策略：
   /// - 开启「强制覆盖内嵌样式」→ `force`（用户样式生效，强制覆盖 ASS 样式与字体）；
   /// - 未开启「强制覆盖内嵌样式」→ `scale`（默认：mpv 完美保留 ASS 原生字体、特效、位置和排版，同时响应缩放调节）。
   /// - 普通文本字幕（SRT/VTT）在 scale 和 force 模式下均能正常响应用户样式。
-  Future<void> _applyStyleForCurrent() async {
+  ///
+  /// 仅应在「强制覆盖内嵌样式」开关切换、或切换字幕轨道后调用一次：
+  /// `sub-reload` 会移除并重新添加轨道（对外部字幕 = 重新读盘 + 解析 + 字体匹配），
+  /// 放进高频的样式拖动路径会导致明显卡顿。
+  Future<void> applyStyleOverride({bool? force}) async {
     final native = _native;
     if (native == null) return;
-    final value = _settings.overrideEmbeddedStyle ? 'force' : 'scale';
+    // force 显式传入时用目标值（开关切换场景，绕过 setOverrideEmbeddedStyle
+    // 尚未 await 完成的竞态）；否则读当前设置（切轨道场景，值已稳定）。
+    final value = (force ?? _settings.overrideEmbeddedStyle) ? 'force' : 'scale';
     try {
       await native.setProperty('sub-ass-override', value);
       await native.setProperty('sub-font-provider', 'auto');

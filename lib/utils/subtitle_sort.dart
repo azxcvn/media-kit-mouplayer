@@ -1,4 +1,5 @@
 import 'package:moumou/services/device_services.dart';
+import 'package:moumou/utils/natural_compare.dart';
 
 /// 自建字幕文件选择器的排序字段（工作.md 阶段1 第 3 点）
 enum SubtitleDirSort {
@@ -21,12 +22,11 @@ List<SubtitleDirEntry> sortSubtitleDirEntries(
 }) {
   final dirs = entries.where((e) => e.isDirectory).toList();
   final files = entries.where((e) => !e.isDirectory).toList();
-  dirs.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  dirs.sort((a, b) => naturalCompare(a.name, b.name));
   final sign = ascending ? 1 : -1;
   files.sort((a, b) {
     final c = switch (sort) {
-      SubtitleDirSort.name =>
-        a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      SubtitleDirSort.name => naturalCompare(a.name, b.name),
       SubtitleDirSort.size => a.size.compareTo(b.size),
       SubtitleDirSort.date => a.modifiedMs.compareTo(b.modifiedMs),
     };
