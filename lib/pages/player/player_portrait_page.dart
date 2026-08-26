@@ -162,6 +162,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
 
   /// 气泡可见性（拖动中 true；松手淡出后 false 再卸载）
   bool _thumbVisible = false;
+
+  /// 是否仍在等待精确帧（true 时气泡叠转圈提示，即使已显示邻近帧）
+  bool _thumbPending = false;
   Timer? _thumbHideTimer;
   int _lastThumbBucketMs = -1;
 
@@ -1187,7 +1190,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   /// 竖屏模式下返回应**直接退出播放**（先关本页，再退出横屏播放页回到列表），
   /// 而不是回到横屏再退一次。走横屏页的 [_exitWithPortrait]（onExitPlayer）。
   Future<void> _backExit() async {
-    await _saveProgress(forcePersist: true);
+    // 保存不阻塞退出：由横屏页 _finishExitWithPortrait 统一负责落盘，
+    // 去掉点击返回后的第一段阻塞（工作调研：出场淡化感根因之一）
+    unawaited(_saveProgress(forcePersist: true));
     final exit = widget.onExitPlayer;
     if (exit != null) {
       exit();
@@ -1228,13 +1233,17 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     final nearest = DeviceServices.peekNearestFrame(
       _path,
       bucket,
-      maxGapMs: 10000,
+      maxGapMs: 3000,
     );
     if (nearest != null) {
+      // 显示的是邻近帧（可能非精确桶）；精确帧在途时叠转圈提示，
+      // 避免用户把旧帧当成本秒画面（对齐 mpvRx isLoading）
+      final pending = nearest.bucketMs != bucket;
       setState(() {
         _thumbPreview =
             (frame: nearest.frame, time: Duration(milliseconds: bucket));
         _thumbVisible = true;
+        _thumbPending = pending;
       });
       // 精确桶已缓存或已跳过，则无需再取
       if (DeviceServices.peekFrame(_path, bucket) != null) return;
@@ -1246,6 +1255,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     setState(() {
       _thumbPreview = (frame: null, time: Duration(milliseconds: bucket));
       _thumbVisible = true;
+      _thumbPending = false;
     });
     _fetchThumbnail(bucket);
   }
@@ -1258,6 +1268,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       if (_lastThumbBucketMs != bucket) return;
       setState(() {
         _thumbPreview = (frame: frame, time: Duration(milliseconds: bucket));
+        _thumbPending = false;
       });
     });
   }
@@ -1273,6 +1284,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       setState(() {
         _thumbPreview = null;
         _lastThumbBucketMs = -1;
+        _thumbPending = false;
       });
     });
   }
@@ -1283,6 +1295,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     _cancelThumbPrefetch();
     _thumbPreview = null;
     _thumbVisible = false;
+    _thumbPending = false;
     _lastThumbBucketMs = -1;
   }
 
@@ -1701,6 +1714,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                       time: _thumbPreview!.time,
                       fraction: _thumbFraction,
                       visible: _thumbVisible,
+                      pending: _thumbPending,
                     ),
                   ),
                 // 右侧操作（截图 / 锁定，从右侧滑入；与横屏同款灰黑圆角按钮）

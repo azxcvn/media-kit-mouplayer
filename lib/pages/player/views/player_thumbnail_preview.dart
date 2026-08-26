@@ -21,12 +21,16 @@ class PlayerThumbnailPreview extends StatelessWidget {
   /// 是否显示（拖动中显示，松手淡出）
   final bool visible;
 
+  /// 是否仍在等待精确帧（true 时即使已显示邻近帧也叠转圈提示）
+  final bool pending;
+
   const PlayerThumbnailPreview({
     super.key,
     required this.frame,
     required this.time,
     required this.fraction,
     required this.visible,
+    this.pending = false,
   });
 
   @override
@@ -60,9 +64,13 @@ class PlayerThumbnailPreview extends StatelessWidget {
                           ),
                           color: Colors.black.withValues(alpha: 0.72),
                         ),
-                        child: frame != null
-                            ? RawThumbImage(frame: frame!, fit: BoxFit.cover)
-                            : const Center(
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (frame != null)
+                              RawThumbImage(frame: frame!, fit: BoxFit.cover)
+                            else
+                              const Center(
                                 child: SizedBox(
                                   width: 18,
                                   height: 18,
@@ -72,6 +80,23 @@ class PlayerThumbnailPreview extends StatelessWidget {
                                   ),
                                 ),
                               ),
+                            // 邻近帧在途时叠半透明压暗 + 转圈，提示「本秒画面尚未就绪」
+                            if (pending && frame != null)
+                              Container(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                child: const Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                     // 时间胶囊

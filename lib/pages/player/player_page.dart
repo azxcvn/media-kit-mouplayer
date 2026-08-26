@@ -241,6 +241,9 @@ class _PlayerPageState extends State<PlayerPage>
 
   /// 气泡可见性（拖动中 true；松手淡出后 false 再卸载）
   bool _thumbVisible = false;
+
+  /// 是否仍在等待精确帧（true 时气泡叠转圈提示，即使已显示邻近帧）
+  bool _thumbPending = false;
   Timer? _thumbHideTimer;
   int _lastThumbBucketMs = -1;
 
@@ -294,6 +297,10 @@ class _PlayerPageState extends State<PlayerPage>
 
   /// 已开始退出播放页（异步退出流程中禁止再自动 push 竖屏页，防栈错乱）
   bool _exiting = false;
+
+  /// 退出期间横屏页整体黑化（竖屏退出时置位，盖住下层横屏页的 UI 骨架，
+  /// 保证任何时刻两层页面不同框，从机制上杜绝「两个竖屏界面」复现）。
+  bool _exitBlackout = false;
 
   /// 播放器是否已销毁（退出路径先 await 销毁，widget dispose 兜底防重复）
   bool _playerDisposed = false;
@@ -385,8 +392,9 @@ class _PlayerPageState extends State<PlayerPage>
         if (!mounted) return;
         setState(() {
           _playing = p;
-          // 暂停时总是显示控制层（含中央播放键）
-          if (!p && !_locked) {
+          // 暂停时总是显示控制层（含中央播放键）；
+          // 退出期间 pause 冻结末帧不弹控制层（防退出时控制条闪现）
+          if (!p && !_locked && !_exiting) {
             _controlsVisible = true;
             _controlsController.forward();
           }
@@ -462,8 +470,8 @@ class _PlayerPageState extends State<PlayerPage>
   /// **恢复进度 v5 重写（用户反馈 v5：仍有 1–1.5s 开头闪现）**：
   /// 弃用 `Media(start:)`（media_kit 1.2.x 的 on_load hook 读 playlist-pos
   /// 时恒为 -1，start 从未生效），改用 [openAndRestore] 的**确定性恢复**：
-  /// 暂停加载 → 等时长就绪 → seek → 位置确认，全程用不透明封层盖住视频，
-  /// 到位后再揭开 + 播放，首帧即目标帧，无开头闪现、无可见跳转。
+  /// 暂停加载 → 静音激活时间线 → seek → 位置确认，全程用不透明封层盖住
+  /// 视频，到位后再揭开 + 播放，首帧即目标帧，无开头闪现、无可见跳转。
   ///
   /// 之后按「视频方向」设置决定是否自动进入竖屏播放。
   ///
@@ -1083,13 +1091,17 @@ class _PlayerPageState extends State<PlayerPage>
     final nearest = DeviceServices.peekNearestFrame(
       _path,
       bucket,
-      maxGapMs: 10000,
+      maxGapMs: 3000,
     );
     if (nearest != null) {
+      // 显示的是邻近帧（可能非精确桶）；精确帧在途时叠转圈提示，
+      // 避免用户把旧帧当成本秒画面（对齐 mpvRx isLoading）
+      final pending = nearest.bucketMs != bucket;
       setState(() {
         _thumbPreview =
             (frame: nearest.frame, time: Duration(milliseconds: bucket));
         _thumbVisible = true;
+        _thumbPending = pending;
       });
       // 精确桶已缓存或已跳过，则无需再取
       if (DeviceServices.peekFrame(_path, bucket) != null) return;
@@ -1101,6 +1113,7 @@ class _PlayerPageState extends State<PlayerPage>
     setState(() {
       _thumbPreview = (frame: null, time: Duration(milliseconds: bucket));
       _thumbVisible = true;
+      _thumbPending = false;
     });
     _fetchThumbnail(bucket);
   }
@@ -1113,6 +1126,7 @@ class _PlayerPageState extends State<PlayerPage>
       if (_lastThumbBucketMs != bucket) return;
       setState(() {
         _thumbPreview = (frame: frame, time: Duration(milliseconds: bucket));
+        _thumbPending = false;
       });
     });
   }
@@ -1128,6 +1142,7 @@ class _PlayerPageState extends State<PlayerPage>
       setState(() {
         _thumbPreview = null;
         _lastThumbBucketMs = -1;
+        _thumbPending = false;
       });
     });
   }
@@ -1138,6 +1153,7 @@ class _PlayerPageState extends State<PlayerPage>
     _cancelThumbPrefetch();
     _thumbPreview = null;
     _thumbVisible = false;
+    _thumbPending = false;
     _lastThumbBucketMs = -1;
   }
 
@@ -1820,7 +1836,9 @@ class _PlayerPageState extends State<PlayerPage>
       PageRouteBuilder(
         settings: const RouteSettings(name: playerRouteName),
         transitionDuration: const Duration(milliseconds: 200),
-        reverseTransitionDuration: const Duration(milliseconds: 200),
+        // 出场瞬时：竖屏页 pop 即消失（退出播放/切回横屏不再有 200ms 淡出，
+        // 与主播放路由「无退出动画」保持一致）
+        reverseTransitionDuration: Duration.zero,
         pageBuilder: (_, _, _) => PlayerPortraitPage(
           player: _player,
           controller: _controller,
@@ -1876,13 +1894,13 @@ class _PlayerPageState extends State<PlayerPage>
 
   /// 竖屏页 EOF「自动退出」/ 竖屏返回：先完成退出准备（保存进度/恢复设备/
   /// 恢复竖屏方向与系统 UI），此时竖屏页仍盖住横屏页、用户看不到底下画面；
-  /// 再快速连续关掉竖屏页 + 横屏页（两段 200ms 淡出重叠，直接回到列表）。
+  /// 再连续关掉竖屏页 + 横屏页（两个 pop 均无动画，直接回到列表）。
   ///
   /// ⚠️ v5 重写（用户反馈 v4 仍有「当前帧竖屏界面」闪现、黑屏淡出也嫌生硬）：
-  /// 不再先 pop 竖屏页让横屏页露出，也不盖黑屏——先把准备工作做完
-  /// （这期间竖屏页全程在栈顶遮住横屏页），然后 pop 竖屏页 + pop 横屏页
-  /// 连续执行，竖屏页淡出的同时横屏页也在淡出，横屏页只以低透明度
-  /// 短暂参与转场，列表页直接淡入。
+  /// 先把退出准备做完（这期间竖屏页全程在栈顶遮住横屏页），随后 `_exiting`
+  /// 置黑化遮罩盖住下层横屏页，再 pop 竖屏页 + pop 横屏页——主播放路由与
+  /// 竖屏页路由的出场均为瞬时（无退出动画，见 playerPageRoute），任何时刻
+  /// 看不到「两层页面同框 / 半屏过渡」。
   void _exitWithPortrait() {
     if (!mounted || _exiting) return;
     _exiting = true;
@@ -1890,18 +1908,26 @@ class _PlayerPageState extends State<PlayerPage>
   }
 
   Future<void> _finishExitWithPortrait() async {
-    // 竖屏页还在栈顶：先把退出准备做完，底下横屏页不会露出来
-    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-    await _saveProgress(forcePersist: true);
-    await _restoreDeviceState();
-    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    // 先停掉播放器（停声 + 停出帧 + 释放视频纹理），再 pop 两层——
-    // 否则 mpv 在 pop 转场/引擎销毁期间仍在出帧，触发 Flutter 引擎
-    // 「FlutterJNI is not attached to native」崩溃（flutter#188300）。
-    await _disposePlayer();
     if (!mounted) return;
-    Navigator.of(context).pop(); // 关竖屏页（淡出 200ms）
-    if (mounted) Navigator.of(context).pop(); // 关横屏页（淡出 200ms，重叠）
+    // 0. 下层黑化（此刻被竖屏页完全盖住，用户无感）：pop 后下层只能渲染纯黑
+    setState(() => _exitBlackout = true);
+    // 1. 同一帧冻结出帧：pause 后 mpv 零新帧，末帧随瞬时 pop 消失
+    try {
+      await _player.pause();
+    } on AssertionError {
+      // 播放器已销毁：静默
+    }
+    // 2. 旋转与 IO 并行、不阻塞 pop
+    unawaited(
+      SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
+    );
+    unawaited(_saveProgress(forcePersist: true));
+    unawaited(_restoreDeviceState());
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    // 3. 关两层：下层已是纯黑，两层 pop 任意时序都不会出现「两个竖屏界面」
+    if (!mounted) return;
+    Navigator.of(context).pop(); // 关竖屏页（瞬时，底下纯黑遮罩）
+    if (mounted) Navigator.of(context).pop(); // 关横屏页（黑化后安全）
   }
 
   /// 听视频（工作.md 第 10 点）：右上角槽位/「更多 → 听视频」进入。
@@ -2091,13 +2117,19 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(
       SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]),
     );
-    // 2. 保存进度 + 恢复设备状态（音量/亮度）
-    await _saveProgress(forcePersist: true);
-    await _restoreDeviceState();
-    // 3. 恢复系统 UI，先停播放器再 pop（防退出后仍在出声/出帧导致崩溃）
+    // 2. 同一帧冻结出帧：pause 后 mpv 零新帧（flutter#188300 不复发），
+    //    末帧留在纹理上随转场消失，不再是「黑屏渐隐」
+    try {
+      await _player.pause();
+    } on AssertionError {
+      // 播放器已销毁：静默
+    }
+    // 3. 保存进度 + 恢复设备状态不阻塞 pop（交给后台链完成）
+    unawaited(_saveProgress(forcePersist: true));
+    unawaited(_restoreDeviceState());
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    await _disposePlayer();
     if (mounted) Navigator.of(context).pop();
+    // 播放器销毁交给 State.dispose() 幂等兜底（_disposePlayer 保留）
   }
 
   /// 退出前销毁播放器：停声、停出帧、释放视频纹理（SurfaceProducer）。
@@ -2165,8 +2197,8 @@ class _PlayerPageState extends State<PlayerPage>
     // 退出时强制恢复竖屏和系统 UI
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    // 兜底销毁播放器（正常退出已在 _exitPlayer/_finishExitWithPortrait 中
-    // await 过，这里防异常路径泄漏；幂等，不会重复销毁）
+    // 兜底销毁播放器（正常退出已先 pause 冻结出帧，这里销毁释放纹理；
+    // 幂等，不会重复销毁）
     unawaited(_disposePlayer());
     super.dispose();
   }
@@ -2617,6 +2649,7 @@ class _PlayerPageState extends State<PlayerPage>
                       time: _thumbPreview!.time,
                       fraction: _thumbFraction,
                       visible: _thumbVisible,
+                      pending: _thumbPending,
                     ),
                   ),
                 // 双指缩放后显示「还原画面」入口（播放/暂停按钮下方，
@@ -2708,6 +2741,12 @@ class _PlayerPageState extends State<PlayerPage>
                         ),
                       ),
                     ),
+                  ),
+                // 退出黑化遮罩（z 序最顶）：竖屏退出期间盖住整个横屏页
+                // （视频 + UI 骨架），保证两层页面任何时刻不同框
+                if (_exitBlackout)
+                  const Positioned.fill(
+                    child: ColoredBox(color: Colors.black),
                   ),
               ],
             );

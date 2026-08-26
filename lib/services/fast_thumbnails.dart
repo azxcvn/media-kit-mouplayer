@@ -46,18 +46,19 @@ class FastThumbnails {
   ///
   /// [path] 本地视频绝对路径；[positionSec] 秒（0 = 首帧）；
   /// [dimension] 输出图像最长边像素；[useHwdec] MediaCodec 硬解（失败自动软解）。
-  /// 失败返回 null（不抛异常，调用方显示占位）。
+  /// 返回 [GrabOutcome]：[frame] 为 null 表示没抓到图（不抛异常）；
+  /// [stale] 为 true 表示请求被更新的请求顶掉（被抢占，非真实失败）。
   ///
   /// 调度（对齐 mpvRx）：最多 1 个解码在跑 + 1 个待跑；拖动时新请求
-  /// 直接顶掉旧的待跑请求（旧帧对预览无价值），被顶掉的返回 null。
+  /// 直接顶掉旧的待跑请求（旧帧对预览无价值），被顶掉的以 stale=true 完成。
   /// 任何时刻最多占用一个核，不会与播放内核抢 CPU。
-  static Future<FastThumbFrame?> grab(
+  static Future<GrabOutcome> grab(
     String path,
     double positionSec, {
     int dimension = 320,
     bool useHwdec = true,
   }) async {
-    if (!isAvailable) return null;
+    if (!isAvailable) return (frame: null, stale: false);
     if (positionSec.isNaN || positionSec < 0) positionSec = 0;
     if (dimension <= 0 || dimension > 4096) dimension = 320;
 
@@ -67,10 +68,11 @@ class FastThumbnails {
       dimension: dimension,
       useHwdec: useHwdec ? 1 : 0,
     );
-    // 新请求顶掉旧的待跑请求（其 future 以 null 完成）
+    // 新请求顶掉旧的待跑请求（其 future 以 stale=true 完成，表示「被抢占」，
+    // 与真实解码失败区分开，供上层决定是否记录失败冷却）
     final stale = _waiting;
     _waiting = job;
-    stale?._complete(null);
+    stale?._complete((frame: null, stale: true));
     _pump();
     return job.completer.future;
   }
@@ -84,10 +86,10 @@ class FastThumbnails {
       _waiting = null;
       _running = job;
       _runGrab(job.path, job.positionSec, job.dimension, job.useHwdec)
-          .then((frame) => job._complete(frame))
+          .then((frame) => job._complete((frame: frame, stale: false)))
           .catchError((Object e) {
         debugPrint('[FastThumb] grab error: $e');
-        job._complete(null);
+        job._complete((frame: null, stale: false));
       }).whenComplete(() {
         _running = null;
         _pump();
@@ -111,8 +113,9 @@ class FastThumbnails {
     int dimension = 320,
     bool useHwdec = true,
   }) async {
-    final frame = await grab(path, positionSec,
+    final out = await grab(path, positionSec,
         dimension: dimension, useHwdec: useHwdec);
+    final frame = out.frame;
     if (frame == null) return null;
 
     final buffer = await ui.ImmutableBuffer.fromUint8List(frame.rgba);
@@ -187,6 +190,10 @@ class FastThumbFrame {
   final int height;
 }
 
+/// 抓帧结果：[frame] 为 null 表示没抓到图；[stale] 为 true 表示请求被更新的
+/// 请求顶掉（被抢占，而非真实解码失败），供上层区分是否记录失败冷却。
+typedef GrabOutcome = ({FastThumbFrame? frame, bool stale});
+
 /// 一次抓帧请求（单飞队列的节点）。
 class _GrabJob {
   _GrabJob({
@@ -200,13 +207,13 @@ class _GrabJob {
   final double positionSec;
   final int dimension;
   final int useHwdec;
-  final completer = Completer<FastThumbFrame?>();
+  final completer = Completer<GrabOutcome>();
   bool _done = false;
 
-  void _complete(FastThumbFrame? frame) {
+  void _complete(GrabOutcome outcome) {
     if (_done) return;
     _done = true;
-    completer.complete(frame);
+    completer.complete(outcome);
   }
 }
 

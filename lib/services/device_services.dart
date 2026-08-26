@@ -378,13 +378,25 @@ class DeviceServices {
     final inflight = _inflight[key];
     if (inflight != null) return inflight;
 
-    final future = _fetchFrame(path, bucketMs, maxWidth).then((frame) {
-      if (frame != null) {
-        _frameCache[key] = frame;
-        _frameCacheBytes += frame.rgba.lengthInBytes;
+    // 失败冷却：同 key 近期真实解码失败（非被顶掉）→ 直接返回 null，
+    // 避免同一失败位置被反复拖动反复重解（对齐 mpvRx 10s 冷却）。
+    final lastFail = _frameFailAt[key];
+    if (lastFail != null &&
+        DateTime.now().millisecondsSinceEpoch - lastFail < _frameFailCooldownMs) {
+      return null;
+    }
+
+    final future = _fetchFrame(path, bucketMs, maxWidth).then((result) {
+      if (result.frame != null) {
+        _frameCache[key] = result.frame!;
+        _frameCacheBytes += result.frame!.rgba.lengthInBytes;
         _trimCache();
+        _frameFailAt.remove(key);
+      } else if (!result.stale) {
+        // 真实解码失败（引擎不可用 / 解码失败）→ 记冷却时间戳
+        _frameFailAt[key] = DateTime.now().millisecondsSinceEpoch;
       }
-      return frame;
+      return result.frame;
     });
     _inflight[key] = future;
     try {
@@ -411,7 +423,7 @@ class DeviceServices {
     String path,
     int timeMs, {
     int maxWidth = 320,
-    int maxGapMs = 10000,
+    int maxGapMs = 3000,
   }) {
     if (timeMs < 0) return null;
     final bucketMs = (timeMs ~/ 1000) * 1000;
@@ -452,39 +464,49 @@ class DeviceServices {
     _frameCache.clear();
     _frameCacheBytes = 0;
     _inflight.clear();
+    _frameFailAt.clear();
   }
 
   /// 抓帧实现：FFmpeg 快速引擎（独立 isolate 解码，RGBA 直出，无编码往返）。
-  /// 引擎不可用（内核未替换/非 Android）/失败/被新请求顶掉 → null。
-  static Future<FastThumbFrame?> _fetchFrame(
+  /// 引擎不可用（内核未替换/非 Android）/失败/被新请求顶掉 → frame null。
+  /// [GrabOutcome.stale] 区分「被顶掉」与「真实失败」。
+  static Future<GrabOutcome> _fetchFrame(
     String path,
     int timeMs,
     int maxWidth,
   ) async {
     final sw = Stopwatch()..start();
-    final frame = await FastThumbnails.grab(
+    final result = await FastThumbnails.grab(
       path,
       timeMs / 1000.0,
       dimension: maxWidth.clamp(64, 4096),
       useHwdec: true,
     );
     sw.stop();
+    final frame = result.frame;
     if (frame != null) {
       debugPrint('[Thumb] fast OK ${frame.rgba.lengthInBytes}B '
           '${frame.width}x${frame.height} ${sw.elapsedMilliseconds}ms');
     } else {
-      debugPrint('[Thumb] fast null/stale ${sw.elapsedMilliseconds}ms');
+      debugPrint('[Thumb] fast ${result.stale ? 'stale' : 'null'} '
+          '${sw.elapsedMilliseconds}ms');
     }
-    return frame;
+    return result;
   }
 
-  /// Dart 侧缩略图 LRU（约 24 MB，按 RGBA 字节计）
+  /// Dart 侧缩略图 LRU（约 32 MB，按 RGBA 字节计，对齐 mpvRx 32MB LruCache）
   /// LinkedHashMap 按插入序维护：新帧插尾部，命中时 remove+put 移到尾部，
   /// 淘汰时删头部（最久未用，risk_audit #7 修复——原先按「最早插入」删，
   /// 快速来回拖动时可能淘汰掉马上要用的帧）。
-  static const int _frameCacheMaxBytes = 24 * 1024 * 1024;
+  static const int _frameCacheMaxBytes = 32 * 1024 * 1024;
   static final Map<String, FastThumbFrame> _frameCache = {};
   static final Map<String, Future<FastThumbFrame?>> _inflight = {};
+
+  /// 失败冷却（毫秒）：同 key 真实解码失败后，此窗口内不再重发引擎请求。
+  static const int _frameFailCooldownMs = 10 * 1000;
+
+  /// 真实解码失败时间戳（epoch ms）：被顶掉（stale）不计入。
+  static final Map<String, int> _frameFailAt = {};
   static int _frameCacheBytes = 0;
 
   static void _trimCache() {
