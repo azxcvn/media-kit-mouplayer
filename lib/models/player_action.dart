@@ -70,7 +70,8 @@ enum PlayerTopAction {
   // v3：循环播放从设置页移入播放界面，作为可自定义槽位动作（可增删）
   loop('loop', '循环播放', Icons.repeat, true),
   equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, false),
-  decode('decode', '解码', Icons.deblur_outlined, false),
+  // 解码：已接入（方案 A，四档 hwdec），点击呼出解码面板
+  decode('decode', '解码', Icons.deblur_outlined, true),
   // 章节：已接入（工作.md 章节功能），点击呼出章节列表（无章节时提示）
   chapter('chapter', '章节', Icons.bookmarks_outlined, true),
   // 片头片尾：已接入（工作.md 片头片尾功能），点击呼出跳过设置面板

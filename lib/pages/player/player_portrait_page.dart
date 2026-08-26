@@ -13,6 +13,7 @@ import 'package:moumou/pages/player/views/audio_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
+import 'package:moumou/pages/player/views/player_decode_panel.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
 import 'package:moumou/pages/player/views/player_gesture_layer.dart';
@@ -953,6 +954,11 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         body: const PlayerLoopPanel(),
       );
 
+  PlayerPanelPage _decodePanelPage() => PlayerPanelPage(
+        title: '解码',
+        body: const PlayerDecodePanel(),
+      );
+
   /// 「更多」面板主页：未放入槽位的动作 +「编辑控制栏」入口（与横屏一致）。
   Widget _buildMorePanel() {
     return Builder(
@@ -1008,6 +1014,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         return _chapterPanelPage();
       case PlayerTopAction.introOutro:
         return _introOutroPanelPage();
+      case PlayerTopAction.decode:
+        return _decodePanelPage();
       default:
         return null;
     }
@@ -1107,10 +1115,10 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.introOutro:
       case PlayerTopAction.subtitle:
       case PlayerTopAction.audio:
+      case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
       case PlayerTopAction.equalizer:
-      case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
       case PlayerTopAction.listen:
         _openAudioPlayer();
@@ -1132,10 +1140,10 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.introOutro:
       case PlayerTopAction.subtitle:
       case PlayerTopAction.audio:
+      case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
       case PlayerTopAction.equalizer:
-      case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
       case PlayerTopAction.listen:
         // 先关闭「更多」面板再进入听视频（§4.5：不叠加第二个面板/弹窗）

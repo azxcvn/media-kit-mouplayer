@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/crash_log_service.dart';
+import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/media_scan_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
@@ -77,6 +78,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 媒体扫描设置：同 ensureLoaded 模式
     MediaScanSettings.instance.ensureLoaded();
     SuperResolutionService.instance.load();
+    // 解码设置（硬解/软解档位）：同 ensureLoaded 模式，播放页创建
+    // VideoController 时同步读取（防竞态）
+    DecodeSettings.instance.ensureLoaded();
   }
 
   @override

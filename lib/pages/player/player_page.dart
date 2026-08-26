@@ -15,6 +15,7 @@ import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
+import 'package:moumou/pages/player/views/player_decode_panel.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
 import 'package:moumou/pages/player/views/player_gesture_layer.dart';
@@ -33,6 +34,7 @@ import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/pages/player/views/subtitle_panel.dart';
 import 'package:moumou/services/audio_service.dart';
 import 'package:moumou/services/chapter_tracker.dart';
+import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
@@ -268,6 +270,21 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  /// 应用解码预设（mpv 内置 profile）：需在 open 前写入，
+  /// 重启播放器（重开视频）后生效；默认「快速」。
+  Future<void> _applyDecodePreset() async {
+    try {
+      final native = _player.platform as NativePlayer;
+      await native.waitForPlayerInitialization;
+      final profile = DecodeSettings.instance.preset.profile;
+      if (profile.isNotEmpty) {
+        await native.setProperty('profile', profile);
+      }
+    } catch (_) {
+      // 播放器初始化失败时随打开流程报错，此处静默
+    }
+  }
+
   /// 恢复进度指示器是否可见（恢复到位后显示，自管理 2.5s 隐藏）
   bool _resumeVisible = false;
 
@@ -328,7 +345,16 @@ class _PlayerPageState extends State<PlayerPage>
         libassAndroidFontName: useCustomFont ? subFont : null,
       ),
     );
-    _controller = VideoController(_player);
+    // 解码档位注入（方案 A）：创建时传入 hwdec/vo，换档后下次打开视频生效
+    final decodeMode = DecodeSettings.instance.mode;
+    _controller = VideoController(
+      _player,
+      configuration: VideoControllerConfiguration(
+        vo: 'gpu',
+        enableHardwareAcceleration: decodeMode != DecodeMode.sw,
+        hwdec: decodeMode.hwdec,
+      ),
+    );
     // 章节跟踪器：绑定同一播放器（mpv chapter-list 子属性读取）
     _chapterTracker = ChapterTracker(MpvChapterSource(_player));
     // 字幕控制器：绑定同一播放器（track-list / sid / sub-add 单选模型）；
@@ -346,6 +372,8 @@ class _PlayerPageState extends State<PlayerPage>
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
     // 而非落在最近关键帧）
     unawaited(_applyExactSeek());
+    // 解码预设（vd-lavc-*）：open 前写入，重启播放器后生效
+    unawaited(_applyDecodePreset());
 
     // 工作.md 第 7 点：关闭「启用播放界面动画」后，控制层/解锁按钮
     // 的进出场动画时长归零（forward/reverse 立即完成，直接出现/消失）
@@ -1589,8 +1617,9 @@ class _PlayerPageState extends State<PlayerPage>
         _openAudioPanel();
       case PlayerTopAction.danmaku:
       case PlayerTopAction.equalizer:
-      case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.decode:
+        _openDecodePanel();
       case PlayerTopAction.listen:
         _openAudioPlayer();
       case PlayerTopAction.pip:
@@ -1619,6 +1648,8 @@ class _PlayerPageState extends State<PlayerPage>
         return _chapterPanelPage();
       case PlayerTopAction.introOutro:
         return _introOutroPanelPage();
+      case PlayerTopAction.decode:
+        return _decodePanelPage();
       default:
         return null;
     }
@@ -1640,10 +1671,10 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.introOutro:
       case PlayerTopAction.subtitle:
       case PlayerTopAction.audio:
+      case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
       case PlayerTopAction.equalizer:
-      case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
       case PlayerTopAction.listen:
         Navigator.of(panelContext).pop();
@@ -1774,6 +1805,19 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _openLoopPanel() async {
     _hideTimer?.cancel();
     await showPlayerPanel(context, pages: [_loopPanelPage()]);
+    _resetHideTimer();
+  }
+
+  /// 解码面板页（顶栏/更多「解码」动作弹出，四档 hwdec）
+  PlayerPanelPage _decodePanelPage() => PlayerPanelPage(
+        title: '解码',
+        body: const PlayerDecodePanel(),
+      );
+
+  /// 打开解码面板（顶栏「解码」动作）
+  Future<void> _openDecodePanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_decodePanelPage()]);
     _resetHideTimer();
   }
 
