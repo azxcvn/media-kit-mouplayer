@@ -64,16 +64,16 @@ void main() {
       );
     });
 
-    test('LRU：超限（24MB）淘汰最久未用帧', () {
-      // 每帧 1MB（512×512×4 字节），上限 24MB → 第 25 帧起触发淘汰
+    test('LRU：超限（32MB）淘汰最久未用帧', () {
+      // 每帧 1MB（512×512×4 字节），上限 32MB → 第 33 帧起触发淘汰
       final big = FastThumbFrame(
         Uint8List.fromList(List.filled(512 * 512 * 4, 7)),
         512,
         512,
       );
-      // 先插入最早帧，再填满到超限（31MB），最早帧应被淘汰
+      // 先插入最早帧，再填满到超限（33MB），最早帧应被淘汰
       DeviceServices.debugPutFrame(path, 0, big);
-      for (var b = 2000; b <= 60000; b += 2000) {
+      for (var b = 2000; b <= 64000; b += 2000) {
         DeviceServices.debugPutFrame(path, b, big);
       }
       expect(DeviceServices.peekFrame(path, 0), isNull);
