@@ -66,6 +66,36 @@ Future<bool> waitForPositionReaching(
   return ok;
 }
 
+/// 等待位置**严格越过** [target]（`> target`），用于确认恢复点那一帧
+/// 已经解码上屏。
+///
+/// 背景（用户反馈：恢复封层揭开瞬间先闪 ~100ms 第一帧）：seek 到位时
+/// mpv 已把 time-pos 更新为目标位置，但 Flutter 纹理上可能仍是恢复期间
+/// 从 0 起播的旧帧，要等目标帧真正呈现后才追上。time-pos 随帧呈现更新，
+/// 于是「越过 target 一 tick」= 目标帧之后的新帧已呈现——此时揭开
+/// 封层看到的就是目标画面，不再有开头帧闪现。
+///
+/// 超时返回 true（不阻塞恢复：宁可提前揭开也不让封层卡死）。
+Future<bool> waitForPositionAdvancing(
+  Player player,
+  Duration target, {
+  Duration timeout = const Duration(milliseconds: 800),
+}) async {
+  if (player.state.position > target) return true;
+  final completer = Completer<bool>();
+  late final StreamSubscription<Duration> sub;
+  sub = player.stream.position.listen((p) {
+    if (p > target && !completer.isCompleted) completer.complete(true);
+  });
+  final timer = Timer(timeout, () {
+    if (!completer.isCompleted) completer.complete(true);
+  });
+  final ok = await completer.future;
+  timer.cancel();
+  await sub.cancel();
+  return ok;
+}
+
 /// 是否应恢复播放位置（纯函数，可单测）。
 ///
 /// 阈值规则（v3 用户反馈：循环播放时"无限恢复已看完视频的进度"）：
@@ -153,7 +183,11 @@ Future<bool> restorePlaybackPosition(
   }
 }
 
-/// 打开媒体并恢复到 [saved]（**v5.1 重写**，修复「指示器显示但视频仍从头播」）。
+/// 打开媒体并恢复到 [saved]（**v5.1 重写，修复「指示器显示但视频仍从头播」**）。
+///
+/// ⚠️ v5.3 注：v5.2 曾改用「open 前 `setProperty('start')` 加载期定位」，
+/// 实测恢复进度失效（start 在 media_kit open 的内部 stop/加载序列下未能
+/// 稳定生效），故还原为 v5.1 的确定性恢复流程。
 ///
 /// 根因（v5 实测反馈）：v5 在 `open(play: false)` 暂停态直接 seek——mpv 暂停
 /// 态 seek 只更新了 `time-pos` 属性（位置流确认到位、指示器照常显示），但
@@ -165,7 +199,9 @@ Future<bool> restorePlaybackPosition(
 /// 2. `prepare`（倍速/超分）在播放前完成，避免 shader 变化重置位置；
 /// 3. **静音** + `play()` 激活时间线（mpv 真正开始解码/播放）；
 /// 4. 等位置推进 ≥150ms（播放确已开始、时间线激活）后 **再 seek**；
-/// 5. 位置流确认到位（失败重试一次），随后取消静音。
+/// 5. 位置流确认到位（失败重试一次）；
+/// 6. 再等位置**越过恢复点一 tick**（目标帧已解码上屏）才返回——调用方
+///    据此揭开封层，揭开即目标画面，无「先闪 100ms 第一帧」；随后取消静音。
 ///
 /// 全程由调用方用不透明封层盖住视频，静音则保证激活窗口内「从 0 短暂播放」
 /// 不出声——首帧即目标帧、无开头闪现、无开头声音。
@@ -207,7 +243,11 @@ Future<bool> openAndRestore(
       await player.seek(saved);
       ok = await waitForPositionReaching(player, saved, timeout: confirmTimeout);
     }
-    return ok;
+    if (!ok) return false;
+    // 位置确认到位后，再等位置越过恢复点一 tick（目标帧已解码上屏），
+    // 调用方此时才揭开恢复封层——揭开即目标画面，无开头帧闪现
+    await waitForPositionAdvancing(player, saved);
+    return true;
   } finally {
     // 任何路径（含播放器销毁异常）都恢复静音状态，避免残留静音
     try {

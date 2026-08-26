@@ -4,19 +4,18 @@ import 'package:flutter/services.dart';
 /// 播放页路由标识：播放页 push 时需携带 RouteSettings(name: playerRouteName)
 const String playerRouteName = 'player';
 
-/// 播放页路由：淡入淡出转场（200ms）。
+/// 播放页路由：**无进出场动画**（瞬时切换）。
 ///
-/// 退出时淡出与系统竖屏旋转自然重叠——不加延时、不盖黑屏：横屏播放页在
-/// 淡出过程中旋转回竖屏，视觉平滑（用户反馈 v5：退出不能有错向界面
-/// 长时间闪现，也不能有生硬的黑屏淡出）。
+/// 历史：曾用 200ms FadeTransition（淡入是透明度合成，转场期底层列表页
+/// 透出）与 220ms SlideTransition（从右滑入，转场期可见「一半播放页、
+/// 一半 app 界面」）——用户明确要求去掉进出播放的动画，进出瞬间完成，
+/// 播放页与列表页任何时刻不同框。横屏旋转/沉浸式由播放页自管，与路由无关。
 Route<T> playerPageRoute<T>(Widget page) {
   return PageRouteBuilder<T>(
     settings: const RouteSettings(name: playerRouteName),
-    transitionDuration: const Duration(milliseconds: 200),
-    reverseTransitionDuration: const Duration(milliseconds: 200),
+    transitionDuration: Duration.zero,
+    reverseTransitionDuration: Duration.zero,
     pageBuilder: (_, _, _) => page,
-    transitionsBuilder: (_, animation, _, child) =>
-        FadeTransition(opacity: animation, child: child),
   );
 }
 

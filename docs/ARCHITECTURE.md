@@ -204,13 +204,13 @@ models（模型）     → 无依赖（纯数据）
 
 `AppFrameObserver`（`app_frame.dart`，全局单例，挂在 `MaterialApp.navigatorObservers`）自动监听栈顶路由：
 
-- **push 播放页统一用 `playerPageRoute`**（`app_frame.dart`，淡入淡出转场 + 自动带 `RouteSettings(name: playerRouteName)`）；勿用 `MaterialPageRoute` 手写 settings——退出靠这段淡出转场吸收系统竖屏旋转（横竖屏返回「错向界面闪现」的根因之一）
+- **push 播放页统一用 `playerPageRoute`**（`app_frame.dart`，**无进出场动画**、瞬时切换 + 自动带 `RouteSettings(name: playerRouteName)`）；勿用 `MaterialPageRoute` 手写 settings——用户明确要求去掉进出播放的动画（历史滑动转场暴露「一半播放页、一半 app 界面」的过渡帧），瞬时切换后播放页与列表页任何时刻不同框
 - 播放页内部**不要**手动设置任何全局状态
 - 现有三处 push 已改用 `playerPageRoute`（home_page / folder_detail_page / tree_folder_page 的 `_openVideo`/`_openPlayer`）
 
 ### 4.4 播放页全屏（系统栏）
 
-`player_page.dart` 的 `_enterFullscreen()`：`immersiveSticky` + 透明系统栏（`_exitPlayer` / `dispose` 恢复竖屏 + edgeToEdge）。退出统一走 `PopScope` 拦截 + `_exitPlayer()`：**立即发起竖屏方向**（旋转与保存/恢复并行）→ 保存进度 + 恢复设备状态 → 恢复系统 UI → **立即 pop，不加延时、不盖黑屏**，pop 的淡出转场（`playerPageRoute`，200ms）与系统旋转自然重叠，横屏页在淡出中旋转回竖屏；竖屏页退出走 `_exitWithPortrait`（先完成保存/恢复/方向/系统 UI，此时竖屏页仍盖住横屏页，再**连续 pop 竖屏页 + 横屏页**，两段淡出重叠直接回列表）。系统返回键与返回按钮行为一致。
+`player_page.dart` 的 `_enterFullscreen()`：`immersiveSticky` + 透明系统栏（`_exitPlayer` / `dispose` 恢复竖屏 + edgeToEdge）。退出统一走 `PopScope` 拦截 + `_exitPlayer()`：**同一帧 `pause()` 冻结末帧**（mpv 零新帧，末帧随瞬时 pop 消失，不再「黑屏渐隐」）→ 发起竖屏方向 + 保存进度 + 恢复设备状态（均 `unawaited` 不阻塞）→ 恢复系统 UI → **立即 pop**（`playerPageRoute` 无动画，与系统旋转并行）；**播放器销毁交给 `dispose()` 幂等兜底**（pause 已停帧，flutter#188300 不复发）。竖屏页退出走 `_exitWithPortrait`：先置 `_exitBlackout` 把下层横屏页整体黑化 → `pause()` 冻结 → IO `unawaited` → 连续 pop 竖屏页 + 横屏页（下层纯黑，任何时刻两层不同框，「两个竖屏界面」在机制上不可能复现）。系统返回键与返回按钮行为一致。
 
 ### 4.5 弹窗 / 面板
 
@@ -331,7 +331,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 2. 页面用 `Scaffold` + `AppBar`，body 用 `ListView`（安全区自动处理，不用管）
 3. 需要排序弹窗 → `showSortOptionsSheet`；需要弹窗 → `showAppDialog`
 4. 跳转：`Navigator.push(MaterialPageRoute(builder: ...))`
-   - 如果是播放页：用 `playerPageRoute(page)`（`app_frame.dart`，淡入淡出转场 + 自动带 `RouteSettings(name: playerRouteName)`）
+   - 如果是播放页：用 `playerPageRoute(page)`（`app_frame.dart`，无进出场动画 + 自动带 `RouteSettings(name: playerRouteName)`）
    - 播放页可传 `playlist:`（当前可见的排序视频列表），用于「下一集」；不传则按钮置灰
 5. 页面专属小组件放 `lib/pages/<name>/views/`，跨页复用的放 `lib/widgets/`
 6. 底部有悬浮胶囊（主 tab 页）：ListView 底部 padding `88`
@@ -423,21 +423,21 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 坑 | 防护 |
 |---|---|
 | 挖孔屏横屏白条 / 系统栏露浅色背景 | AppFrame `left/right` 恒 false + 播放页豁免 bottom + ColoredBox 铺色（§4.2） |
-| 播放页退出闪烁/黑屏（错向界面 ~1s 或退出黑一下） | 退出**不加延时、不盖黑屏**：立即发起竖屏方向 → 保存+恢复设备 → 恢复系统 UI → 立即 pop（`playerPageRoute` 淡出 200ms 吸收系统旋转）（§4.4） |
+| 播放页退出闪烁/黑屏（错向界面 ~1s 或退出黑一下） | 退出**同一帧 `pause()` 冻结末帧**（不再先 dispose 黑屏渐隐）+ IO `unawaited` + 无动画瞬时 pop；竖屏退出下层 `_exitBlackout` 黑化（§4.4） |
 | 面板红底黄字崩溃（No Material） | PlayerPanel / PlayerBottomPanel 外壳必须用 `Material`，勿换 Container；拖拽 `proxyDecorator` 也用 `Material`（`ColoredBox` 非 Material，拖拽时 proxy 被放 overlay 脱离外壳会崩）（§4.5） |
 | 面板内 `Navigator.of` 断言 scope==null | 内容先包 `Builder` 取面板树内 context 再调 `of`（§4.5） |
 | 全局 ValueNotifier hack 引发连锁补丁 | 禁止；跨页面用 ChangeNotifier / 路由机制（§4.1） |
 | DSH 沙箱卡住 flutter/dart 子进程 | `flutter analyze/test` 必须 danger-full-access 执行；勿用 `flutter --version` 探路 |
 | mpv 着色器要绝对路径 / 切集后失效 | 拷贝 assets 到应用目录拼绝对路径；open 后与切集后都 `apply(player)` |
 | EOF 防重入（切集瞬间残留事件） | `_isSwitchingVideo` + `_isHandlingEndOfFile` 双标志 + 位置到结尾校验 + 纯函数 `resolveEndOfFileAction` |
-| `Media(start:)` 失效（media_kit 1.2.x on_load hook 读到 playlist-pos=-1 跳过 start） | 弃用；恢复统一走 `openAndRestore`（`utils/playback_restore.dart`） |
-| 恢复进度"从头播"（暂停态 seek 只改 time-pos、不改解码器，指示器跳但视频从头） | `openAndRestore`：`open(play:false)` 暂停加载 → 等时长 → **静音 `play()` 激活时间线** → 等位置推进 ≥150ms → `seek` → 位置流确认（重试一次）→ 取消静音；全程不透明封层盖住视频 |
+| `Media(start:)` 失效（media_kit 1.2.x on_load hook 读到 playlist-pos=-1 跳过 start） | 弃用；恢复统一走 `openAndRestore`（`utils/playback_restore.dart`）。⚠️ v5.2 曾试 `open` 前 `setProperty('start')` 加载期定位，实测恢复失效，已还原 v5.1 |
+| 恢复进度"从头播"（暂停态 seek 只改 time-pos、不改解码器，指示器跳但视频从头） | `openAndRestore`：`open(play:false)` 暂停加载 → 等时长 → **静音 `play()` 激活时间线** → 等位置推进 ≥150ms → `seek` → 位置流确认（重试一次）→ 位置**越过恢复点一 tick**（目标帧已上屏）才揭开不透明封层 → 取消静音 |
 | 恢复进度"跳到又跳回 / 读取竞态" | `PlaybackProgressService` ensureLoaded（读盘完成后再置 `_loaded`）+ `_writeChain` 串行写盘 + 退出/切集 `save(forcePersist:true)` |
 | 恢复进度指示器残留/不显示 | 只有 `openAndRestore` 返回 true 才显示；2.5s 自隐藏；竖屏/锁定竖屏由 `initialResumeVisible` 接住 |
 | 已看完视频恢复后立即 EOF 连播 | `_resumeStartFor` 阈值过滤（<5% 或 ≥已观看阈值 → 不恢复从头播） |
 | 循环播放无限恢复已看完视频 | `shouldRestorePosition`：<5% 或 ≥已观看阈值不恢复 |
 | 横竖屏切换卡顿/黑屏/音频断 | v3：共享同一 Player/VideoController，竖屏页只换布局不重开；EOF 由当前栈顶页处理 |
-| 竖屏返回不能直接退出 / 退出露横屏页 | 竖屏返回走 `_backExit` → `_exitWithPortrait`（先完成保存/恢复/方向/系统 UI，再连 pop 竖屏页 + 横屏页，两段淡出重叠直接回列表）；「选择屏幕」仍仅回横屏 |
+| 竖屏返回不能直接退出 / 退出露横屏页 | 竖屏返回走 `_backExit` → `_exitWithPortrait`（先 `_exitBlackout` 黑化下层 → `pause()` → IO unawaited → 连 pop 竖屏页 + 横屏页，下层纯黑防「两个竖屏界面」复现）；「选择屏幕」仍仅回横屏 |
 | 竖屏锁定不生效 | 手势层传 `locked`，各手势回调补 `if (_locked) return` |
 | 手机竖拍视频仍横屏播放（自动方向） | 竖屏判定结合 `VideoParams.rotate`（90/270 时宽高互换，参考 KT：`video-params/aspect` + rotate 修正）；⚠️ 用**原始 w/h**（`videoParams.w/h`）而非 `state.width/height`（后者已被 media_kit 按 rotate 交换成显示尺寸，再套 rotate 会双重交换误判） |
 | 画面比例不实时生效 | Video 外包 `ListenableBuilder(listenable: 设置)`；⚠️ 4:3→自动失效根因：media_kit `VideoViewParameters.copyWith(aspectRatio: null)` 保留旧值 → Video 加 `key: ValueKey(fit.index)` 强制重建 |
