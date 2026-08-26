@@ -10,6 +10,7 @@ import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/player_portrait_page.dart';
+import 'package:moumou/pages/player/views/audio_panel.dart';
 import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
@@ -30,6 +31,7 @@ import 'package:moumou/pages/player/views/player_swipe_seek_overlay.dart';
 import 'package:moumou/pages/player/views/player_thumbnail_preview.dart';
 import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/pages/player/views/subtitle_panel.dart';
+import 'package:moumou/services/audio_service.dart';
 import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
@@ -118,6 +120,10 @@ class _PlayerPageState extends State<PlayerPage>
   /// 字幕控制器（工作.md 阶段1 第 3 点）：轨道列表/主次字幕/外挂导入/设置应用；
   /// 横竖屏共享同一实例（同一 Player，切集后统一重新应用）。
   late final SubtitleController _subtitleController;
+
+  /// 音频控制器（工作.md 音频功能）：音轨列表/切音轨/外部音轨导入·移除/
+  /// 声道/音频处理；横竖屏共享同一实例（同一 Player，切集后统一重新应用）。
+  late final AudioController _audioController;
 
   /// 片头片尾状态跟踪器（工作.md 片头片尾功能）：驱动片头/片尾自动跳过
   /// 动作；横竖屏共享同一实例（切集/位置流统一驱动）。
@@ -329,6 +335,9 @@ class _PlayerPageState extends State<PlayerPage>
       if (mounted) _toast('已自动加载字幕：$fileName');
     };
     unawaited(_subtitleController.applyOnInit());
+    // 音频控制器：绑定同一播放器（track-list / aid / audio-add / 声道 / af）
+    _audioController = AudioController(_player);
+    unawaited(_audioController.applyOnInit());
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
     // 而非落在最近关键帧）
@@ -508,6 +517,8 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_chapterTracker.load());
     // 字幕功能：open 完成后刷新轨道/重新添加外挂字幕/应用设置
     unawaited(_subtitleController.reapplyForMedia(_path));
+    // 音频功能：open 完成后刷新音轨/同步当前音轨/应用声道与音频处理
+    unawaited(_audioController.reapplyForMedia(_path));
     await _applyVideoOrientation();
   }
 
@@ -1273,6 +1284,8 @@ class _PlayerPageState extends State<PlayerPage>
       _chapterTracker.clear();
       // 字幕功能：清空旧媒体轨道（切集后重新加载）
       _subtitleController.clear();
+      // 音频功能：清空旧媒体音轨（切集后重新加载；外部音轨临时不跨集保留）
+      _audioController.clear();
       // 片头片尾：重置跟踪状态（open 期间位置事件不评估）
       _introOutroTracker.reset();
       if (mounted) {
@@ -1332,6 +1345,8 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_chapterTracker.load());
       // 字幕功能：切集后重新添加外挂字幕 + 刷新轨道 + 应用设置
       unawaited(_subtitleController.reapplyForMedia(path));
+      // 音频功能：切集后刷新音轨 + 同步当前音轨 + 应用声道与音频处理
+      unawaited(_audioController.reapplyForMedia(path));
     } on AssertionError {
       // 播放器已被销毁（切集过程中退出）：静默返回，不写假崩溃日志
       return;
@@ -1379,7 +1394,7 @@ class _PlayerPageState extends State<PlayerPage>
         body: const PlayerFitPanel(),
       );
 
-  /// 「更多」面板主页：未放入槽位的动作（点击直接执行）+「编辑控制栏」入口。
+  /// 「更多」面板主页：未放入槽位的动作 +「编辑控制栏」入口。
   ///
   /// 工作.md 第 14 点：未放置到顶部 5 槽位的动作自动出现在「更多」里
   /// （「编辑控制栏」入口上方），同时也在「编辑控制栏 → 可添加」里。
@@ -1396,28 +1411,25 @@ class _PlayerPageState extends State<PlayerPage>
               .where((a) => !_settings.topActions.contains(a))
               .toList();
           return ListView(
+            key: const PageStorageKey('more_panel'),
             padding: const EdgeInsets.symmetric(vertical: 4),
             children: [
               if (notPlaced.isNotEmpty) ...[
                 const _PanelSectionLabel('未放置的功能'),
-                // 点击直接执行动作（与顶栏槽位点击同一入口 _handleSlotAction）；
-                // 先关闭「更多」面板再执行，避免叠加第二个面板（§4.5 约定）
+                // 面板类动作面板内 push（返回按钮可回「更多」）；
+                // 动作类（画中画/听视频）由 [_handlePanelAction] 关闭面板后执行
                 for (final a in notPlaced)
                   _PanelActionTile(
                     icon: a.icon,
                     label: a.label,
-                    subtitle: a.implemented ? '直接可用' : '即将上线',
-                    onTap: () {
-                      Navigator.of(panelContext).pop();
-                      _handleSlotAction(a);
-                    },
+                    subtitle: a.implemented ? null : '功能即将上线',
+                    onTap: () => _handlePanelAction(panelContext, a),
                   ),
                 const Divider(height: 1, color: Colors.white12),
               ],
               _PanelActionTile(
                 icon: Icons.tune,
                 label: '编辑控制栏',
-                subtitle: '管理右上角 5 个槽位按钮（添加 / 移除 / 排序）',
                 onTap: () => PlayerPanelNavigator.of(panelContext).push(
                   PlayerPanelPage(title: '编辑控制栏', body: _buildEditPanel()),
                 ),
@@ -1432,7 +1444,7 @@ class _PlayerPageState extends State<PlayerPage>
   /// 「编辑控制栏」页：已启用槽位（拖拽排序 + 文本「删除」）+ 可添加（文本「添加」）
   ///
   /// 已启用/可添加两区覆盖全部 [PlayerTopAction.values]（9 个动作：字幕/弹幕/
-  /// 音轨/比例/画中画/听视频/均衡器/解码/片头片尾），增删/排序沿用
+  /// 音频/比例/画中画/听视频/均衡器/解码/片头片尾），增删/排序沿用
   /// [_settings]（addTopAction/removeTopAction/reorderTopAction）。
   Widget _buildEditPanel() {
     final scheme = Theme.of(context).colorScheme;
@@ -1489,15 +1501,7 @@ class _PlayerPageState extends State<PlayerPage>
                         fontSize: 15,
                       ),
                     ),
-                    subtitle: a.implemented
-                        ? null
-                        : const Text(
-                            '功能即将上线',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 12,
-                            ),
-                          ),
+                    titleAlignment: ListTileTitleAlignment.center,
                     trailing: TextButton(
                       style: TextButton.styleFrom(
                         foregroundColor: scheme.error,
@@ -1534,15 +1538,7 @@ class _PlayerPageState extends State<PlayerPage>
                       fontSize: 15,
                     ),
                   ),
-                  subtitle: Text(
-                    !a.implemented
-                        ? '功能即将上线'
-                        : (full ? '槽位已满（5/5），需先移除一个' : ''),
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 12,
-                    ),
-                  ),
+                  titleAlignment: ListTileTitleAlignment.center,
                   trailing: TextButton(
                     style: TextButton.styleFrom(
                       foregroundColor: scheme.primary,
@@ -1551,7 +1547,13 @@ class _PlayerPageState extends State<PlayerPage>
                         vertical: 6,
                       ),
                     ),
-                    onPressed: full ? null : () => _settings.addTopAction(a),
+                    onPressed: () {
+                      if (full) {
+                        _toast('最多允许放 5 个');
+                      } else {
+                        _settings.addTopAction(a);
+                      }
+                    },
                     child: const Text('添加'),
                   ),
                 ),
@@ -1560,7 +1562,6 @@ class _PlayerPageState extends State<PlayerPage>
             _PanelActionTile(
               icon: Icons.restart_alt,
               label: '重置控制栏',
-              subtitle: '清空全部槽位（仅保留「更多」按钮）',
               onTap: _settings.resetTopActions,
             ),
           ],
@@ -1579,8 +1580,9 @@ class _PlayerPageState extends State<PlayerPage>
         _openFitPanel();
       case PlayerTopAction.subtitle:
         _openSubtitlePanel();
-      case PlayerTopAction.danmaku:
       case PlayerTopAction.audio:
+        _openAudioPanel();
+      case PlayerTopAction.danmaku:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
@@ -1597,49 +1599,95 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
-  /// 打开章节列表面板（顶栏「章节」动作 / 点击章节名称共用）：
-  /// 右侧滑入（[showPlayerPanel]），无章节时面板内显示空状态提示。
+  /// 「更多」面板内动作对应的面板页（返回 null 表示不是面板类动作）。
+  PlayerPanelPage? _panelPageFor(PlayerTopAction action) {
+    switch (action) {
+      case PlayerTopAction.aspect:
+        return _fitPanelPage();
+      case PlayerTopAction.subtitle:
+        return _subtitlePanelPage();
+      case PlayerTopAction.audio:
+        return _audioPanelPage();
+      case PlayerTopAction.loop:
+        return _loopPanelPage();
+      case PlayerTopAction.chapter:
+        return _chapterPanelPage();
+      case PlayerTopAction.introOutro:
+        return _introOutroPanelPage();
+      default:
+        return null;
+    }
+  }
+
+  /// 「更多」面板内点击动作：面板类 → 面板内 push（header 自动显示返回按钮，
+  /// 可返回「更多」）；动作类（画中画/听视频）→ 先关闭「更多」面板再执行，
+  /// 避免叠加第二个面板（§4.5 约定）。
+  void _handlePanelAction(BuildContext panelContext, PlayerTopAction action) {
+    final page = _panelPageFor(action);
+    if (page != null) {
+      PlayerPanelNavigator.of(panelContext).push(page);
+      return;
+    }
+    switch (action) {
+      case PlayerTopAction.aspect:
+      case PlayerTopAction.loop:
+      case PlayerTopAction.chapter:
+      case PlayerTopAction.introOutro:
+      case PlayerTopAction.subtitle:
+      case PlayerTopAction.audio:
+        break; // 已在上方 _panelPageFor 分支处理
+      case PlayerTopAction.danmaku:
+      case PlayerTopAction.equalizer:
+      case PlayerTopAction.decode:
+        if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.listen:
+        Navigator.of(panelContext).pop();
+        _openAudioPlayer();
+      case PlayerTopAction.pip:
+        Navigator.of(panelContext).pop();
+        _enterPip();
+    }
+  }
+
+  /// 章节面板页（顶栏「章节」动作 / 点击章节名称共用；
+  /// 无章节时面板内显示空状态提示）。
+  PlayerPanelPage _chapterPanelPage() => PlayerPanelPage(
+        title: '章节',
+        body: PlayerChapterPanel(
+          tracker: _chapterTracker,
+          onSelect: (chapter) => _chapterTracker.seekToChapter(chapter),
+        ),
+      );
+
+  /// 打开章节列表面板（右侧滑入，[showPlayerPanel]）。
   Future<void> _openChapterPanel() async {
     _hideTimer?.cancel();
-    await showPlayerPanel(
-      context,
-      pages: [
-        PlayerPanelPage(
-          title: '章节',
-          body: PlayerChapterPanel(
-            tracker: _chapterTracker,
-            onSelect: (chapter) => _chapterTracker.seekToChapter(chapter),
-          ),
-        ),
-      ],
-    );
+    await showPlayerPanel(context, pages: [_chapterPanelPage()]);
     _resetHideTimer();
   }
 
-  /// 打开字幕面板（顶栏/更多「字幕」动作，工作.md 阶段1 第 3 点）：
-  /// 右侧滑入（[showPlayerPanel]），一级面板集成字幕轨道 + 外挂导入 + 设置入口。
+  /// 字幕面板页（顶栏/更多「字幕」动作，工作.md 阶段1 第 3 点）：
+  /// 一级面板集成字幕轨道 + 外挂导入 + 设置入口。
+  PlayerPanelPage _subtitlePanelPage() => PlayerPanelPage(
+        title: '字幕',
+        body: Builder(
+          builder: (panelContext) {
+            final navigator = PlayerPanelNavigator.of(panelContext);
+            return PlayerSubtitlePanel(
+              controller: _subtitleController,
+              onPushSubPage: (title, body) => navigator.push(
+                PlayerPanelPage(title: title, body: body),
+              ),
+              onPopSubPage: () => navigator.pop(),
+            );
+          },
+        ),
+      );
+
+  /// 打开字幕面板（右侧滑入，[showPlayerPanel]）。
   Future<void> _openSubtitlePanel() async {
     _hideTimer?.cancel();
-    await showPlayerPanel(
-      context,
-      pages: [
-        PlayerPanelPage(
-          title: '字幕',
-          body: Builder(
-            builder: (panelContext) {
-              final navigator = PlayerPanelNavigator.of(panelContext);
-              return PlayerSubtitlePanel(
-                controller: _subtitleController,
-                onPushSubPage: (title, body) => navigator.push(
-                  PlayerPanelPage(title: title, body: body),
-                ),
-                onPopSubPage: () => navigator.pop(),
-              );
-            },
-          ),
-        ),
-      ],
-    );
+    await showPlayerPanel(context, pages: [_subtitlePanelPage()]);
     _resetHideTimer();
   }
 
@@ -1648,6 +1696,31 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _skipCurrentSegment() async {
     _resetHideTimer();
     await _chapterTracker.skipActiveSegment();
+  }
+
+  /// 音频面板页（顶栏/更多「音频」动作，工作.md 音频功能）：
+  /// 一级面板集成音轨 + 外部音轨导入 + 音频声道 + 音频处理。
+  PlayerPanelPage _audioPanelPage() => PlayerPanelPage(
+        title: '音频',
+        body: Builder(
+          builder: (panelContext) {
+            final navigator = PlayerPanelNavigator.of(panelContext);
+            return PlayerAudioPanel(
+              controller: _audioController,
+              onPushSubPage: (title, body) => navigator.push(
+                PlayerPanelPage(title: title, body: body),
+              ),
+              onPopSubPage: () => navigator.pop(),
+            );
+          },
+        ),
+      );
+
+  /// 打开音频面板（右侧滑入，[showPlayerPanel]）。
+  Future<void> _openAudioPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_audioPanelPage()]);
+    _resetHideTimer();
   }
 
   // ── 画中画 / 循环播放 / 听视频 ──────────────────────────
@@ -1777,6 +1850,8 @@ class _PlayerPageState extends State<PlayerPage>
           introOutroTracker: _introOutroTracker,
           // 字幕功能：共享横屏页控制器（同一 Player，切集后统一重新应用）
           subtitleController: _subtitleController,
+          // 音频功能：共享横屏页控制器（同一 Player，切集后统一重新应用）
+          audioController: _audioController,
         ),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -2077,6 +2152,7 @@ class _PlayerPageState extends State<PlayerPage>
     _dragPositionNotifier.dispose();
     _chapterTracker.dispose();
     _subtitleController.dispose();
+    _audioController.dispose();
     _audioActive.dispose();
     _thumbHideTimer?.cancel();
     _cancelThumbPrefetch();
@@ -2688,6 +2764,7 @@ class _PanelActionTile extends StatelessWidget {  final IconData icon;
         label,
         style: const TextStyle(color: Colors.white, fontSize: 15),
       ),
+      titleAlignment: ListTileTitleAlignment.center,
       subtitle: subtitle == null
           ? null
           : Text(

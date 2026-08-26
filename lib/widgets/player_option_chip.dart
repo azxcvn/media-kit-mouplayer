@@ -15,6 +15,10 @@ class PlayerOptionChip extends StatelessWidget {
   /// 文字对齐（超分面板三行等宽胶囊用居中；倍速面板默认左对齐）
   final TextAlign textAlign;
 
+  /// 文本最大行数（默认 null = 不限制；传 1 时文本不换行、超出省略号，
+  /// 用于等宽两行布局保证胶囊高度一致）
+  final int? maxLines;
+
   const PlayerOptionChip({
     super.key,
     required this.label,
@@ -22,6 +26,7 @@ class PlayerOptionChip extends StatelessWidget {
     required this.onTap,
     this.padding = const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
     this.textAlign = TextAlign.left,
+    this.maxLines,
   });
 
   @override
@@ -41,6 +46,8 @@ class PlayerOptionChip extends StatelessWidget {
         child: Text(
           label,
           textAlign: textAlign,
+          maxLines: maxLines,
+          overflow: maxLines == null ? null : TextOverflow.ellipsis,
           style: TextStyle(
             color: selected ? scheme.onPrimary : Colors.white,
             fontSize: 13,

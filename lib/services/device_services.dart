@@ -226,6 +226,28 @@ class DeviceServices {
     }
   }
 
+  /// 打开「音频」系统文件选择器（MIME 含 audio/*，.mp3/.m4a 等不再置灰）。
+  static Future<String?> openAudioPicker() async {
+    try {
+      return await _channel.invokeMethod<String>('openAudioPicker');
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把 content:// 音轨 uri 拷贝为应用内真实路径（libmpv 无法直接读 content://）；
+  /// 返回真实绝对路径，失败返回 null。
+  static Future<String?> copyAudioFromUri(String uri, String name) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'copyAudioFromUri',
+        {'uri': uri, 'name': name},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// 打开「字体」系统文件选择器：MIME 含 font/*（.ttf/.otf 不再置灰）。
   static Future<String?> openFontPicker() async {
     try {

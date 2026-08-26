@@ -7,11 +7,12 @@ import 'package:moumou/services/player_controls_settings.dart';
 ///
 /// 与横屏播放页的编辑面板共用同一份 [PlayerControlsSettings] 数据：
 /// - 「已启用」区：长按拖拽排序 + 文本「删除」；
-/// - 「可添加」区：未启用动作，文本「添加」；
+/// - 「可添加」区：未启用动作，文本「添加」（槽位已满时点击弹 toast
+///   「最多允许放 5 个」）；
 /// - 「重置控制栏」：清空全部槽位。
 ///
-/// ⚠️ v3 用户反馈：竖屏窄屏最多 4 个槽位（[PortraitPlayerTopBar.maxPortraitSlots]），
-/// 「可添加」以 4 为上限（与顶栏渲染一致）。
+/// ⚠️ 竖屏与横屏一致最多 5 个槽位（[PortraitPlayerTopBar.maxPortraitSlots]），
+/// 「可添加」以 5 为上限（与顶栏渲染一致）。
 ///
 /// 拖拽高亮修复（工作.md 第 14 点）：默认 proxyDecorator 会把拖拽项包在
 /// 带 elevation 的 Material 里，深色主题下产生白色高亮 —— 改用
@@ -30,9 +31,8 @@ class PortraitEditControlPanel extends StatelessWidget {
         final disabled = PlayerTopAction.values
             .where((a) => !enabled.contains(a))
             .toList();
-        // 竖屏上限 4（v3 用户反馈），低于横屏的全局上限 5
-        final portraitFull =
-            enabled.length >= PortraitPlayerTopBar.maxPortraitSlots;
+        // 竖屏与横屏一致，上限 5
+        final full = enabled.length >= PortraitPlayerTopBar.maxPortraitSlots;
         return ListView(
           padding: const EdgeInsets.symmetric(vertical: 4),
           children: [
@@ -43,10 +43,25 @@ class PortraitEditControlPanel extends StatelessWidget {
                 physics: const NeverScrollableScrollPhysics(),
                 itemCount: enabled.length,
                 onReorderItem: (o, n) => settings.reorderTopAction(o, n),
-                // 深色下长按高亮修复：ColoredBox 而非带 elevation 的 Material
-                proxyDecorator: (child, index, animation) => ColoredBox(
-                  color: scheme.onInverseSurface,
-                  child: child,
+                // 拖拽代理项必须用 Material 外壳（ListTile 要求 Material 祖先，
+                // 拖拽时 proxy 被放到 overlay、脱离面板 Material 会报
+                // "No Material widget found"）；黑色半透明底避免深色下长按白高亮
+                proxyDecorator: (child, index, animation) => AnimatedBuilder(
+                  animation: animation,
+                  builder: (context, _) => Material(
+                    color: Colors.black.withValues(alpha: 0.85),
+                    elevation: 4,
+                    shadowColor: Colors.black,
+                    borderRadius: BorderRadius.circular(12),
+                    clipBehavior: Clip.antiAlias,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: child,
+                    ),
+                  ),
                 ),
                 itemBuilder: (context, index) {
                   final a = enabled[index];
@@ -60,15 +75,7 @@ class PortraitEditControlPanel extends StatelessWidget {
                         fontSize: 15,
                       ),
                     ),
-                    subtitle: a.implemented
-                        ? null
-                        : const Text(
-                            '功能即将上线',
-                            style: TextStyle(
-                              color: Colors.white38,
-                              fontSize: 12,
-                            ),
-                          ),
+                    titleAlignment: ListTileTitleAlignment.center,
                     trailing: TextButton(
                       style: TextButton.styleFrom(
                         foregroundColor: scheme.error,
@@ -97,17 +104,7 @@ class PortraitEditControlPanel extends StatelessWidget {
                       fontSize: 15,
                     ),
                   ),
-                  subtitle: Text(
-                    !a.implemented
-                        ? '功能即将上线'
-                        : (portraitFull
-                            ? '竖屏最多 4 个，需先移除一个'
-                            : ''),
-                    style: const TextStyle(
-                      color: Colors.white38,
-                      fontSize: 12,
-                    ),
-                  ),
+                  titleAlignment: ListTileTitleAlignment.center,
                   trailing: TextButton(
                     style: TextButton.styleFrom(
                       foregroundColor: scheme.primary,
@@ -116,7 +113,13 @@ class PortraitEditControlPanel extends StatelessWidget {
                         vertical: 6,
                       ),
                     ),
-                    onPressed: portraitFull ? null : () => settings.addTopAction(a),
+                    onPressed: () {
+                      if (full) {
+                        _showToast(context, '最多允许放 5 个');
+                      } else {
+                        settings.addTopAction(a);
+                      }
+                    },
                     child: const Text('添加'),
                   ),
                 ),
@@ -125,7 +128,6 @@ class PortraitEditControlPanel extends StatelessWidget {
             PortraitPanelActionTile(
               icon: Icons.restart_alt,
               label: '重置控制栏',
-              subtitle: '清空全部槽位（仅保留「更多」按钮）',
               onTap: settings.resetTopActions,
             ),
           ],
@@ -158,6 +160,7 @@ class PortraitPanelActionTile extends StatelessWidget {
         label,
         style: const TextStyle(color: Colors.white, fontSize: 15),
       ),
+      titleAlignment: ListTileTitleAlignment.center,
       subtitle: subtitle == null
           ? null
           : Text(
@@ -190,4 +193,17 @@ class PortraitPanelSectionLabel extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 轻提示（槽位已满等场景），与播放页 `_toast` 同款浮动 SnackBar。
+void _showToast(BuildContext context, String message) {
+  ScaffoldMessenger.of(context)
+    ..hideCurrentSnackBar()
+    ..showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(milliseconds: 1500),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
 }

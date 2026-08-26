@@ -19,15 +19,19 @@ class SubtitleFileService {
 
   static const _keyLastFolder = 'subtitle_picker_last_folder';
 
-  /// 记忆的文件夹（成功导入字幕后写入；下次自建选择器打开时定位）
-  static Future<String?> getLastFolder() async {
+  /// 记忆的文件夹（成功导入字幕后写入；下次自建选择器打开时定位）。
+  /// [key] 可自定义（音频选择器复用同一面板时传入独立记忆键）。
+  static Future<String?> getLastFolder({String key = _keyLastFolder}) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_keyLastFolder);
+    return prefs.getString(key);
   }
 
-  static Future<void> setLastFolder(String path) async {
+  static Future<void> setLastFolder(
+    String path, {
+    String key = _keyLastFolder,
+  }) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyLastFolder, path);
+    await prefs.setString(key, path);
   }
 
   /// 系统文件选择器（Android ≤ 11）：content:// 拷贝为应用内真实路径后返回。
@@ -53,11 +57,19 @@ class SubtitleFilePickerPanel extends StatefulWidget {
   /// 文件过滤器（只显示目录 + 通过过滤的文件）。默认只显示字幕文件
   final bool Function(String filename) fileFilter;
 
+  /// 记忆文件夹的 SharedPreferences 键（音频选择器复用本面板时传独立键）
+  final String folderKey;
+
+  /// 文件行的图标（字幕选择器默认字幕图标，音频选择器传音乐图标）
+  final IconData fileIcon;
+
   const SubtitleFilePickerPanel({
     super.key,
     required this.onPicked,
     required this.onClose,
     this.fileFilter = isSupportedSubtitleFile,
+    this.folderKey = 'subtitle_picker_last_folder',
+    this.fileIcon = Icons.subtitles_outlined,
   });
 
   @override
@@ -83,7 +95,8 @@ class _SubtitleFilePickerPanelState extends State<SubtitleFilePickerPanel> {
   }
 
   Future<void> _initStartPath() async {
-    final lastFolder = await SubtitleFileService.getLastFolder();
+    final lastFolder =
+        await SubtitleFileService.getLastFolder(key: widget.folderKey);
     if (!mounted) return;
     _currentPath = (lastFolder != null && lastFolder.isNotEmpty)
         ? lastFolder
@@ -173,7 +186,7 @@ class _SubtitleFilePickerPanelState extends State<SubtitleFilePickerPanel> {
   }
 
   Future<void> _pickFile(SubtitleDirEntry entry) async {
-    await SubtitleFileService.setLastFolder(_currentPath);
+    await SubtitleFileService.setLastFolder(_currentPath, key: widget.folderKey);
     await widget.onPicked(entry.path);
     if (mounted) widget.onClose();
   }
@@ -246,7 +259,7 @@ class _SubtitleFilePickerPanelState extends State<SubtitleFilePickerPanel> {
                       leading: Icon(
                         e.isDirectory
                             ? Icons.folder_rounded
-                            : Icons.subtitles_outlined,
+                            : widget.fileIcon,
                         size: 22,
                         color: e.isDirectory
                             ? const Color(0xFF64B5F6)

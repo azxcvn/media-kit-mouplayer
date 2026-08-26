@@ -19,6 +19,9 @@ Flutter 本地视频播放器（Android），核心能力：
   + 同名字幕自动加载（同目录按视频名前缀匹配，简体系统优先 sc、繁体优先 tc）；
   单选模型，延迟/样式/杂项/字体四类设置，样式支持预设 + RGBA 滑杆调色与 ASS 强制覆盖开关，内嵌样式字幕默认尊重自带样式；
   自定义字体走 libass 原生渲染 + 运行时选择字体目录批量导入（§4.10）
+- **音频**：内嵌音轨切换 + 外部音轨导入/移除（外部音轨临时，退出播放后不保留）；
+  音频声道（自动/安全自动/单声道/立体声/反向立体声）+ 音频处理（音量标准化/动态范围压缩），
+  对齐 mpvRx 的 `audio-channels` 与 `af` 滤镜链；声道/处理为会话级状态（每次进播放器重置）
 - **进度条缩略图**：自建 libmpv 内核（含 `mk_thumbnail_*` 快速抓帧接口）+ FFmpeg/MediaCodec
   硬解独立解码实例（~85ms/帧），拖动实时预览、松手精确落帧、空闲预取邻近帧（§4.9）
 - 超分辨率：Anime4K v4 着色器链（7 档模式：关闭 + A/B/C/A+/B+/C+，× 质量档 流畅/均衡/高清），底栏固定入口
@@ -44,6 +47,7 @@ lib/
 │   ├── player_loop.dart       # 循环播放模式枚举（off/列表循环/单集循环）
 │   ├── playlist_sort.dart     # 播放列表排序 + 目录过滤纯函数
 │   ├── chapter_info.dart      # 章节模型（ChapterInfo/SkipSegment/跳过类型枚举）
+│   ├── audio_track.dart       # 音轨模型 + 声道枚举（auto/auto-safe/mono/stereo/反向立体声）+ 格式过滤/af 滤镜链纯函数
 │   ├── subtitle_track.dart    # 字幕轨道模型 + 展示名/格式过滤/对齐/颜色/RGBA 转换/字体过滤纯函数
 │   └── super_resolution_mode.dart  # 超分模式/质量枚举 + 着色器链构建纯函数
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
@@ -61,6 +65,7 @@ lib/
 │   ├── intro_outro_settings.dart # 片头片尾全局设置（开关/片头秒数/片尾秒数/各自范围，ChangeNotifier + 持久化）
 │   ├── intro_outro_tracker.dart  # 片头片尾跟踪器（就绪/已处理状态 + 恢复点感知 + 动作决策）
 │   ├── media_scan_settings.dart  # 媒体扫描与过滤设置（.nomedia/隐藏文件夹/黑白名单，ChangeNotifier + 持久化）
+│   ├── audio_service.dart     # 音频控制器（音轨列表/aid 单选/外部音轨导入·移除（临时）/声道/af 滤镜链应用；声道与处理为会话级，随播放器生命周期重置）
 │   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/自定义字体/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
 │   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 同名字幕自动加载 + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
@@ -111,12 +116,13 @@ lib/
 │   │       ├── player_speed_indicator.dart    # 长按倍速指示器（胶囊样式）
 │   │       ├── player_playlist_panel.dart     # 播放列表面板内容
 │   │       ├── audio_player_panels.dart       # 听视频倍速/列表面板（胶囊式 + 定时关闭预设 + 统一关闭按钮）
+│   │       ├── audio_panel.dart               # 音频面板（音轨单选+外部音轨导入·移除+音频声道胶囊+音频处理开关）
 │   │       ├── subtitle_panel.dart            # 字幕面板（轨道单选+外挂导入+移除；延迟输入合一/样式卡片化/杂项缩放位置/自定义字体目录导入+列表选择）
-│   │       ├── subtitle_file_picker.dart      # 外挂字幕选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器）
+│   │       ├── subtitle_file_picker.dart      # 外挂字幕选择（≤11 系统选择器 / >11 自建选择器+文件夹记忆+文件过滤器；音频选择器复用同一面板）
 │   │       ├── player_resume_indicator.dart   # 恢复进度指示器（胶囊样式，2.5s 自动隐藏）
 │   │       ├── player_swipe_seek_overlay.dart # 水平滑动 seek 预览浮层
 │   │       ├── player_thumbnail_preview.dart  # 进度条拖动缩略图预览气泡（RGBA 直渲 + 淡入淡出）
-│   │       ├── portrait_player_top_bar.dart   # 竖屏顶栏（返回 + 标题 + 最多 4 槽位 + 更多）
+│   │       ├── portrait_player_top_bar.dart   # 竖屏顶栏（两行：返回+标题 / 5 槽位+更多横向均分，与横屏一致支持 5 槽位）
 │   │       ├── portrait_player_bottom_bar.dart # 竖屏底栏（超分→列表→倍速→选择屏幕）
 │   │       └── portrait_edit_panel.dart       # 竖屏「编辑控制栏」页
 │   ├── media_info/
@@ -174,6 +180,7 @@ models（模型）     → 无依赖（纯数据）
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
 - 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）、`SubtitleSettings`（单例，字幕延迟/大小/位置/对齐/颜色/字体/内嵌样式覆盖，默认关闭）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–4 步进 0.5/指示器开关/首次提示标记，阶段1 第 4 点）**、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、**顶部信息多选（时间/电量/网速/数据类型四项，默认全选，阶段1 第 1 点；旧单选枚举一次性迁移）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
+- 音频声道/音频处理（音量标准化/动态范围压缩）为**会话级状态**（随 `AudioController` 生命周期，每次进播放器重置为默认：安全自动/关/关），不持久化
 - 片头片尾跳过设置属 `IntroOutroSettings`（独立单例 ChangeNotifier）：启用开关（默认关闭）、片头/片尾跳过秒数（默认 0）、各自范围上限（10–600 秒，默认 180）；范围收窄时秒数联动收窄；一键重置只清秒数与范围、保留开关；跟踪器 `IntroOutroTracker` 为普通类（随播放页生命周期），就绪门控防 open 期间误触发
 - 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
@@ -209,7 +216,9 @@ models（模型）     → 无依赖（纯数据）
 
 - **所有弹窗统一用** `showAppDialog`（`lib/utils/app_dialog.dart`，缩放 + 淡入动画），**不要**直接 `showDialog`
 - **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 超分 / 画面比例 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context。`showPlayerPanel` / `showPlayerBottomPanel` 的 `animate` 参数（默认 null = 跟随「播放器设置 → 启用播放界面动画」开关）控制进出场与页内切换动画
-- **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音轨等后续功能）的，**横屏一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；**竖屏播放页（`player_portrait_page.dart`）一律使用 `showPlayerBottomPanel` 底部弹出外壳**（`lib/widgets/player_bottom_panel.dart`，底部上滑 + 淡入，Material 外壳，面板内页面栈 `PlayerBottomPanelNavigator`）。两种外壳的面板内容组件（倍速/超分/画面比例/编辑控制栏）共用同一份数据与交互逻辑，只换容器。面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**
+- **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音频等后续功能）的，**横屏一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；**竖屏播放页（`player_portrait_page.dart`）一律使用 `showPlayerBottomPanel` 底部弹出外壳**（`lib/widgets/player_bottom_panel.dart`，底部上滑 + 淡入，Material 外壳，面板内页面栈 `PlayerBottomPanelNavigator`）。两种外壳的面板内容组件（倍速/超分/画面比例/编辑控制栏）共用同一份数据与交互逻辑，只换容器。面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**
+- **「更多」面板交互**：横竖屏「更多」面板均只列出**未放入槽位的动作**（`PlayerTopAction.values` 中不在 `topActions` 的）；点面板类动作（字幕/音频/比例/循环/章节/片头片尾）→ 面板内 `push` 就地切换（外壳 header 自动显示返回按钮，可返回「更多」列表，勿再关面板重开）；点动作类（画中画/听视频）→ 先关「更多」面板再执行（防叠加第二面板）；未实现动作提示「即将上线」；「编辑控制栏」为固定入口。**一级菜单 ListView 带 `PageStorageKey('more_panel')` 记忆滚动位置**（进二级再返回不回顶部）
+- **编辑控制栏交互**：横竖屏编辑控制栏的「已启用/可添加」列表项**无副标题**（图标与名字用 `titleAlignment: center` 对齐）；槽位已满（5/5）时点「添加」→ toast「最多允许放 5 个」（不再禁用按钮 + 副标题提示）；「重置控制栏」无副标题。竖屏与横屏一致最多 5 槽位（`PortraitPlayerTopBar.maxPortraitSlots = 5`），不再区分 4/5
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
   - `hasFolders` / `hasVideos` 按页面内容动态传（纯文件夹页、纯视频页、混合页自动区分区块）
   - `showViewMode` 仅首页传 true
@@ -401,6 +410,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/subtitle_settings_test.dart` — 字幕设置服务（默认值/延迟叠加与钳制/描边模式/外挂字幕记忆/字体源目录记忆/重置样式持久化）
   - `test/subtitle_auto_match_test.dart` — 同名字幕自动匹配纯函数（同名候选/扩展名优先级/完全同名优先/简繁语言后缀/短名优先/无匹配）
   - `test/subtitle_sort_test.dart` — 自建字幕选择器排序纯函数（目录恒在前/大小日期升降序）
+  - `test/audio_track_test.dart` — 音轨纯函数（展示名/声道枚举/格式过滤/audio-channels 映射/af 滤镜链组装，工作.md 音频功能）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -414,7 +424,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 |---|---|
 | 挖孔屏横屏白条 / 系统栏露浅色背景 | AppFrame `left/right` 恒 false + 播放页豁免 bottom + ColoredBox 铺色（§4.2） |
 | 播放页退出闪烁/黑屏（错向界面 ~1s 或退出黑一下） | 退出**不加延时、不盖黑屏**：立即发起竖屏方向 → 保存+恢复设备 → 恢复系统 UI → 立即 pop（`playerPageRoute` 淡出 200ms 吸收系统旋转）（§4.4） |
-| 面板红底黄字崩溃（No Material） | PlayerPanel / PlayerBottomPanel 外壳必须用 `Material`，勿换 Container（§4.5） |
+| 面板红底黄字崩溃（No Material） | PlayerPanel / PlayerBottomPanel 外壳必须用 `Material`，勿换 Container；拖拽 `proxyDecorator` 也用 `Material`（`ColoredBox` 非 Material，拖拽时 proxy 被放 overlay 脱离外壳会崩）（§4.5） |
 | 面板内 `Navigator.of` 断言 scope==null | 内容先包 `Builder` 取面板树内 context 再调 `of`（§4.5） |
 | 全局 ValueNotifier hack 引发连锁补丁 | 禁止；跨页面用 ChangeNotifier / 路由机制（§4.1） |
 | DSH 沙箱卡住 flutter/dart 子进程 | `flutter analyze/test` 必须 danger-full-access 执行；勿用 `flutter --version` 探路 |
@@ -484,6 +494,8 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 系统字库兜底用 symlink+隐藏文件名 → fontconfig 不识别 → 缺字空白 | 兜底字库直接复制成普通文件名（§4.10） |
 | media_kit 本地 fork 被 `pub upgrade` 覆盖 | `third_party/media_kit` 的魔改需手动 merge；升级前先备份 diff（§4.10） |
 | SAF 目录选择器重启后 tree uri 失效、无法刷新字体 | `takePersistableUriPermission` + `FLAG_GRANT_PERSISTABLE_URI_PERMISSION`/`FLAG_GRANT_PREFIX_URI_PERMISSION`（§4.10） |
+| 反向立体声直接写 `audio-channels` 无效（mpv 无该布局值） | 反向立体声改走 `af` 滤镜 `pan=[stereo|c0=c1|c1=c0]`，并把 `audio-channels` 重置为 `auto-safe`（`buildAudioFilterChain`/`audioChannelsPropertyValue`） |
+| 外部音轨/字幕 content:// 无法直接给 libmpv | `audio-add`/`sub-add` 前由原生侧拷贝到 `filesDir/audio|subtitles/`（`copyAudioFromUri`/`copySubtitleFromUri`）；自建选择器直接返回真实路径 |
 
 ---
 

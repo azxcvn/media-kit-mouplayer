@@ -9,6 +9,7 @@ import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
+import 'package:moumou/pages/player/views/audio_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
@@ -30,6 +31,7 @@ import 'package:moumou/pages/player/views/portrait_edit_panel.dart';
 import 'package:moumou/pages/player/views/portrait_player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/portrait_player_top_bar.dart';
 import 'package:moumou/pages/player/views/subtitle_panel.dart';
+import 'package:moumou/services/audio_service.dart';
 import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
@@ -109,6 +111,10 @@ class PlayerPortraitPage extends StatefulWidget {
   /// 传 null 时自建——正常流程横屏页总会传入）
   final SubtitleController? subtitleController;
 
+  /// 音频控制器（横屏页创建并持有，本页只使用、不 dispose；
+  /// 传 null 时自建——正常流程横屏页总会传入）
+  final AudioController? audioController;
+
   const PlayerPortraitPage({
     super.key,
     required this.player,
@@ -123,6 +129,7 @@ class PlayerPortraitPage extends StatefulWidget {
     this.chapterTracker,
     this.introOutroTracker,
     this.subtitleController,
+    this.audioController,
   });
 
   @override
@@ -173,6 +180,10 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   /// 字幕控制器（工作.md 阶段1 第 3 点）：优先共享横屏页实例
   /// （同一 Player，切集后统一重新应用），未传入时自建并绑定共享播放器
   late final SubtitleController _subtitleController;
+
+  /// 音频控制器（工作.md 音频功能）：优先共享横屏页实例
+  /// （同一 Player，切集后统一重新应用），未传入时自建并绑定共享播放器
+  late final AudioController _audioController;
 
   Duration get _position => _positionNotifier.value;
   Duration get _duration => _durationNotifier.value;
@@ -307,6 +318,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     }
     // 字幕控制器：共享横屏页实例；未传入时自建并绑定共享播放器
     _subtitleController = widget.subtitleController ?? SubtitleController(_player);
+    // 音频控制器：共享横屏页实例；未传入时自建并绑定共享播放器
+    _audioController = widget.audioController ?? AudioController(_player);
     _path = widget.initialPath;
     _title = widget.initialTitle;
 
@@ -714,6 +727,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       _chapterTracker.clear();
       // 字幕功能：清空旧媒体轨道（切集后重新加载）
       _subtitleController.clear();
+      // 音频功能：清空旧媒体音轨（切集后重新加载；外部音轨临时不跨集保留）
+      _audioController.clear();
       // 片头片尾：重置跟踪状态（open 期间位置事件不评估）
       _introOutroTracker.reset();
       await _saveProgress(forcePersist: true);
@@ -771,6 +786,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       unawaited(_chapterTracker.load());
       // 字幕功能：切集后重新添加外挂字幕 + 刷新轨道 + 应用设置
       unawaited(_subtitleController.reapplyForMedia(path));
+      // 音频功能：切集后刷新音轨 + 同步当前音轨 + 应用声道与音频处理
+      unawaited(_audioController.reapplyForMedia(path));
     } on AssertionError {
       // 共享播放器已被销毁（横屏页已退出）：静默返回，不写假崩溃日志
       return;
@@ -936,29 +953,33 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         body: const PlayerLoopPanel(),
       );
 
-  /// 「更多」面板主页：已启用槽位动作 +「编辑控制栏」入口。
+  /// 「更多」面板主页：未放入槽位的动作 +「编辑控制栏」入口（与横屏一致）。
   Widget _buildMorePanel() {
     return Builder(
       builder: (panelContext) => ListenableBuilder(
         listenable: _settings,
         builder: (context, _) {
-          final enabled = _settings.topActions;
+          final notPlaced = PlayerTopAction.values
+              .where((a) => !_settings.topActions.contains(a))
+              .toList();
           return ListView(
+            key: const PageStorageKey('more_panel'),
             padding: const EdgeInsets.symmetric(vertical: 4),
             children: [
-              for (final a in enabled)
-                PortraitPanelActionTile(
-                  icon: a.icon,
-                  label: a.label,
-                  subtitle: !a.implemented ? '功能即将上线' : null,
-                  onTap: () => _handlePanelAction(panelContext, a),
-                ),
-              if (enabled.isNotEmpty)
+              if (notPlaced.isNotEmpty) ...[
+                const PortraitPanelSectionLabel('未放置的功能'),
+                for (final a in notPlaced)
+                  PortraitPanelActionTile(
+                    icon: a.icon,
+                    label: a.label,
+                    subtitle: !a.implemented ? '功能即将上线' : null,
+                    onTap: () => _handlePanelAction(panelContext, a),
+                  ),
                 const Divider(height: 1, color: Colors.white12),
+              ],
               PortraitPanelActionTile(
                 icon: Icons.tune,
                 label: '编辑控制栏',
-                subtitle: '管理右上角 5 个槽位按钮（添加 / 移除 / 排序）',
                 onTap: () => PlayerBottomPanelNavigator.of(panelContext).push(
                   PlayerPanelPage(
                     title: '编辑控制栏',
@@ -979,6 +1000,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         return _fitPanelPage();
       case PlayerTopAction.subtitle:
         return _subtitlePanelPage();
+      case PlayerTopAction.audio:
+        return _audioPanelPage();
       case PlayerTopAction.loop:
         return _loopPanelPage();
       case PlayerTopAction.chapter:
@@ -1010,6 +1033,25 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
           final navigator = PlayerBottomPanelNavigator.of(panelContext);
           return PlayerSubtitlePanel(
             controller: _subtitleController,
+            onPushSubPage: (title, body) => navigator.push(
+              PlayerPanelPage(title: title, body: body),
+            ),
+            onPopSubPage: () => navigator.pop(),
+          );
+        },
+      ),
+    );
+  }
+
+  /// 音频面板（底部弹出 [showPlayerBottomPanel]，工作.md 音频功能）
+  PlayerPanelPage _audioPanelPage() {
+    return PlayerPanelPage(
+      title: '音频',
+      body: Builder(
+        builder: (panelContext) {
+          final navigator = PlayerBottomPanelNavigator.of(panelContext);
+          return PlayerAudioPanel(
+            controller: _audioController,
             onPushSubPage: (title, body) => navigator.push(
               PlayerPanelPage(title: title, body: body),
             ),
@@ -1064,9 +1106,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.chapter:
       case PlayerTopAction.introOutro:
       case PlayerTopAction.subtitle:
+      case PlayerTopAction.audio:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.audio:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);
@@ -1089,9 +1131,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.chapter:
       case PlayerTopAction.introOutro:
       case PlayerTopAction.subtitle:
+      case PlayerTopAction.audio:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.audio:
       case PlayerTopAction.equalizer:
       case PlayerTopAction.decode:
         if (!action.implemented) _showComingSoon(action.label);

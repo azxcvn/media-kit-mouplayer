@@ -194,11 +194,11 @@ class MainActivity : FlutterActivity() {
                     "listDirectory" -> result.success(listDirectory(call.argument<String>("path") ?: ""))
                     "getSystemFonts" -> result.success(getSystemFonts())
                     "copySubtitleFromUri" -> {
-                        copySubtitleFromUri(
+                        val path = copySubtitleFromUri(
                             call.argument<String>("uri") ?: "",
                             call.argument<String>("name") ?: "subtitle.srt",
                         )
-                        result.success(null)
+                        result.success(path)
                     }
                     // 字幕字体导入：content:// 拷贝到 filesDir/fonts/（返回真实路径）
                     "copyFontFromUri" -> {
@@ -239,6 +239,31 @@ class MainActivity : FlutterActivity() {
                                 result.success(null) // 失败 → Dart 侧回退自建选择器
                             }
                         }
+                    }
+                    // 音频选择器（MIME 含 audio 类型，系统选择器不再置灰 .mp3/.m4a/.flac）
+                    "openAudioPicker" -> {
+                        if (pendingDocumentPickerResult != null) {
+                            result.error("BUSY", "picker already open", null)
+                        } else {
+                            pendingDocumentPickerResult = result
+                            try {
+                                startActivityForResult(
+                                    buildDocumentPickerIntent(audioPickerMimeTypes),
+                                    2002,
+                                )
+                            } catch (e: Exception) {
+                                pendingDocumentPickerResult = null
+                                result.success(null)
+                            }
+                        }
+                    }
+                    // 音轨导入：content:// 拷贝到 filesDir/audio/（返回真实路径）
+                    "copyAudioFromUri" -> {
+                        val path = copyAudioFromUri(
+                            call.argument<String>("uri") ?: "",
+                            call.argument<String>("name") ?: "audio.mp3",
+                        )
+                        result.success(path)
                     }
                     // 字体选择器（MIME 含 font 类型，系统选择器不再置灰 .ttf/.otf）
                     "openFontPicker" -> {
@@ -614,6 +639,12 @@ class MainActivity : FlutterActivity() {
         "application/octet-stream",
     )
 
+    /** 音频选择器的 MIME 白名单（工作.md 音频功能：.mp3/.m4a/.flac 等不置灰） */
+    private val audioPickerMimeTypes = arrayOf(
+        "audio/*",
+        "application/octet-stream",
+    )
+
     /**
      * 系统文件选择器 Intent（ACTION_OPEN_DOCUMENT，无需权限）。
      * @param mimeTypes 允许选择的文件类型白名单（默认字幕类型）。
@@ -744,6 +775,30 @@ class MainActivity : FlutterActivity() {
             if (target.exists() && target.length() > 0) target.absolutePath else null
         } catch (e: Exception) {
             Log.w("MainActivity", "copySubtitleFromUri failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 把 content:// 音轨 uri 拷贝到 filesDir/audio/<name>（libmpv 无法直接读
+     * content://，工作.md 音频功能：外部音轨临时、退出播放后不再引用），
+     * 返回真实绝对路径；失败返回 null。
+     */
+    private fun copyAudioFromUri(uriString: String, name: String): String? {
+        return try {
+            val uri = Uri.parse(uriString)
+            val audioDir = File(filesDir, "audio")
+            if (!audioDir.exists()) audioDir.mkdirs()
+            // 优先用真实文件名（DISPLAY_NAME），回退到 Dart 传入的 name
+            val displayName = queryDisplayName(uri) ?: name
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            val target = File(audioDir, "${uri.hashCode()}_$safeName")
+            contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (target.exists() && target.length() > 0) target.absolutePath else null
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copyAudioFromUri failed: ${e.message}")
             null
         }
     }
