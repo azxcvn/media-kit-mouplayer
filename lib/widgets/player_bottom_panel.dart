@@ -77,7 +77,7 @@ class PlayerBottomPanel extends StatefulWidget {
     super.key,
     required this.pages,
     required this.onClose,
-    this.maxHeightFactor = 0.34,
+    this.maxHeightFactor = 0.42,
     this.animate = true,
   });
 
@@ -230,7 +230,7 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
 Future<void> showPlayerBottomPanel(
   BuildContext context, {
   required List<PlayerPanelPage> pages,
-  double maxHeightFactor = 0.34,
+  double maxHeightFactor = 0.42,
   bool? animate,
 }) {
   final withAnimation = animate ?? PlayerControlsSettings.instance.playerAnimations;

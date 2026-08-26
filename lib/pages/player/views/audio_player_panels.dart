@@ -11,9 +11,6 @@ import 'package:moumou/models/video_file.dart';
 ///
 /// 面板内数据全部由听视频页传入并通过回调写回，面板自身无状态。
 
-/// 听视频强调色（与页面一致）
-const Color kAudioAccent = Color(0xFF64B5F6);
-
 /// 面板深色背景
 const Color kAudioPanelBg = Color(0xFF1C1C24);
 
@@ -100,34 +97,42 @@ Future<void> showAudioSpeedSheet(
             const SizedBox(height: 20),
             const _AudioSectionLabel('定时关闭'),
             const SizedBox(height: 8),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                for (final p in AudioSleepPreset.values)
-                  _AudioChip(
-                    label: p.label,
-                    selected: sleepPreset == p,
-                    onTap: () async {
-                      if (p == AudioSleepPreset.custom) {
-                        final minutes = await _showCustomSleepDialog(
-                          sheetContext,
-                        );
-                        if (minutes == null) return;
-                        onSleepPreset(
-                          AudioSleepPreset.custom,
-                          custom: Duration(minutes: minutes),
-                        );
-                      } else {
-                        onSleepPreset(p);
-                      }
-                      if (sheetContext.mounted) {
-                        Navigator.of(sheetContext).pop();
-                      }
-                    },
-                  ),
-              ],
-            ),
+            for (var row = 0; row < 2; row++) ...[
+              if (row > 0) const SizedBox(height: 10),
+              Row(
+                children: [
+                  for (var col = 0; col < 3; col++) ...[
+                    if (col > 0) const SizedBox(width: 10),
+                    Expanded(
+                      child: _AudioChip(
+                        label: AudioSleepPreset.values[row * 3 + col].label,
+                        selected:
+                            sleepPreset == AudioSleepPreset.values[row * 3 + col],
+                        expand: true,
+                        onTap: () async {
+                          final p = AudioSleepPreset.values[row * 3 + col];
+                          if (p == AudioSleepPreset.custom) {
+                            final minutes = await _showCustomSleepDialog(
+                              sheetContext,
+                            );
+                            if (minutes == null) return;
+                            onSleepPreset(
+                              AudioSleepPreset.custom,
+                              custom: Duration(minutes: minutes),
+                            );
+                          } else {
+                            onSleepPreset(p);
+                          }
+                          if (sheetContext.mounted) {
+                            Navigator.of(sheetContext).pop();
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
             // 定时关闭激活时显示剩余时间
             if (sleepPreset != AudioSleepPreset.off) ...[
               const SizedBox(height: 12),
@@ -166,7 +171,7 @@ Future<void> showAudioPlaylistSheet(
 }) {
   final bottomInset = MediaQuery.paddingOf(context).bottom;
   final sheetHeight =
-      (MediaQuery.sizeOf(context).height * 0.6 - bottomInset)
+      (MediaQuery.sizeOf(context).height * 0.42 - bottomInset)
           .clamp(280.0, double.infinity);
   // 面板内本地状态：随机/循环的展示值随点击即时更新，同时回调写回页面逻辑状态。
   var localShuffle = shuffle;
@@ -206,7 +211,9 @@ Future<void> showAudioPlaylistSheet(
                         borderRadius: BorderRadius.circular(12),
                       ),
                       leading: cur
-                          ? const _EqualizerBars(color: kAudioAccent)
+                          ? _EqualizerBars(
+                              color: Theme.of(context).colorScheme.primary,
+                            )
                           : const SizedBox(width: 14, height: 14),
                       title: Text(
                         v.name,
@@ -214,7 +221,7 @@ Future<void> showAudioPlaylistSheet(
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: cur
-                              ? kAudioAccent
+                              ? Theme.of(context).colorScheme.primary
                               : Colors.white.withValues(alpha: 0.85),
                           fontSize: 14,
                           fontWeight:
@@ -322,49 +329,52 @@ class _AudioSectionLabel extends StatelessWidget {
   }
 }
 
-/// 深色胶囊选项：选中强调色填充，未选中半透明白底；可选前置图标。
+/// 深色胶囊选项：选中主题主色填充，未选中半透明白底；可选前置图标。
+/// [expand] 为 true 时占满父级宽度（等宽网格用），内容居中。
 class _AudioChip extends StatelessWidget {
   final String label;
   final IconData? icon;
   final bool selected;
   final VoidCallback onTap;
+  final bool expand;
 
   const _AudioChip({
     required this.label,
     required this.selected,
     required this.onTap,
     this.icon,
+    this.expand = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final onPrimary = Theme.of(context).colorScheme.onPrimary;
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
         decoration: BoxDecoration(
-          color: selected
-              ? kAudioAccent
-              : Colors.white.withValues(alpha: 0.10),
+          color: selected ? primary : Colors.white.withValues(alpha: 0.10),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: selected
-                ? kAudioAccent
-                : Colors.white.withValues(alpha: 0.16),
+            color: selected ? primary : Colors.white.withValues(alpha: 0.16),
           ),
         ),
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
+          mainAxisAlignment:
+              expand ? MainAxisAlignment.center : MainAxisAlignment.start,
           children: [
             if (icon != null) ...[
-              Icon(icon, size: 16, color: selected ? Colors.black : Colors.white70),
+              Icon(icon, size: 16, color: selected ? onPrimary : Colors.white70),
               const SizedBox(width: 6),
             ],
             Text(
               label,
               style: TextStyle(
-                color: selected ? Colors.black : Colors.white,
+                color: selected ? onPrimary : Colors.white,
                 fontSize: 13,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
               ),
@@ -471,9 +481,9 @@ Future<int?> _showCustomSleepDialog(BuildContext context) {
             ),
             SliderTheme(
               data: SliderThemeData(
-                activeTrackColor: kAudioAccent,
+                activeTrackColor: Theme.of(dialogContext).colorScheme.primary,
                 inactiveTrackColor: Colors.white.withValues(alpha: 0.14),
-                thumbColor: kAudioAccent,
+                thumbColor: Theme.of(dialogContext).colorScheme.primary,
                 trackHeight: 3,
               ),
               child: Slider(
@@ -496,7 +506,12 @@ Future<int?> _showCustomSleepDialog(BuildContext context) {
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(minutes),
-            child: const Text('确定', style: TextStyle(color: kAudioAccent)),
+            child: Text(
+              '确定',
+              style: TextStyle(
+                color: Theme.of(dialogContext).colorScheme.primary,
+              ),
+            ),
           ),
         ],
       ),

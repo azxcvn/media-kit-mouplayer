@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 enum DoubleTapMode {
   pause('双击暂停/播放'),
   seek('双击左退右进'),
-  mixed('混合（中央暂停，两侧进退）');
+  mixed('混合模式');
 
   final String label;
   const DoubleTapMode(this.label);

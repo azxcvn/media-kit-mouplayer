@@ -102,7 +102,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   static const double watchThresholdStep = 0.05;
 
   List<PlayerTopAction> _topActions = const [];
-  DoubleTapMode _doubleTapMode = DoubleTapMode.mixed;
+  DoubleTapMode _doubleTapMode = DoubleTapMode.pause;
   bool _showProgressLine = false;
   bool _rememberSpeed = false;
   double _lastSpeed = 1.0;
@@ -644,7 +644,7 @@ class PlayerControlsSettings extends ChangeNotifier {
   void reset() {
     _loadFuture = null; // 下次 setter 重新触发 load（读当前 mock prefs）
     _topActions = const [];
-    _doubleTapMode = DoubleTapMode.mixed;
+    _doubleTapMode = DoubleTapMode.pause;
     _showProgressLine = false;
     _rememberSpeed = false;
     _lastSpeed = 1.0;

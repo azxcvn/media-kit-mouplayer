@@ -473,7 +473,7 @@ class _AudioPlayerPageState extends State<AudioPlayerPage> {
 
   @override
   Widget build(BuildContext context) {
-    final accentColor = const Color(0xFF64B5F6);
+    final accentColor = Theme.of(context).colorScheme.primary;
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {

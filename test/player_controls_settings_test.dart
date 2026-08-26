@@ -13,7 +13,7 @@ void main() {
   test('默认值：槽位全空', () {
     final s = PlayerControlsSettings.instance;
     expect(s.topActions, isEmpty); // 默认不放置任何按钮
-    expect(s.doubleTapMode, DoubleTapMode.mixed);
+    expect(s.doubleTapMode, DoubleTapMode.pause);
     expect(s.showProgressLine, isFalse);
     // 记忆上次倍速默认关闭（用户显式开启后才记住）
     expect(s.rememberSpeed, isFalse);

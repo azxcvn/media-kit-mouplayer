@@ -66,7 +66,7 @@ class SettingsPage extends StatelessWidget {
                 child: SettingsTile(
                   icon: Icons.folder_outlined,
                   title: '媒体扫描与过滤',
-                  subtitle: const Text('隐藏文件夹 / .nomedia / 黑白名单'),
+                  subtitle: const Text('扫描规则与文件夹过滤'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
