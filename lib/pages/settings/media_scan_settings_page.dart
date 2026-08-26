@@ -48,7 +48,7 @@ class _MediaScanSettingsPageState extends State<MediaScanSettingsPage> {
                     SettingsSwitchTile(
                       icon: Icons.visibility_off_outlined,
                       title: '扫描包含 .nomedia 的文件夹',
-                      subtitle: const Text('扫描系统标记为忽略的 .nomedia 目录中的视频'),
+                      subtitle: const Text('扫描系统忽略的目录'),
                       value: settings.scanNoMedia,
                       onChanged: (val) async {
                         if (val) {
@@ -63,7 +63,7 @@ class _MediaScanSettingsPageState extends State<MediaScanSettingsPage> {
                     SettingsSwitchTile(
                       icon: Icons.folder_special_outlined,
                       title: '扫描以 . 开头的隐藏文件夹',
-                      subtitle: const Text('允许扫描 .开头 的隐藏文件夹及文件'),
+                      subtitle: const Text('扫描隐藏文件'),
                       value: settings.scanHiddenFolders,
                       onChanged: (val) async {
                         await settings.setScanHiddenFolders(val);
@@ -84,7 +84,7 @@ class _MediaScanSettingsPageState extends State<MediaScanSettingsPage> {
                     SettingsRadioTile(
                       icon: Icons.all_inclusive,
                       title: '全部扫描',
-                      subtitle: const Text('扫描设备上所有未被跳过的媒体文件夹'),
+                      subtitle: const Text('扫描所有未跳过的文件夹'),
                       selected: mode == FolderFilterMode.none,
                       onTap: () async {
                         await settings.setFilterMode(FolderFilterMode.none);
@@ -95,7 +95,7 @@ class _MediaScanSettingsPageState extends State<MediaScanSettingsPage> {
                     SettingsRadioTile(
                       icon: Icons.block_outlined,
                       title: '黑名单模式',
-                      subtitle: const Text('排除指定文件夹，其中的视频将不会显示在列表中'),
+                      subtitle: const Text('排除指定文件夹'),
                       selected: mode == FolderFilterMode.blacklist,
                       onTap: () async {
                         await settings.setFilterMode(FolderFilterMode.blacklist);
@@ -106,7 +106,7 @@ class _MediaScanSettingsPageState extends State<MediaScanSettingsPage> {
                     SettingsRadioTile(
                       icon: Icons.check_box_outlined,
                       title: '白名单模式',
-                      subtitle: const Text('仅扫描指定文件夹，其他文件夹将被忽略'),
+                      subtitle: const Text('仅扫描指定文件夹'),
                       selected: mode == FolderFilterMode.whitelist,
                       onTap: () async {
                         await settings.setFilterMode(FolderFilterMode.whitelist);

@@ -104,11 +104,11 @@ class PlayerSettingsPage extends StatelessWidget {
                         icon: _orientationIcon(m),
                         title: m.label,
                         subtitle: switch (m) {
-                          VideoOrientationMode.auto => const Text('按视频方向自动横屏或竖屏播放'),
+                          VideoOrientationMode.auto => const Text('跟随视频方向'),
                           VideoOrientationMode.portrait =>
-                            const Text('无论视频方向，统一竖屏播放'),
+                            const Text('始终竖屏'),
                           VideoOrientationMode.landscape =>
-                            const Text('无论视频方向，统一横屏播放'),
+                            const Text('始终横屏'),
                         },
                         selected: settings.videoOrientation == m,
                         onTap: () => settings.setVideoOrientation(m),
@@ -125,7 +125,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsCheckboxTile(
                       icon: Icons.access_time,
                       title: '时间',
-                      subtitle: const Text('在播放界面顶部显示当前时间'),
+                      subtitle: const Text('显示当前时间'),
                       checked: settings.showTopTime,
                       onChanged: settings.setShowTopTime,
                     ),
@@ -133,7 +133,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsCheckboxTile(
                       icon: Icons.battery_full,
                       title: '电量',
-                      subtitle: const Text('在播放界面顶部显示当前电量'),
+                      subtitle: const Text('显示当前电量'),
                       checked: settings.showTopBattery,
                       onChanged: settings.setShowTopBattery,
                     ),
@@ -141,7 +141,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsCheckboxTile(
                       icon: Icons.speed_outlined,
                       title: '网速',
-                      subtitle: const Text('在线播放时显示实时网速详情（本地播放不显示）'),
+                      subtitle: const Text('显示实时网速'),
                       checked: settings.showTopNetSpeed,
                       onChanged: settings.setShowTopNetSpeed,
                     ),
@@ -149,7 +149,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsCheckboxTile(
                       icon: Icons.wifi_outlined,
                       title: '数据类型',
-                      subtitle: const Text('显示当前网络类型（WiFi / 移动数据）'),
+                      subtitle: const Text('显示 WiFi / 移动数据'),
                       checked: settings.showTopNetType,
                       onChanged: settings.setShowTopNetType,
                     ),
@@ -165,7 +165,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.horizontal_rule,
                       title: '常驻进度线',
-                      subtitle: const Text('隐藏控制层后，屏幕底部保留一条细进度线'),
+                      subtitle: const Text('隐藏控制层后底部显示细线'),
                       trailing: Switch(
                         value: settings.showProgressLine,
                         onChanged: (v) => settings.setShowProgressLine(v),
@@ -175,7 +175,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.bookmarks_outlined,
                       title: '显示章节进度条',
-                      subtitle: const Text('进度条上标记章节节点，显示当前章节名称（需视频自带章节信息）'),
+                      subtitle: const Text('进度条标记章节并显示章节名'),
                       trailing: Switch(
                         value: settings.showChapterProgress,
                         onChanged: (v) => settings.setShowChapterProgress(v),
@@ -185,7 +185,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.image_outlined,
                       title: '进度条缩略图',
-                      subtitle: const Text('拖动进度条时预览画面（FFmpeg 硬解抓帧，与播放互不影响）'),
+                      subtitle: const Text('拖动进度条时预览画面'),
                       trailing: Switch(
                         value: settings.showThumbnailPreview,
                         onChanged: (v) => settings.setShowThumbnailPreview(v),
@@ -195,7 +195,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.speed,
                       title: '记住上次倍速',
-                      subtitle: const Text('下次打开视频自动恢复上次的播放速度'),
+                      subtitle: const Text('自动恢复上次倍速'),
                       trailing: Switch(
                         value: settings.rememberSpeed,
                         onChanged: (v) => settings.setRememberSpeed(v),
@@ -205,7 +205,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.volume_off_outlined,
                       title: '保存音量到系统',
-                      subtitle: const Text('退出播放时将本次调整的音量写回系统；关闭则恢复进入前音量'),
+                      subtitle: const Text('退出时把音量写回系统'),
                       trailing: Switch(
                         value: settings.saveVolumeToSystem,
                         onChanged: (v) => settings.setSaveVolumeToSystem(v),
@@ -215,7 +215,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.pinch_outlined,
                       title: '双指缩小视频',
-                      subtitle: const Text('双指可缩放画面（最小 0.75 倍，最大 4 倍）；关闭则最小回到原始大小'),
+                      subtitle: const Text('双指缩放画面'),
                       trailing: Switch(
                         value: settings.enableShrinkVideo,
                         onChanged: (v) => settings.setEnableShrinkVideo(v),
@@ -225,7 +225,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.radio_button_checked,
                       title: '按钮背景',
-                      subtitle: const Text('为播放控制按钮添加半透明圆角背景'),
+                      subtitle: const Text('为控制按钮加半透明背景'),
                       trailing: Switch(
                         value: settings.showButtonBackground,
                         onChanged: (v) => settings.setShowButtonBackground(v),
@@ -235,7 +235,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.skip_next_rounded,
                       title: '自动连播',
-                      subtitle: const Text('当前视频播完后自动播放下一集'),
+                      subtitle: const Text('播完自动放下一集'),
                       trailing: Switch(
                         value: settings.autoNext,
                         onChanged: (v) => settings.setAutoNext(v),
@@ -245,7 +245,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.exit_to_app,
                       title: '播放完毕自动退出',
-                      subtitle: const Text('当前文件夹最后一个视频播完后自动退出播放页'),
+                      subtitle: const Text('最后一个播完自动退出'),
                       trailing: Switch(
                         value: settings.autoExit,
                         onChanged: (v) => settings.setAutoExit(v),
@@ -255,7 +255,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.speed_rounded,
                       title: '倍速播放指示器',
-                      subtitle: const Text('长按时在屏幕顶部显示「正在 X.Xx 倍速播放」'),
+                      subtitle: const Text('长按时顶部显示倍速提示'),
                       trailing: Switch(
                         value: settings.showSpeedIndicator,
                         onChanged: (v) => settings.setShowSpeedIndicator(v),
@@ -265,7 +265,7 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsTile(
                       icon: Icons.animation_outlined,
                       title: '启用播放界面动画',
-                      subtitle: const Text('关闭后播放页控制层与各面板直接出现/消失，不再显示进出场动画'),
+                      subtitle: const Text('控制层与面板的进出场动画'),
                       trailing: Switch(
                         value: settings.playerAnimations,
                         onChanged: (v) => settings.setPlayerAnimations(v),
@@ -432,7 +432,7 @@ class _LongPressSpeedTile extends StatelessWidget {
             ),
           ),
           Text(
-            '长按屏幕临时倍速播放（1 – 4 倍，步进 0.5）；长按期间左右滑动可在 1.5 – 4 倍间临时调速',
+            '长按临时倍速，可左右滑动调速',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],
@@ -578,7 +578,7 @@ class _SeekSettingTileState extends State<_SeekSettingTile> {
             ),
           ),
           Text(
-            '点击右侧数值可自定义 1 – ${PlayerControlsSettings.maxSeekSeconds} 秒',
+            '点击数值可自定义秒数',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],
@@ -652,7 +652,7 @@ class _WatchThresholdTile extends StatelessWidget {
             ),
           ),
           Text(
-            '播放进度达到该比例即视为「已看完」（列表置灰）。5% – 100%，步进 5%，默认 95%。',
+            '进度达到该比例即视为已看完',
             style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],
