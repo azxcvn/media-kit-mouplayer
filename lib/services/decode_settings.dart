@@ -57,6 +57,8 @@ class DecodeSettings extends ChangeNotifier {
 
   static const _keyMode = 'decode_mode';
   static const _keyPreset = 'decode_preset';
+  static const _keyGpuNext = 'decode_gpu_next';
+  static const _keyVulkan = 'decode_vulkan';
 
   DecodeMode _mode = DecodeMode.autoSafe;
 
@@ -67,6 +69,17 @@ class DecodeSettings extends ChangeNotifier {
 
   /// 当前解码预设（默认快速）
   DecodePreset get preset => _preset;
+
+  bool _gpuNext = false;
+
+  /// 是否启用 gpu-next 渲染（vo=gpu-next）。默认关闭，仍走 vo=gpu。
+  bool get gpuNext => _gpuNext;
+
+  bool _vulkan = false;
+
+  /// 是否在 gpu-next 下启用 Vulkan 后端（gpu-api=vulkan）。
+  /// 仅在 [gpuNext] 开启时生效；默认关闭（gpu-next 走 OpenGL）。
+  bool get useVulkan => _vulkan;
 
   /// 从磁盘加载
   Future<void> load() async {
@@ -89,6 +102,8 @@ class DecodeSettings extends ChangeNotifier {
         }
       }
     }
+    _gpuNext = prefs.getBool(_keyGpuNext) ?? false;
+    _vulkan = prefs.getBool(_keyVulkan) ?? false;
     notifyListeners();
   }
 
@@ -110,5 +125,25 @@ class DecodeSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyPreset, v.name);
+  }
+
+  /// 切换 gpu-next 渲染并持久化
+  Future<void> setGpuNext(bool v) async {
+    await ensureLoaded();
+    if (_gpuNext == v) return;
+    _gpuNext = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyGpuNext, v);
+  }
+
+  /// 切换 Vulkan 后端并持久化
+  Future<void> setVulkan(bool v) async {
+    await ensureLoaded();
+    if (_vulkan == v) return;
+    _vulkan = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyVulkan, v);
   }
 }

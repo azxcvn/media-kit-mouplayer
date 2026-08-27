@@ -285,6 +285,22 @@ class _PlayerPageState extends State<PlayerPage>
     }
   }
 
+  /// 应用 GPU 渲染后端：开启 gpu-next + Vulkan 时写入 `gpu-api=vulkan`
+  /// （libplacebo 选 Vulkan；否则 gpu-next 默认走 OpenGL）。需在 open 前写入，
+  /// 重启播放器（重开视频）后生效。
+  Future<void> _applyGpuApi() async {
+    try {
+      final native = _player.platform as NativePlayer;
+      await native.waitForPlayerInitialization;
+      final d = DecodeSettings.instance;
+      if (d.gpuNext && d.useVulkan) {
+        await native.setProperty('gpu-api', 'vulkan');
+      }
+    } catch (_) {
+      // 播放器初始化失败时随打开流程报错，此处静默
+    }
+  }
+
   /// 恢复进度指示器是否可见（恢复到位后显示，自管理 2.5s 隐藏）
   bool _resumeVisible = false;
 
@@ -346,11 +362,12 @@ class _PlayerPageState extends State<PlayerPage>
       ),
     );
     // 解码档位注入（方案 A）：创建时传入 hwdec/vo，换档后下次打开视频生效
-    final decodeMode = DecodeSettings.instance.mode;
+    final decodeSettings = DecodeSettings.instance;
+    final decodeMode = decodeSettings.mode;
     _controller = VideoController(
       _player,
       configuration: VideoControllerConfiguration(
-        vo: 'gpu',
+        vo: decodeSettings.gpuNext ? 'gpu-next' : 'gpu',
         enableHardwareAcceleration: decodeMode != DecodeMode.sw,
         hwdec: decodeMode.hwdec,
       ),
@@ -374,6 +391,8 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_applyExactSeek());
     // 解码预设（vd-lavc-*）：open 前写入，重启播放器后生效
     unawaited(_applyDecodePreset());
+    // GPU 后端（gpu-api=vulkan）：open 前写入，重启播放器后生效
+    unawaited(_applyGpuApi());
 
     // 工作.md 第 7 点：关闭「启用播放界面动画」后，控制层/解锁按钮
     // 的进出场动画时长归零（forward/reverse 立即完成，直接出现/消失）

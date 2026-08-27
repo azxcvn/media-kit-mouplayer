@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/player_action.dart';
+import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
@@ -43,10 +44,11 @@ class PlayerSettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = PlayerControlsSettings.instance;
+    final decodeSettings = DecodeSettings.instance;
     return Scaffold(
       appBar: AppBar(title: const Text('播放器设置')),
       body: ListenableBuilder(
-        listenable: settings,
+        listenable: Listenable.merge([settings, decodeSettings]),
         builder: (context, _) {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
@@ -280,6 +282,42 @@ class PlayerSettingsPage extends StatelessWidget {
                 child: _WatchThresholdTile(
                   value: settings.watchThreshold,
                   onChanged: settings.setWatchThreshold,
+                ),
+              ),
+              // ── 解码（GPU-next / Vulkan 可选渲染后端，重启播放器生效）──
+              const SizedBox(height: 16),
+              const SettingsGroupTitle(title: '解码'),
+              SettingsCard(
+                child: Column(
+                  children: [
+                    SettingsSwitchTile(
+                      icon: Icons.auto_awesome_outlined,
+                      title: '启用 GPU-next',
+                      subtitle: const Text('使用 libplacebo 新渲染器（vo=gpu-next）'),
+                      value: decodeSettings.gpuNext,
+                      onChanged: (v) => decodeSettings.setGpuNext(v),
+                    ),
+                    const Divider(height: 1, indent: 16, endIndent: 16),
+                    SettingsSwitchTile(
+                      icon: Icons.memory_outlined,
+                      title: '启用 Vulkan',
+                      subtitle: const Text('GPU-next 下改用 Vulkan 后端（gpu-api=vulkan）'),
+                      value: decodeSettings.useVulkan,
+                      onChanged: decodeSettings.gpuNext
+                          ? (v) => decodeSettings.setVulkan(v)
+                          : null,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Text(
+                        '切换后需重启播放器（重开视频）生效；Vulkan 需设备支持，不支持时自动回退 OpenGL',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
