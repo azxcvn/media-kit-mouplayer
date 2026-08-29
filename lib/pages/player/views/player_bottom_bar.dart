@@ -2,14 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
+import 'package:moumou/pages/player/views/player_danmaku_buttons.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
-/// 底栏：全宽进度条 + 下一集 + 时间 + 右下角按钮组（超分辨率/列表/倍速/选择屏幕）。
+/// 底栏：全宽进度条 + 下一集 + 时间 + 弹幕开关/设置 + 右下角按钮组
+/// （超分辨率/列表/倍速/选择屏幕）。
 ///
-/// 布局（工作.md 第 18/19 点 + v3 用户反馈）：
+/// 布局（工作.md 第 18/19 点 + v3 用户反馈 + 弹幕第 5 点）：
 /// - 左下角「下一集」（无兄弟视频时置灰）+ 其右侧为**时间文本**（点击在
 ///   「已播/总时长」⇄「已播/剩余时长」间切换，onTimeTap），三者左缘与
 ///   进度条开端/返回箭头对齐到同一 x（[kPlayerLeftInset]）；
+/// - 时间文本右侧为**弹幕开关 + 弹幕设置**按钮（顺序固定，间距 8 与
+///   右侧簇内按钮一致）；
 /// - 右下角按钮从右到左：**选择屏幕**（最右）→ **倍速**（图标）→ **列表**（图标）
 ///   → **超分辨率**（文本胶囊，最左）。
 ///
@@ -53,6 +57,15 @@ class PlayerBottomBar extends StatelessWidget {
   /// 点击章节名称：呼出章节列表面板
   final VoidCallback? onChapterTap;
 
+  /// 弹幕开关状态（开 = 带对勾主题色图标，关 = 斜杠图标）
+  final bool danmakuOn;
+
+  /// 点击弹幕开关（显示 ⇄ 隐藏，工作.md 弹幕第 5 点：位于时间文本右侧）
+  final VoidCallback onDanmakuToggle;
+
+  /// 点击弹幕设置（弹幕开关右侧，与开关间距同右侧簇按钮间距 8）
+  final VoidCallback onDanmakuSettingsTap;
+
   const PlayerBottomBar({
     super.key,
     required this.valueMs,
@@ -75,6 +88,9 @@ class PlayerBottomBar extends StatelessWidget {
     this.skipSegments = const [],
     this.currentChapterName,
     this.onChapterTap,
+    required this.danmakuOn,
+    required this.onDanmakuToggle,
+    required this.onDanmakuSettingsTap,
   });
 
   @override
@@ -129,29 +145,59 @@ class PlayerBottomBar extends StatelessWidget {
                   const SizedBox(width: 4),
                   // 时间文本：下一集右侧（v3 用户反馈改回此款式），
                   // 点击切换「已播/总时长」⇄「已播/剩余时长」。
-                  // ⚠️ 布局要点：Expanded 是**唯一**弹性元素——时间文本占满
-                  // 「下一集」与按钮簇之间的剩余空间（左对齐、过长省略），
-                  // 右侧按钮簇保持贴右缘（若用 Flexible+Spacer 两个弹性元素
-                  // 会平分自由空间，把按钮推向中间，v3 回归根因）。
+                  // ⚠️ 布局要点：外层 Expanded 是**唯一**弹性元素——时间文本
+                  // 与弹幕按钮组成子行占满「下一集」与右侧按钮簇之间的剩余
+                  // 空间（时间文本 Flexible 左对齐、过长省略，弹幕按钮紧随
+                  // 其右），右侧按钮簇保持贴右缘（若用 Flexible+Spacer 两个
+                  // 弹性元素会平分自由空间，把按钮推向中间，v3 回归根因）。
+                  // 弹幕开关/设置按钮在时间文本右侧（工作.md 弹幕第 5 点），
+                  // 间距 8 与右侧播放列表/倍速按钮间距一致。
                   Expanded(
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: onTimeTap,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 2,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          timeText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 13,
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: onTimeTap,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 2,
+                                vertical: 6,
+                              ),
+                              child: Text(
+                                timeText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                        // ⚠️ FittedBox(scaleDown) 兜底：极窄窗口（分屏/自由
+                        // 窗口把横屏页压到 ~390dp）下 Expanded 可能只剩几十
+                        // px，固定尺寸按钮会 RenderFlex 溢出；常规宽度下
+                        // 原尺寸渲染不受影响
+                        Flexible(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: PlayerDanmakuButtons(
+                              danmakuOn: danmakuOn,
+                              onToggle: onDanmakuToggle,
+                              onSettings: onDanmakuSettingsTap,
+                              iconSize: 22,
+                              gap: 8,
+                              buttonPadding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 6,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   // 右侧按钮簇（从右到左，工作.md 第 18 点）：

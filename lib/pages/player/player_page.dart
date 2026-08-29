@@ -16,6 +16,8 @@ import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
+import 'package:moumou/pages/player/views/player_danmaku_layer.dart';
+import 'package:moumou/pages/player/views/player_danmaku_panel.dart';
 import 'package:moumou/pages/player/views/player_decode_panel.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
@@ -35,6 +37,7 @@ import 'package:moumou/pages/player/views/player_top_bar.dart';
 import 'package:moumou/pages/player/views/subtitle_panel.dart';
 import 'package:moumou/services/audio_service.dart';
 import 'package:moumou/services/chapter_tracker.dart';
+import 'package:moumou/services/danmaku_service.dart';
 import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
@@ -116,6 +119,10 @@ class _PlayerPageState extends State<PlayerPage>
   late final Listenable _chapterListenable =
       Listenable.merge([_progressListenable, _chapterTracker]);
 
+  /// 底栏监听合并：章节 + 弹幕开关状态（弹幕开关图标随 danmakuOn 刷新）
+  late final Listenable _bottomBarListenable =
+      Listenable.merge([_chapterListenable, _danmakuController]);
+
   /// 章节状态跟踪器（工作.md 章节功能）：读取章节与跳过片段、跟踪当前
   /// 章节与胶囊自动弹出窗口；横竖屏共享同一实例（切集/位置流统一驱动）。
   late final ChapterTracker _chapterTracker;
@@ -127,6 +134,10 @@ class _PlayerPageState extends State<PlayerPage>
   /// 音频控制器（工作.md 音频功能）：音轨列表/切音轨/外部音轨导入·移除/
   /// 声道/音频处理；横竖屏共享同一实例（同一 Player，切集后统一重新应用）。
   late final AudioController _audioController;
+
+  /// 弹幕控制器（弹幕移植方案阶段1）：本地同名弹幕加载 + 秒桶调度发射 +
+  /// canvas 渲染层驱动；横竖屏共享同一实例（同一 Player，切集后重新加载）。
+  late final DanmakuController _danmakuController;
 
   /// 片头片尾状态跟踪器（工作.md 片头片尾功能）：驱动片头/片尾自动跳过
   /// 动作；横竖屏共享同一实例（切集/位置流统一驱动）。
@@ -386,6 +397,13 @@ class _PlayerPageState extends State<PlayerPage>
     // 音频控制器：绑定同一播放器（track-list / aid / audio-add / 声道 / af）
     _audioController = AudioController(_player);
     unawaited(_audioController.applyOnInit());
+    // 弹幕控制器：绑定同一播放器（本地同名弹幕加载 + 1s 秒桶发射 +
+    // 渲染层暂停/倍速同步；首开加载在 _openAndSetRate 的 open 完成后）
+    _danmakuController = DanmakuController(_player);
+    // 自动加载弹幕（同名/记忆恢复）成功后弹提示（服务层不依赖 UI）
+    _danmakuController.onAutoLoadedDanmaku = (fileName) {
+      if (mounted) _toast('已自动加载弹幕：$fileName');
+    };
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
     // 而非落在最近关键帧）
@@ -572,6 +590,8 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_subtitleController.reapplyForMedia(_path));
     // 音频功能：open 完成后刷新音轨/同步当前音轨/应用声道与音频处理
     unawaited(_audioController.reapplyForMedia(_path));
+    // 弹幕功能：open 完成后加载同目录同名弹幕（无匹配静默跳过）
+    unawaited(_danmakuController.loadForVideo(_path));
     await _applyVideoOrientation();
   }
 
@@ -1259,6 +1279,20 @@ class _PlayerPageState extends State<PlayerPage>
       );
   }
 
+  // ── 弹幕（阶段1：显示/隐藏 + 本地同名加载）──────────────
+
+  /// 弹幕开关（底栏按钮 / 顶栏「弹幕」槽位共用）：关闭时清屏并作废在途
+  /// 发射，开启后从当前位置继续
+  void _toggleDanmaku() {
+    _danmakuController.toggle();
+    _resetHideTimer();
+  }
+
+  /// 弹幕设置按钮：阶段1 无设置面板（样式/配置全部默认），占位提示
+  void _showDanmakuSettingsComingSoon() {
+    _showComingSoon('弹幕设置');
+  }
+
   // ── 片头片尾 ─────────────────────────────────────────────
 
   /// 片头片尾面板页（顶栏「片头片尾」槽位弹出）
@@ -1400,6 +1434,9 @@ class _PlayerPageState extends State<PlayerPage>
       unawaited(_subtitleController.reapplyForMedia(path));
       // 音频功能：切集后刷新音轨 + 同步当前音轨 + 应用声道与音频处理
       unawaited(_audioController.reapplyForMedia(path));
+      // 弹幕功能：切集后重新加载新集的同名弹幕（loadForVideo 内部会先
+      // 重置调度器并清屏，在途旧集弹幕不会灌入新集）
+      unawaited(_danmakuController.loadForVideo(path));
     } on AssertionError {
       // 播放器已被销毁（切集过程中退出）：静默返回，不写假崩溃日志
       return;
@@ -1636,7 +1673,8 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.audio:
         _openAudioPanel();
       case PlayerTopAction.danmaku:
-        if (!action.implemented) _showComingSoon(action.label);
+        // 弹幕阶段1：顶栏槽位进入弹幕二级界面（本地/网络/自动匹配/设置）
+        _openDanmakuPanel();
       case PlayerTopAction.equalizer:
         _openEqualizerPanel();
       case PlayerTopAction.decode:
@@ -1663,6 +1701,10 @@ class _PlayerPageState extends State<PlayerPage>
         return _subtitlePanelPage();
       case PlayerTopAction.audio:
         return _audioPanelPage();
+      case PlayerTopAction.danmaku:
+        // 弹幕阶段1：顶栏槽位/更多均进入弹幕二级界面
+        //（本地弹幕/网络弹幕/自动匹配/弹幕设置）
+        return _danmakuPanelPage();
       case PlayerTopAction.loop:
         return _loopPanelPage();
       case PlayerTopAction.chapter:
@@ -1695,9 +1737,8 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.subtitle:
       case PlayerTopAction.audio:
       case PlayerTopAction.decode:
-        break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-        if (!action.implemented) _showComingSoon(action.label);
+        break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.equalizer:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.listen:
@@ -1780,6 +1821,33 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _openAudioPanel() async {
     _hideTimer?.cancel();
     await showPlayerPanel(context, pages: [_audioPanelPage()]);
+    _resetHideTimer();
+  }
+
+  /// 弹幕面板页（顶栏/更多「弹幕」动作，阶段1）：
+  /// 二级入口列表——本地弹幕（文件选择器导入）/ 网络弹幕 / 自动匹配 /
+  /// 弹幕设置（与底栏弹幕设置按钮同一回调）。
+  PlayerPanelPage _danmakuPanelPage() => PlayerPanelPage(
+        title: '弹幕',
+        body: Builder(
+          builder: (panelContext) {
+            final navigator = PlayerPanelNavigator.of(panelContext);
+            return PlayerDanmakuPanel(
+              controller: _danmakuController,
+              onSettingsTap: _showDanmakuSettingsComingSoon,
+              onPushSubPage: (title, body) => navigator.push(
+                PlayerPanelPage(title: title, body: body),
+              ),
+              onPopSubPage: () => navigator.pop(),
+            );
+          },
+        ),
+      );
+
+  /// 打开弹幕面板（右侧滑入，[showPlayerPanel]）。
+  Future<void> _openDanmakuPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_danmakuPanelPage()]);
     _resetHideTimer();
   }
 
@@ -1939,6 +2007,8 @@ class _PlayerPageState extends State<PlayerPage>
           subtitleController: _subtitleController,
           // 音频功能：共享横屏页控制器（同一 Player，切集后统一重新应用）
           audioController: _audioController,
+          // 弹幕功能：共享横屏页控制器（同一 Player，渲染层 rebind）
+          danmakuController: _danmakuController,
         ),
         transitionsBuilder: (_, animation, _, child) =>
             FadeTransition(opacity: animation, child: child),
@@ -2254,6 +2324,7 @@ class _PlayerPageState extends State<PlayerPage>
     _chapterTracker.dispose();
     _subtitleController.dispose();
     _audioController.dispose();
+    _danmakuController.dispose();
     _audioActive.dispose();
     _thumbHideTimer?.cancel();
     _cancelThumbPrefetch();
@@ -2342,6 +2413,12 @@ class _PlayerPageState extends State<PlayerPage>
                       ),
                     ),
                   ),
+                ),
+                // 弹幕层（弹幕移植方案阶段1）：视频层与手势层之间；
+                // DanmakuScreen 内部自带 IgnorePointer 不拦截手势；
+                // 与视频缩放 Transform 无关（弹幕铺满整个播放区域）
+                Positioned.fill(
+                  child: PlayerDanmakuLayer(controller: _danmakuController),
                 ),
                 // 手势层：单击/双击/长按（+左右滑动调速）/单指滑动
                 // （音量·亮度·进度）/双指缩放平移
@@ -2457,11 +2534,11 @@ class _PlayerPageState extends State<PlayerPage>
                           position: _bottomSlide,
                           child: Align(
                             alignment: Alignment.bottomCenter,
-                            // 局部订阅进度 + 章节：位置/时长/章节变化只重建底栏
-                            //（进度条 + 时间文本 + 章节标记），不重建整页
-                            //（risk_audit #1）
+                            // 局部订阅进度 + 章节 + 弹幕开关：位置/时长/章节
+                            // 变化只重建底栏（进度条 + 时间文本 + 章节标记 +
+                            // 弹幕图标），不重建整页（risk_audit #1）
                             child: ListenableBuilder(
-                              listenable: _chapterListenable,
+                              listenable: _bottomBarListenable,
                               builder: (context, _) => PlayerBottomBar(
                                 valueMs: (_dragPosition ?? _position)
                                     .inMilliseconds
@@ -2512,6 +2589,11 @@ class _PlayerPageState extends State<PlayerPage>
                                         ? _chapterTracker.currentChapterTitle
                                         : null,
                                 onChapterTap: _openChapterPanel,
+                                // 弹幕功能（阶段1）：开关 + 设置按钮，
+                                // 位于时间文本右侧（工作.md 弹幕第 5 点）
+                                danmakuOn: _danmakuController.danmakuOn,
+                                onDanmakuToggle: _toggleDanmaku,
+                                onDanmakuSettingsTap: _showDanmakuSettingsComingSoon,
                               ),
                             ),
                           ),

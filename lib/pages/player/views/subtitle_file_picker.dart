@@ -11,7 +11,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// - **Android 11 以上（SDK ≥ 31）**：使用自建文件选择器
 ///   （[SubtitleFilePickerPanel]，作为右侧面板二级页就地切换，不再从底部弹出），
 ///   支持当前路径显示、名称/大小/日期排序（下拉菜单 + 升降序）、文件夹记忆
-///   （成功导入后记住文件夹，下次打开自动定位），以及进出文件夹的滑动动画。
+///   （成功导入后记住文件夹，下次打开自动定位；记忆文件夹已被删除/不可读时
+///   自动向上回退到最近存活祖先，杜绝停在死路径卡死——小喵 player 教训），
+///   以及进出文件夹的滑动动画。
 ///
 /// 两者最终都返回「可被 libmpv 直接读取的绝对路径」，失败返回 null。
 class SubtitleFileService {
@@ -98,26 +100,46 @@ class _SubtitleFilePickerPanelState extends State<SubtitleFilePickerPanel> {
     final lastFolder =
         await SubtitleFileService.getLastFolder(key: widget.folderKey);
     if (!mounted) return;
-    _currentPath = (lastFolder != null && lastFolder.isNotEmpty)
+    final start = (lastFolder != null && lastFolder.isNotEmpty)
         ? lastFolder
         : '/storage/emulated/0';
-    await _load();
-  }
-
-  Future<void> _load() async {
-    setState(() => _loading = true);
-    final entries = await DeviceServices.listDirectory(_currentPath);
+    // 记忆文件夹可能已在系统侧被删除/不可读——向上回退到最近存活祖先
+    //（小喵 player 教训：停在死路径上列表空白、看似卡死）
+    final (path, entries) = await _resolveStartDirectory(start);
     if (!mounted) return;
     setState(() {
-      _entries = sortSubtitleDirEntries(
-        entries.where(
-          (e) => e.isDirectory || widget.fileFilter(e.name),
-        ),
-        _sort,
-        ascending: _ascending,
-      );
+      _currentPath = path;
+      _entries = _filterAndSort(entries ?? const []);
       _loading = false;
     });
+  }
+
+  /// 从 [start] 起向上寻找第一个**可列出**的存活目录。
+  ///
+  /// listDirectory 对「目录不存在/不可读」返回 null（区别于真实空目录）；
+  /// 回退链最多向上 12 级，全链失效时回落 [start]（空列表展示，
+  /// 上级按钮仍可用，不会卡死）。
+  Future<(String, List<SubtitleDirEntry>?)> _resolveStartDirectory(
+    String start,
+  ) async {
+    var path = start;
+    for (var i = 0; i < 12; i++) {
+      final entries = await DeviceServices.listDirectory(path);
+      if (entries != null) return (path, entries);
+      final parent = _parentOf(path);
+      if (parent == null || parent == path) break;
+      path = parent;
+    }
+    return (start, null);
+  }
+
+  /// 目录过滤 + 排序（目录恒显示；文件按 [SubtitleFilePickerPanel.fileFilter] 过滤）
+  List<SubtitleDirEntry> _filterAndSort(Iterable<SubtitleDirEntry> entries) {
+    return sortSubtitleDirEntries(
+      entries.where((e) => e.isDirectory || widget.fileFilter(e.name)),
+      _sort,
+      ascending: _ascending,
+    );
   }
 
   Future<void> _openFolder(String path, {int direction = 1}) async {
@@ -125,16 +147,16 @@ class _SubtitleFilePickerPanelState extends State<SubtitleFilePickerPanel> {
     setState(() => _loading = true);
     final entries = await DeviceServices.listDirectory(path);
     if (!mounted) return;
+    if (entries == null) {
+      // 目录刚被删除/不可读（进入与列出之间被外部删除等竞态）：
+      // 维持原状，绝不把界面落到死路径上——上级/关闭始终可用
+      setState(() => _loading = false);
+      return;
+    }
     setState(() {
       // 内容就绪后再更新路径，使 AnimatedSwitcher 在切换时新旧内容都已正确。
       _currentPath = path;
-      _entries = sortSubtitleDirEntries(
-        entries.where(
-          (e) => e.isDirectory || widget.fileFilter(e.name),
-        ),
-        _sort,
-        ascending: _ascending,
-      );
+      _entries = _filterAndSort(entries);
       _loading = false;
     });
   }

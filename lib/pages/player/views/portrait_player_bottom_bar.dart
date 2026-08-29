@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
+import 'package:moumou/pages/player/views/player_danmaku_buttons.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
 /// 竖屏播放页底栏（v3 布局）：
+/// - **章节名 + 弹幕按钮行**：进度条上方——章节名靠左（点击呼出章节列表，
+///   无章节时不占位），**弹幕开关/设置按钮靠右**（工作.md 弹幕第 5 点：
+///   右下角、进度条上方，与章节名同一行；间距 6 与右侧簇按钮间距一致）；
 /// - **进度条**（复用 [PlayerSeekBar]，轨道开端对齐 [kPlayerLeftInset]，
 ///   与返回/下一集同一 x）；
 /// - **操作行**：下一集 + 时间文本（点击切换已播/总⇄已播/剩余）+
@@ -49,6 +53,15 @@ class PortraitPlayerBottomBar extends StatelessWidget {
   /// 点击章节名称：呼出章节列表面板
   final VoidCallback? onChapterTap;
 
+  /// 弹幕开关状态（开 = 带对勾主题色图标，关 = 斜杠图标）
+  final bool danmakuOn;
+
+  /// 点击弹幕开关（显示 ⇄ 隐藏，工作.md 弹幕第 5 点：右下角、进度条上方）
+  final VoidCallback onDanmakuToggle;
+
+  /// 点击弹幕设置（弹幕开关右侧，与开关间距同右侧簇按钮间距 6）
+  final VoidCallback onDanmakuSettingsTap;
+
   const PortraitPlayerBottomBar({
     super.key,
     required this.valueMs,
@@ -71,6 +84,9 @@ class PortraitPlayerBottomBar extends StatelessWidget {
     this.skipSegments = const [],
     this.currentChapterName,
     this.onChapterTap,
+    required this.danmakuOn,
+    required this.onDanmakuToggle,
+    required this.onDanmakuSettingsTap,
   });
 
   @override
@@ -93,13 +109,42 @@ class PortraitPlayerBottomBar extends StatelessWidget {
           // 左对齐：章节名称行（min 宽度）与进度条左缘对齐，不被居中
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 章节名称行：进度条上方（工作.md 章节功能第 2 点），
-            // 点击呼出章节列表；无章节时不占位
-            if (currentChapterName != null && onChapterTap != null)
-              PlayerChapterNameRow(
-                name: currentChapterName!,
-                onTap: onChapterTap!,
-              ),
+            // 章节名 + 弹幕按钮行（进度条上方，工作.md 弹幕第 5 点）：
+            // 章节名靠左（无章节时不占位，由 Spacer 顶位），弹幕开关/设置
+            // 按钮靠右——与章节名同一行；间距 6 与下方操作行右侧簇一致。
+            // 章节名用 Align+Expanded 顶宽（按钮贴右），点击区域仍只包住
+            // 文字与箭头（Align 不参与命中，维持章节名行的原点击语义）。
+            Row(
+              children: [
+                if (currentChapterName != null && onChapterTap != null)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: PlayerChapterNameRow(
+                        name: currentChapterName!,
+                        onTap: onChapterTap!,
+                      ),
+                    ),
+                  )
+                else
+                  const Spacer(),
+                Padding(
+                  // 垂直内边距与章节名行（8/2）对齐，右缘同为 20
+                  padding: const EdgeInsets.fromLTRB(0, 8, 20, 2),
+                  child: PlayerDanmakuButtons(
+                    danmakuOn: danmakuOn,
+                    onToggle: onDanmakuToggle,
+                    onSettings: onDanmakuSettingsTap,
+                    iconSize: 20,
+                    gap: 6,
+                    buttonPadding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
             // ── 进度条：PlayerSeekBar 内部已按 kPlayerLeftInset 对齐轨道开端 ──
             PlayerSeekBar(
               valueMs: valueMs,

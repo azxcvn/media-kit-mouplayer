@@ -200,6 +200,14 @@ class MainActivity : FlutterActivity() {
                         )
                         result.success(path)
                     }
+                    // 弹幕功能：content:// 弹幕文件拷贝到 filesDir/danmaku/（返回真实路径）
+                    "copyDanmakuFromUri" -> {
+                        val path = copyDanmakuFromUri(
+                            call.argument<String>("uri") ?: "",
+                            call.argument<String>("name") ?: "danmaku.xml",
+                        )
+                        result.success(path)
+                    }
                     // 字幕字体导入：content:// 拷贝到 filesDir/fonts/（返回真实路径）
                     "copyFontFromUri" -> {
                         val path = copyFontFromUri(
@@ -708,28 +716,27 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * 列举目录内容（自建字幕文件选择器用，工作.md 阶段1 第 3 点）：
+     * 列举目录内容（自建文件选择器用）：
      * 返回 name/path/isDirectory/size/modifiedMs 列表（排序在 Dart 侧完成）。
-     * 失败/不可读返回空列表。
+     * 目录不存在 / 不可读 / IO 错误返回 **null**（区别于真实存在的空目录），
+     * 供选择器识别死路径并向上回退（小喵 player 记忆路径失效卡死的教训）。
      */
-    private fun listDirectory(path: String): List<Map<String, Any>> {
+    private fun listDirectory(path: String): List<Map<String, Any>>? {
         val dir = File(path)
-        if (!dir.exists() || !dir.isDirectory) return emptyList()
+        if (!dir.exists() || !dir.isDirectory) return null
         return try {
-            dir.listFiles()
-                ?.sortedBy { it.name.lowercase() }
-                ?.map { f ->
-                    mapOf(
-                        "name" to f.name,
-                        "path" to f.absolutePath,
-                        "isDirectory" to f.isDirectory,
-                        "size" to (if (f.isFile) f.length() else 0L),
-                        "modifiedMs" to f.lastModified(),
-                    )
-                }
-                ?: emptyList()
+            val files = dir.listFiles() ?: return null
+            files.sortedBy { it.name.lowercase() }.map { f ->
+                mapOf(
+                    "name" to f.name,
+                    "path" to f.absolutePath,
+                    "isDirectory" to f.isDirectory,
+                    "size" to (if (f.isFile) f.length() else 0L),
+                    "modifiedMs" to f.lastModified(),
+                )
+            }
         } catch (e: Exception) {
-            emptyList()
+            null
         }
     }
 
@@ -799,6 +806,30 @@ class MainActivity : FlutterActivity() {
             if (target.exists() && target.length() > 0) target.absolutePath else null
         } catch (e: Exception) {
             Log.w("MainActivity", "copyAudioFromUri failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * 把 content:// 弹幕 uri 拷贝到 filesDir/danmaku/<name>（弹幕 XML 解析走
+     * dart:io，无法直接读 content://，弹幕功能阶段1），
+     * 返回真实绝对路径；失败返回 null。
+     */
+    private fun copyDanmakuFromUri(uriString: String, name: String): String? {
+        return try {
+            val uri = Uri.parse(uriString)
+            val danmakuDir = File(filesDir, "danmaku")
+            if (!danmakuDir.exists()) danmakuDir.mkdirs()
+            // 优先用真实文件名（DISPLAY_NAME），回退到 Dart 传入的 name
+            val displayName = queryDisplayName(uri) ?: name
+            val safeName = displayName.replace(Regex("[^a-zA-Z0-9.\\-_]|\\s"), "_")
+            val target = File(danmakuDir, "${uri.hashCode()}_$safeName")
+            contentResolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            if (target.exists() && target.length() > 0) target.absolutePath else null
+        } catch (e: Exception) {
+            Log.w("MainActivity", "copyDanmakuFromUri failed: ${e.message}")
             null
         }
     }

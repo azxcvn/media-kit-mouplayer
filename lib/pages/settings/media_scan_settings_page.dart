@@ -455,7 +455,10 @@ class _FolderPickerSheetState extends State<_FolderPickerSheet> {
     final entries = await DeviceServices.listDirectory(_currentPath);
     if (!mounted) return;
     setState(() {
-      _subFolders = entries.where((e) => e.isDirectory).toList()
+      // 目录不可读（null）与本页语义等同为空列表（上级导航始终可用）
+      _subFolders = (entries ?? const <SubtitleDirEntry>[])
+          .where((e) => e.isDirectory)
+          .toList()
         ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
       _loading = false;
     });

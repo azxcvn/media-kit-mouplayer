@@ -50,20 +50,22 @@ enum PlayerVideoFit {
 
 /// 播放器右上角可自定义的按钮动作（最多 5 个，顺序可调）。
 ///
-/// [implemented] 为 false 的动作是占位入口（弹幕/音频均衡器/解码），
+/// [implemented] 为 false 的动作是占位入口（音频均衡器/解码之外的未接入项），
 /// 顶栏点击提示「功能即将上线」，待后续接入具体功能。
 /// [implemented] 为 true 的动作：字幕、音频、比例、画中画、听视频、循环播放、
-/// 章节、片头片尾（已接入）。
+/// 章节、片头片尾、弹幕（已接入）。
 ///
 /// 注意：倍速（speed）**不在**顶栏动作之列 —— 倍速按钮固定于播放页
 /// 底栏（超分辨率按钮左侧），不支持在顶栏控制栏增加或删除。
 enum PlayerTopAction {
   subtitle('subtitle', '字幕', Icons.subtitles_outlined, true),
-  danmaku('danmaku', '弹幕', Icons.comment_outlined, false),
+  // 弹幕（阶段1）：顶栏槽位/「更多」均进入弹幕二级界面
+  //（本地弹幕/网络弹幕/自动匹配/弹幕设置）；底栏另有弹幕开关/设置按钮
+  danmaku('danmaku', '弹幕', Icons.comment_outlined, true),
   audio('audio', '音频', Icons.library_music_outlined, true),
   aspect('aspect', '比例', Icons.aspect_ratio, true),
   // v2 新增：pip/listen 已实现（implemented=true）；
-  // equalizer（音频均衡器）已实现；decode 已实现；仅 danmaku 仍为占位
+  // equalizer（音频均衡器）已实现；decode 已实现；弹幕阶段1 已接入
   pip('pip', '画中画', Icons.picture_in_picture_alt_outlined, true),
   // 听视频：已接入（工作.md 第 10 点），点击进入听视频界面
   listen('listen', '听视频', Icons.headphones_outlined, true),

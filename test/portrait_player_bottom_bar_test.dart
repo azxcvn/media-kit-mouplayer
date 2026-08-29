@@ -4,16 +4,18 @@ import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 import 'package:moumou/pages/player/views/portrait_player_bottom_bar.dart';
 
-/// 竖屏播放页底栏布局回归测试（v3 更新）：
+/// 竖屏播放页底栏布局回归测试（v3 更新 + 弹幕第 5 点）：
 /// - 时间文本位于「下一集」按钮右侧、同一行（v3 用户反馈：改回此款式）；
 /// - 下一集按钮左缘 = kPlayerLeftInset（人体工学左对齐，与返回/进度条开端同 x）；
 /// - PlayerSeekBar 为自定义绘制进度条（无 Material Slider，用户反馈
 ///   「进度条难拖」修复）：轨道左缘精确落在 kPlayerLeftInset、右缘留
 ///   rightInset（横竖屏共用同一进度条组件）；
 /// - 右侧按钮簇顺序（从左到右）：超分辨率 → 列表 → 倍速 → 选择屏幕
-///   （即从右到左：选择屏幕 → 倍速 → 列表 → 超分辨率，工作.md 第 18 点）。
+///   （即从右到左：选择屏幕 → 倍速 → 列表 → 超分辨率，工作.md 第 18 点）；
+/// - 弹幕开关/设置按钮在**进度条上方**靠右（与章节名同一行，无章节时
+///   独占该行），顺序：开关 → 设置（工作.md 弹幕第 5 点）。
 void main() {
-  Widget buildBar() {
+  Widget buildBar({String? chapterName, bool danmakuOn = true}) {
     return MaterialApp(
       home: Scaffold(
         body: PortraitPlayerBottomBar(
@@ -32,6 +34,11 @@ void main() {
           onScreenSwitchTap: () {},
           showScreenSwitchBackground: false,
           onPlaylistTap: () {},
+          currentChapterName: chapterName,
+          onChapterTap: chapterName == null ? null : () {},
+          danmakuOn: danmakuOn,
+          onDanmakuToggle: () {},
+          onDanmakuSettingsTap: () {},
         ),
       ),
     );
@@ -82,6 +89,52 @@ void main() {
     final switchCenter =
         tester.getRect(find.byIcon(Icons.screen_rotation)).center.dy;
     expect((srCenter - switchCenter).abs() < 1, isTrue);
+  });
+
+  testWidgets('弹幕按钮在进度条上方右下角（顺序：开关 → 设置）', (tester) async {
+    await tester.pumpWidget(buildBar());
+    expect(tester.takeException(), isNull);
+
+    final toggleRect = tester.getRect(find.byTooltip('关闭弹幕'));
+    final settingRect = tester.getRect(find.byTooltip('弹幕设置'));
+    final seekRect = tester.getRect(find.byType(PlayerSeekBar));
+
+    // 顺序：开关 → 设置（左到右）
+    expect(settingRect.left > toggleRect.right, isTrue);
+    // 位于进度条上方
+    expect(toggleRect.bottom <= seekRect.top + 1, isTrue);
+    expect(settingRect.bottom <= seekRect.top + 1, isTrue);
+    // 靠右：两个按钮都在屏幕右半区（右下角）
+    final screenWidth =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    expect(toggleRect.left > screenWidth / 2, isTrue);
+    expect(settingRect.right > screenWidth / 2, isTrue);
+  });
+
+  testWidgets('有章节名时弹幕按钮与章节名同一行（章节名靠左）', (tester) async {
+    await tester.pumpWidget(buildBar(chapterName: '第一章 序幕'));
+    expect(tester.takeException(), isNull);
+
+    final chapterRect = tester.getRect(find.text('第一章 序幕'));
+    final toggleRect = tester.getRect(find.byTooltip('关闭弹幕'));
+    final seekRect = tester.getRect(find.byType(PlayerSeekBar));
+
+    // 章节名在左、弹幕按钮在右，同一行
+    expect(chapterRect.right < toggleRect.left, isTrue);
+    expect((chapterRect.center.dy - toggleRect.center.dy).abs() < 15, isTrue);
+    // 两者都在进度条上方
+    expect(toggleRect.bottom <= seekRect.top + 1, isTrue);
+    expect(chapterRect.bottom <= seekRect.top + 1, isTrue);
+  });
+
+  testWidgets('弹幕开关随 danmakuOn 切换图标与提示', (tester) async {
+    await tester.pumpWidget(buildBar(danmakuOn: true));
+    expect(find.byTooltip('关闭弹幕'), findsOneWidget);
+    expect(find.byTooltip('打开弹幕'), findsNothing);
+
+    await tester.pumpWidget(buildBar(danmakuOn: false));
+    expect(find.byTooltip('打开弹幕'), findsOneWidget);
+    expect(find.byTooltip('关闭弹幕'), findsNothing);
   });
 
   testWidgets('窄屏（360dp）下底栏不溢出（v3 RenderFlex 溢出修复）', (tester) async {

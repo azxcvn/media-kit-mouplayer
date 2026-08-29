@@ -49,6 +49,8 @@ dependencies:
   package_info_plus: ^9.0.1
   # 关于页图标（邮箱 / GitHub，SVG 素材来自参考项目图标素材）
   flutter_svg: ^2.2.3
+  # 弹幕渲染引擎（弹幕移植方案阶段1：本地同名 XML 弹幕 + 开关）
+  canvas_danmaku: ^0.3.3
   # 关于页跳转（写邮件 / 打开浏览器）
   url_launcher: ^6.3.0
 

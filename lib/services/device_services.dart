@@ -168,14 +168,16 @@ class DeviceServices {
     }
   }
 
-  /// 列举目录内容（自建字幕文件选择器用）；失败返回空列表。
-  static Future<List<SubtitleDirEntry>> listDirectory(String path) async {
+  /// 列举目录内容（自建文件选择器用）；**目录不存在 / 不可读返回 null**
+  /// （区别于真实存在的空目录，供选择器识别死路径并向上回退），
+  /// 成功返回条目列表（可能为空）。异常返回 null。
+  static Future<List<SubtitleDirEntry>?> listDirectory(String path) async {
     try {
       final list = await _channel.invokeMethod<List<dynamic>>(
         'listDirectory',
         {'path': path},
       );
-      if (list == null) return const [];
+      if (list == null) return null;
       return [
         for (final item in list)
           if (item is Map)
@@ -188,7 +190,7 @@ class DeviceServices {
             ),
       ];
     } catch (_) {
-      return const [];
+      return null;
     }
   }
 
@@ -209,6 +211,19 @@ class DeviceServices {
     try {
       return await _channel.invokeMethod<String>(
         'copySubtitleFromUri',
+        {'uri': uri, 'name': name},
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 把 content:// 弹幕 uri 拷贝为应用内真实路径（弹幕 XML 解析走 dart:io，
+  /// 无法直接读 content://）；返回真实绝对路径，失败返回 null。
+  static Future<String?> copyDanmakuFromUri(String uri, String name) async {
+    try {
+      return await _channel.invokeMethod<String>(
+        'copyDanmakuFromUri',
         {'uri': uri, 'name': name},
       );
     } catch (_) {
