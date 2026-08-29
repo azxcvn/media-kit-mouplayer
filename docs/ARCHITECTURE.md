@@ -3,6 +3,8 @@
 > 本文件是项目的**唯一架构契约**。任何 AI / 开发者在本仓库添加新功能前，必须先读完本文件。
 > 遵循本文件的约定，项目可以健康扩展到 PiliPlus / mpvRx 同量级规模；违反约定堆代码，项目会退化为屎山。
 > **完成重大功能新增 / 优化或 Bug 修复后，必须同步更新本文档（至少 §2 目录结构），禁止文档与代码脱节。**
+> **本文档不设「参考项目」一节**：外部参考项目（mpvRx/PiliPlus/Kazumi/小喵 等）不随仓库分发（已 gitignore），
+> 参考来源只在正文行内注明（如「对齐 mpvRx」）；禁止在文末新增独立的「参考项目」清单。
 
 ---
 
@@ -506,14 +508,3 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | SAF 目录选择器重启后 tree uri 失效、无法刷新字体 | `takePersistableUriPermission` + `FLAG_GRANT_PERSISTABLE_URI_PERMISSION`/`FLAG_GRANT_PREFIX_URI_PERMISSION`（§4.10） |
 | 反向立体声直接写 `audio-channels` 无效（mpv 无该布局值） | 反向立体声改走 `af` 滤镜 `pan=[stereo|c0=c1|c1=c0]`，并把 `audio-channels` 重置为 `auto-safe`（`buildAudioFilterChain`/`audioChannelsPropertyValue`） |
 | 外部音轨/字幕 content:// 无法直接给 libmpv | `audio-add`/`sub-add` 前由原生侧拷贝到 `filesDir/audio|subtitles/`（`copyAudioFromUri`/`copySubtitleFromUri`）；自建选择器直接返回真实路径 |
-
----
-
-## 8. 参考项目
-
-- `参考项目/mpvRx-master/` — 树状模式（逐级导航 + 面包屑）的设计来源；缩略图调度策略（单飞+顶旧/邻近帧/精确落帧/空闲预取）与 `seek absolute+exact` 的来源
-- mpvlibAndroid（`项目调研/mpvlibAndroid-library/`）— 缩略图 native 实现 `thumbnail.cpp` 的移植来源（内核补丁）
-- `参考项目/PiliPlus-main/` — 设置体系、配色规模、弹窗交互参考
-- `参考项目/src/` — fam4k007 小牛播放器源码：缩略图 384×216 裁剪算法（`ThumbnailCacheManager`）、MediaInfo 接入（`MediaInfoHelper` + `MediaInfoActivity`）、崩溃日志（`CrashHandler` + `LogViewerScreen`）、许可证书（AboutLibraries）均参考自它
-- `参考项目/Kazumi-main/` — 关于页 LicensePage（Flutter 内置自动收集许可）与日志页交互参考
-- `参考项目/对话.txt` / `修复.txt` / `1.txt` — 历史修复记录与诊断日志（勿删，排查回归时查阅）
