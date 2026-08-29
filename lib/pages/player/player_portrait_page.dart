@@ -16,6 +16,7 @@ import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
 import 'package:moumou/pages/player/views/player_danmaku_layer.dart';
 import 'package:moumou/pages/player/views/player_danmaku_panel.dart';
+import 'package:moumou/pages/player/views/player_danmaku_settings_panel.dart';
 import 'package:moumou/pages/player/views/player_decode_panel.dart';
 import 'package:moumou/pages/player/views/player_fit_panel.dart';
 import 'package:moumou/pages/player/views/player_gesture_indicator.dart';
@@ -1103,9 +1104,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     );
   }
 
-  /// 弹幕面板（底部弹出 [showPlayerBottomPanel]，阶段1）：
+  /// 弹幕面板（底部弹出 [showPlayerBottomPanel]，阶段2）：
   /// 二级入口列表——本地弹幕（文件选择器导入）/ 网络弹幕 / 自动匹配 /
-  /// 弹幕设置（与底栏弹幕设置按钮同一回调）。
+  /// 弹幕设置（面板内就地切换到设置页，不叠加第二个面板，§4.5）。
   PlayerPanelPage _danmakuPanelPage() {
     return PlayerPanelPage(
       title: '弹幕',
@@ -1114,7 +1115,12 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
           final navigator = PlayerBottomPanelNavigator.of(panelContext);
           return PlayerDanmakuPanel(
             controller: _danmakuController,
-            onSettingsTap: _showDanmakuSettingsComingSoon,
+            onSettingsTap: () => navigator.push(
+              const PlayerPanelPage(
+                title: '弹幕设置',
+                body: PlayerDanmakuSettingsPanel(),
+              ),
+            ),
             onPushSubPage: (title, body) => navigator.push(
               PlayerPanelPage(title: title, body: body),
             ),
@@ -1224,19 +1230,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     _resetHideTimer();
   }
 
-  void _showComingSoon(String name) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('「$name」功能即将上线'),
-          duration: const Duration(milliseconds: 1200),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-  }
-
-  // ── 弹幕（阶段1：显示/隐藏 + 本地同名加载）──────────────
+  // ── 弹幕（阶段2：显示/隐藏 + 本地加载 + 设置面板）──────────────
 
   /// 弹幕开关（底栏按钮 / 顶栏「弹幕」槽位共用）：关闭时清屏并作废在途
   /// 发射，开启后从当前位置继续
@@ -1245,9 +1239,16 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
     _resetHideTimer();
   }
 
-  /// 弹幕设置按钮：阶段1 无设置面板（样式/配置全部默认），占位提示
-  void _showDanmakuSettingsComingSoon() {
-    _showComingSoon('弹幕设置');
+  /// 弹幕设置：打开弹幕设置面板（底部弹出，[showPlayerBottomPanel]）。
+  /// 竖屏右下角进度条上方的弹幕设置按钮 / 更多→弹幕→弹幕设置进入同一面板
+  /// （与横屏共用 [PlayerDanmakuSettingsPanel] 内容，只换外壳）。
+  Future<void> _openDanmakuSettingsPanel() async {
+    await _openBottomPanel(
+      const PlayerPanelPage(
+        title: '弹幕设置',
+        body: PlayerDanmakuSettingsPanel(),
+      ),
+    );
   }
 
   // ── 退出与进度 ──────────────────────────────────────────
@@ -1771,7 +1772,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                                 danmakuOn: _danmakuController.danmakuOn,
                                 onDanmakuToggle: _toggleDanmaku,
                                 onDanmakuSettingsTap:
-                                    _showDanmakuSettingsComingSoon,
+                                    _openDanmakuSettingsPanel,
                               ),
                             ),
                           ),

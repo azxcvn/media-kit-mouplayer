@@ -5,6 +5,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/crash_log_service.dart';
+import 'package:moumou/services/danmaku_settings.dart';
 import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/equalizer_settings.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
@@ -85,6 +86,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 音频均衡器设置（工作.md 均衡器功能）：同 ensureLoaded 模式，
     // AudioController 构造时订阅、applyAudioOptions 读取（防竞态）
     EqualizerSettings.instance.ensureLoaded();
+    // 弹幕设置（阶段2）：同 ensureLoaded 模式，DanmakuController 构造时
+    // 订阅并读取（面板 setter 与这里共享同一 load Future，防竞态）
+    DanmakuSettings.instance.ensureLoaded();
   }
 
   @override

@@ -1,4 +1,4 @@
-/// 弹幕控制器（业务层，弹幕移植方案阶段1）：绑定共享 [Player]，
+/// 弹幕控制器（业务层，弹幕移植方案阶段2）：绑定共享 [Player]，
 /// 驱动本地同名弹幕的加载（9 种命名规则 + B站 XML 后台解析）、
 /// 1s tick 秒桶调度发射（六守卫）、canvas_danmaku 渲染层的
 /// 挂载/显隐/暂停恢复/倍速跟随。
@@ -7,9 +7,10 @@
 /// [DanmakuScreen] 通过 attachLayer/detachLayer 注册到本控制器，
 /// 切换横竖屏时无需清屏重启（两侧渲染层同步驱动，返回时画面无缝）。
 ///
-/// 阶段1 约定（工作.md 弹幕第 2 点）：弹幕样式/字体/各项配置全部使用
-/// canvas_danmaku 默认值（仅倍速跟随按 rate 缩放 duration/staticDuration）；
-/// 弹幕开关为会话级状态（不持久化，默认开启）。
+/// 阶段2 约定（工作.md 弹幕第 4 点）：样式与配置全部由 [DanmakuSettings]
+/// 驱动（单例 ChangeNotifier + 持久化），控制器订阅后映射到
+/// canvas_danmaku 的 DanmakuOption（updateOption 热更新）；弹幕开关仍为
+/// 会话级状态（不持久化，默认开启）。
 library;
 
 import 'dart:async';
@@ -22,10 +23,32 @@ import 'package:media_kit/media_kit.dart';
 import 'package:moumou/models/danmaku_entry.dart';
 import 'package:moumou/services/danmaku_memory.dart';
 import 'package:moumou/services/danmaku_scheduler.dart';
+import 'package:moumou/services/danmaku_settings.dart';
+import 'package:moumou/utils/danmaku_dedup.dart';
 import 'package:moumou/utils/danmaku_local_file.dart';
+import 'package:moumou/utils/danmaku_random_color.dart';
 import 'package:moumou/utils/danmaku_timeline.dart';
 import 'package:moumou/utils/danmaku_xml.dart';
 import 'package:path/path.dart' as p;
+
+/// 弹幕设置 → canvas DanmakuOption 的映射（渲染层初始值与业务层热更新共用，
+/// 单一事实来源）。样式（字号/字重/描边/不透明度）+ 配置（区域/行高/三类
+/// 显隐/海量）全量映射；速度（duration/staticDuration）由控制器按倍速叠加
+/// （见 [_buildOption]），不在此处设置。
+canvas.DanmakuOption danmakuOptionFromSettings(DanmakuSettings s) {
+  return canvas.DanmakuOption(
+    fontSize: s.fontSize,
+    fontWeight: s.fontWeight,
+    area: s.area,
+    opacity: s.opacity,
+    strokeWidth: s.strokeWidth,
+    lineHeight: s.lineHeight,
+    hideTop: !s.showTop,
+    hideBottom: !s.showBottom,
+    hideScroll: !s.showScroll,
+    massiveMode: s.massiveMode,
+  );
+}
 
 class DanmakuController extends ChangeNotifier {
   DanmakuController(this._player) {
@@ -45,12 +68,34 @@ class DanmakuController extends ChangeNotifier {
       _applyOption();
     }));
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
+    // 阶段2：订阅弹幕设置（面板/全局改动 → 实时应用）
+    DanmakuSettings.instance.addListener(_onSettingsChanged);
+    _lastDedup = _settings.deduplication;
+    _lastRandomColor = _settings.randomColor;
+    _lastTimeOffset = _settings.timeOffsetSeconds;
   }
 
   final Player _player;
   final List<StreamSubscription<dynamic>> _subs = [];
   late final Timer _timer;
   final DanmakuScheduler _scheduler = DanmakuScheduler();
+
+  /// 弹幕设置单例（样式/配置全部由它驱动，阶段2）
+  final DanmakuSettings _settings = DanmakuSettings.instance;
+
+  /// 原始弹幕条目（当前已装载文件的全部数据；去重开/关时按它重灌秒桶）
+  List<DanmakuEntry> _rawEntries = const [];
+
+  /// 随机渐变色推进器（随机色开启期间逐条生成；关闭→开启重建）
+  DanmakuColorWheel? _colorWheel;
+
+  /// 上次同步的去重/随机色开关（仅开关变化时才清屏重灌，
+  /// 避免拖动其他滑杆时在屏弹幕被反复清掉闪屏）
+  bool _lastDedup = false;
+  bool _lastRandomColor = false;
+
+  /// 上次同步的时间轴偏移（偏移变化时重锚定秒桶 + 清屏，弹幕按新偏移对齐）
+  double _lastTimeOffset = 0;
 
   /// 手动导入记忆（按视频路径持久化，重启播放器/软件后自动恢复）
   final DanmakuManualMemory _memory = DanmakuManualMemory();
@@ -109,7 +154,7 @@ class DanmakuController extends ChangeNotifier {
       rate: _rate,
     );
     if (seeked) {
-      _scheduler.notifySeeked(position);
+      _scheduler.notifySeeked(_sourcePosition(position));
       _clearLayers();
     }
   }
@@ -121,12 +166,75 @@ class DanmakuController extends ChangeNotifier {
 
   bool get danmakuOn => _danmakuOn;
 
-  /// 当前已装载的弹幕总条数（提示用；未装载为 0）
+  /// 当前已装载的弹幕总条数（提示用；未装载为 0）。
+  /// 去重开启时为合并后的条数（与实际发射一致）。
   int get danmakuCount => _scheduler.danmakuCount;
 
-  /// 弹幕速度基准（canvas_danmaku 默认值；本阶段不做配置）
-  static const double _baseDuration = 10;
-  static const double _baseStaticDuration = 5;
+  // ── 设置响应（阶段2：DanmakuSettings → DanmakuOption 映射）──
+
+  /// 设置变化：样式/配置经 updateOption 热更新。字号/字重/描边是
+  /// 「重栅格化」项（canvas 会全量清屏重绘），由设置面板在**松手时**才提交
+  /// （见 player_danmaku_settings_panel.dart 的 _CommitSliderTile），所以这里
+  /// 无需再逐帧去抖；其余轻量项（不透明度/区域/行高/速度/显隐）实时下发。
+  /// 仅去重/随机色开关变化时才重灌秒桶/重建色轮并清屏。
+  void _onSettingsChanged() {
+    if (_disposed) return;
+    _applyOption();
+    final dedupChanged = _settings.deduplication != _lastDedup;
+    final randomChanged = _settings.randomColor != _lastRandomColor;
+    final offsetChanged = _settings.timeOffsetSeconds != _lastTimeOffset;
+    _lastDedup = _settings.deduplication;
+    _lastRandomColor = _settings.randomColor;
+    _lastTimeOffset = _settings.timeOffsetSeconds;
+    if (dedupChanged) {
+      _refeedIfLoaded();
+    }
+    if (randomChanged) {
+      // 随机色轮重建：开启时新建（新随机起点），关闭时释放（发射不再取色）
+      _colorWheel = _settings.randomColor ? DanmakuColorWheel() : null;
+      _clearLayers();
+    }
+    if (offsetChanged) {
+      // 时间轴偏移变化：重锚定秒桶 + 清屏，在屏/待发弹幕按新偏移重新对齐
+      _scheduler.notifySeeked(_sourcePosition(_position));
+      _clearLayers();
+    }
+  }
+
+  /// 去重开关变化时重灌秒桶：按原始条目重新合并再喂给调度器，并锚定
+  /// 当前位置（下个 tick 从当前秒继续，不倾倒历史弹幕）。
+  void _refeedIfLoaded() {
+    if (!_hasDanmaku) return;
+    final entries = _effectiveEntries(_rawEntries);
+    _scheduler.reset();
+    _scheduler.feed(entries);
+    _scheduler.notifySeeked(_sourcePosition(_position));
+    _clearLayers();
+  }
+
+  /// 时间轴偏移后的源时间位置（对齐 Kazumi：source = playback − offset；
+  /// 结果可为负，负秒桶在调度器中为空，即片头前无弹幕）。
+  Duration _sourcePosition(Duration playbackPosition) {
+    return sourceDanmakuPosition(
+      playbackPosition,
+      _settings.timeOffsetSeconds,
+    );
+  }
+
+  /// 应用当前设置（样式/配置 → 渲染层；发射侧字段实时读取设置单例）。
+  /// 渲染层未挂载时无需下发（attachLayer 挂载时会应用一次）。
+  void _applyOption() {
+    if (_disposed) return;
+    for (final layer in _layers) {
+      _applyOptionTo(layer);
+    }
+  }
+
+  /// 去重开关生效后的条目集（关 = 原样；开 = 时间窗合并）
+  List<DanmakuEntry> _effectiveEntries(List<DanmakuEntry> entries) {
+    if (!_settings.deduplication) return entries;
+    return dedupeDanmakuEntries(entries);
+  }
 
   // ── 渲染层挂载（页面 Stack 内 DanmakuScreen 的 createdController 回调）──
 
@@ -175,7 +283,7 @@ class DanmakuController extends ChangeNotifier {
     if (remembered != null && session == _loadSession) {
       final ok = await _tryLoadFile(remembered, session);
       if (ok) {
-        _notifyAutoLoaded(p.basename(remembered));
+        await _notifyAutoLoaded(p.basename(remembered));
         return;
       }
       if (_disposed || session != _loadSession) return;
@@ -187,15 +295,30 @@ class DanmakuController extends ChangeNotifier {
     final loaded = await _loadLocalDanmaku(mediaPath);
     if (_disposed || session != _loadSession) return;
     if (loaded == null) return; // 未找到 / 解析失败：无弹幕继续播放
-    _scheduler.feed(loaded.entries);
+    _feedEntries(loaded.entries);
     _hasDanmaku = loaded.entries.isNotEmpty;
     if (loaded.entries.isNotEmpty) {
-      _notifyAutoLoaded(loaded.fileName);
+      await _notifyAutoLoaded(loaded.fileName);
     }
   }
 
-  /// 自动加载成功通知（同名 / 记忆恢复共用；回调未注入时静默）
-  void _notifyAutoLoaded(String fileName) {
+  /// 装载弹幕数据：保留原始条目（去重开/关重灌用）+ 按当前设置合并后
+  /// 喂给调度器 + 重置随机色轮（同文件每次加载重新随机起点）
+  void _feedEntries(List<DanmakuEntry> entries) {
+    _rawEntries = List.of(entries);
+    // 随机色开启时每次装载重建色轮：新随机起点，同内容不重样
+    _colorWheel = _settings.randomColor ? DanmakuColorWheel() : null;
+    _scheduler.feed(_effectiveEntries(entries));
+  }
+
+  /// 自动加载成功通知（同名 / 记忆恢复共用；回调未注入时静默）。
+  /// 每个视频只在**第一次**自动加载时提示（持久化去重，重启不再重复）。
+  Future<void> _notifyAutoLoaded(String fileName) async {
+    final mediaPath = _currentMediaPath;
+    if (mediaPath != null) {
+      if (await _memory.hasShownAutoLoadToast(mediaPath)) return;
+      await _memory.markAutoLoadToastShown(mediaPath);
+    }
     onAutoLoadedDanmaku?.call(fileName);
   }
 
@@ -262,7 +385,7 @@ class DanmakuController extends ChangeNotifier {
       final entries = await compute(parseDanmakuXml, content);
       if (_disposed || session != _loadSession) return false;
       if (entries.isEmpty) return false;
-      _scheduler.feed(entries);
+      _feedEntries(entries);
       _hasDanmaku = true;
       return true;
     } catch (_) {
@@ -275,7 +398,7 @@ class DanmakuController extends ChangeNotifier {
   void _onTick() {
     if (_disposed) return;
     if (!_enginePlaying || _buffering || !_danmakuOn || !_hasDanmaku) return;
-    final result = _scheduler.onTick(_position, _rate);
+    final result = _scheduler.onTick(_sourcePosition(_position), _rate);
     if (result.seeked) _clearLayers();
     final entries = result.entries;
     if (entries.isEmpty) return;
@@ -300,7 +423,8 @@ class DanmakuController extends ChangeNotifier {
     if (_layers.isEmpty) return;
     final item = canvas.DanmakuContentItem<void>(
       entry.text,
-      color: Color(0xFF000000 | entry.color),
+      // 随机渐变色开启：忽略文件颜色，逐条生成（关闭 = 文件原色）
+      color: Color(0xFF000000 | (_colorWheel?.nextColor() ?? entry.color)),
       type: itemTypeForMode(entry.mode),
     );
     for (final layer in _layers) {
@@ -329,20 +453,22 @@ class DanmakuController extends ChangeNotifier {
     }
   }
 
-  /// 倍速跟随：duration = 基准 / rate（updateOption 全局平滑变速，
-  /// 在屏弹幕同帧变速、无位置跳变；基准独立存储，连续切倍速零累计误差）
-  void _applyOption() {
-    if (_disposed) return;
-    for (final layer in _layers) {
-      _applyOptionTo(layer);
-    }
+  /// 应用完整弹幕选项（样式 + 配置 + 速度）到单个渲染层。
+  /// 速度语义：duration = 弹幕速度基准 / rate（updateOption 全局平滑变速，
+  /// 在屏弹幕同帧变速、无位置跳变；基准独立存储，连续切倍速零累计误差）。
+  /// 样式/配置字段经 [danmakuOptionFromSettings] 全量映射（阶段2：面板改值
+  /// 热更新，字号/字重/描边/不透明度/区域/行高/三类显隐/海量全部生效）。
+  void _applyOptionTo(canvas.DanmakuController<void> layer) {
+    layer.updateOption(_buildOption());
   }
 
-  void _applyOptionTo(canvas.DanmakuController<void> layer) {
-    layer.updateOption(layer.option.copyWith(
-      duration: _baseDuration / _rate,
-      staticDuration: _baseStaticDuration / _rate,
-    ));
+  /// 从设置单例构建完整 DanmakuOption（样式 + 配置），再叠加速度
+  /// （duration/staticDuration 按倍速缩放）。渲染层初始值与热更新共用。
+  canvas.DanmakuOption _buildOption() {
+    return danmakuOptionFromSettings(_settings).copyWith(
+      duration: _settings.scrollSeconds / _rate,
+      staticDuration: _settings.scrollSeconds / 2 / _rate,
+    );
   }
 
   void _clearLayers() {
@@ -354,6 +480,7 @@ class DanmakuController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    DanmakuSettings.instance.removeListener(_onSettingsChanged);
     _timer.cancel();
     for (final s in _subs) {
       s.cancel();

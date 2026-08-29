@@ -66,4 +66,28 @@ void main() {
     expect(await memory.get('123'), isNull);
     expect(await memory.get('/a/video.mp4'), '/a.xml');
   });
+
+  test('toast 去重：第一次提示 / 已提示不再提示 / 持久化', () async {
+    final memory = DanmakuManualMemory();
+    expect(await memory.hasShownAutoLoadToast('/a/video.mp4'), isFalse);
+    await memory.markAutoLoadToastShown('/a/video.mp4');
+    expect(await memory.hasShownAutoLoadToast('/a/video.mp4'), isTrue);
+    // 幂等：重复标记不抛异常
+    await memory.markAutoLoadToastShown('/a/video.mp4');
+
+    // 新实例（模拟重启软件）：已提示记录仍保留，且不影响其它视频
+    final second = DanmakuManualMemory();
+    expect(await second.hasShownAutoLoadToast('/a/video.mp4'), isTrue);
+    expect(await second.hasShownAutoLoadToast('/b/EP02.mp4'), isFalse);
+  });
+
+  test('toast 去重：损坏数据防御性回退', () async {
+    SharedPreferences.setMockInitialValues({
+      'danmaku_auto_toasted': 'not-a-json{',
+    });
+    final memory = DanmakuManualMemory();
+    expect(await memory.hasShownAutoLoadToast('/a/video.mp4'), isFalse);
+    await memory.markAutoLoadToastShown('/a/video.mp4');
+    expect(await memory.hasShownAutoLoadToast('/a/video.mp4'), isTrue);
+  });
 }

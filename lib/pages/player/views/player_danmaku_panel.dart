@@ -43,7 +43,8 @@ class PlayerDanmakuPanel extends StatelessWidget {
   /// 弹幕控制器（横竖屏共享同一实例）
   final DanmakuController controller;
 
-  /// 打开弹幕设置（与底栏弹幕设置按钮**同一回调**：两种入口进入同一设置）
+  /// 打开弹幕设置（面板内就地切换到设置页；由页面注入导航回调，与底栏
+  /// 弹幕设置按钮不同——后者在无面板时用 [showPlayerPanel] 单独打开）
   final VoidCallback onSettingsTap;
 
   /// 面板内二级页就地切换（由页面注入：横屏传 PlayerPanelNavigator、

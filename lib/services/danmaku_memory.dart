@@ -8,7 +8,10 @@
 ///   覆盖，对齐字幕外挂记忆语义）；同名自动加载（9 种命名规则）的结果
 ///   不写入记忆（确定性查找，无需记忆）；
 /// - 失效处理：记忆的弹幕文件被删除/不可读时由调用方清除该条记忆并
-///   回落同名查找。
+///   回落同名查找；
+/// - 自动加载 toast 去重：另存「已提示过」的视频路径集合（独立键），
+///   使「已自动加载弹幕」提示只在每个视频**第一次**自动加载时出现，
+///   重启播放器/软件后不再重复。
 library;
 
 import 'dart:convert';
@@ -19,8 +22,10 @@ class DanmakuManualMemory {
   DanmakuManualMemory();
 
   static const _key = 'danmaku_manual_memory';
+  static const _toastedKey = 'danmaku_auto_toasted';
 
   Map<String, String>? _cache;
+  Set<String>? _toastedCache;
 
   /// 读取全量映射（进程内缓存；首次读 SharedPreferences）
   Future<Map<String, String>> _map() async {
@@ -71,5 +76,42 @@ class DanmakuManualMemory {
     _cache = map;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_key, jsonEncode(map));
+  }
+
+  // ── 自动加载 toast 去重（视频路径集合，独立键持久化）──
+
+  Future<Set<String>> _toastedSet() async {
+    final cached = _toastedCache;
+    if (cached != null) return cached;
+    final prefs = await SharedPreferences.getInstance();
+    _toastedCache = _decodeList(prefs.getString(_toastedKey));
+    return _toastedCache!;
+  }
+
+  Set<String> _decodeList(String? raw) {
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return {for (final e in decoded) if (e is String) e};
+      }
+    } catch (_) {
+      // 损坏的 JSON 视为无记录
+    }
+    return {};
+  }
+
+  /// 该视频是否已提示过「已自动加载弹幕」（true = 不再提示）
+  Future<bool> hasShownAutoLoadToast(String videoPath) async =>
+      (await _toastedSet()).contains(videoPath);
+
+  /// 记录该视频已提示过（幂等；无记录才写盘）
+  Future<void> markAutoLoadToastShown(String videoPath) async {
+    final set = await _toastedSet();
+    if (set.contains(videoPath)) return;
+    set.add(videoPath);
+    _toastedCache = set;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_toastedKey, jsonEncode(set.toList()));
   }
 }

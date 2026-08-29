@@ -36,7 +36,12 @@ Flutter 本地视频播放器（Android），核心能力：
 - **弹幕（阶段1）**：canvas_danmaku 渲染 + 本地弹幕加载（同名 9 种命名规则自动加载
   + 「更多→弹幕→本地弹幕」文件选择器手动导入，选择器规则对齐字幕）+ 弹幕二级界面
   （本地/网络/自动匹配/设置四入口）+ 播放界面开关/设置按钮（横屏左下角时间右侧 /
-  竖屏右下角进度条上方），样式与配置全默认、开关会话级（§4.11）
+  竖屏右下角进度条上方）（§4.11）
+- **弹幕设置（阶段2）**：弹幕样式（字号/字重/速度/描边/不透明度无极滑杆 + 随机渐变色
+  忽略文件颜色）+ 弹幕配置（显示区域/行高/顶·底·滚动三类显隐/海量弹幕/弹幕去重）
+  + 弹幕偏移（时间轴偏移 -180~+180 秒，正 = 延后、负 = 提前，对齐 Kazumi）；
+  设置全量持久化（`DanmakuSettings`），三入口（横屏底栏设置按钮/竖屏进度条上方设置
+  按钮/更多→弹幕→弹幕设置）进入同一面板（§4.11）
 - 外观设置：23 种主题色 + 21 种调色板风格（flex_seed_scheme）
 
 技术栈：Flutter 3.44+ / Dart 3.12+，依赖见 `pubspec.yaml`。
@@ -82,9 +87,10 @@ lib/
 │   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/自定义字体/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
 │   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 同名字幕自动加载 + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   ├── equalizer_settings.dart # 音频均衡器设置（5 频段/低音增强/虚拟环绕/预设，ChangeNotifier + 持久化，AudioController 订阅重应用 af 链）
-│   ├── danmaku_service.dart    # 弹幕控制器（业务层：本地同名/手动导入加载 + 1s tick 秒桶发射 + canvas 渲染层显隐/暂停/倍速同步，横竖屏共享）
+│   ├── danmaku_service.dart    # 弹幕控制器（业务层：本地同名/手动导入加载 + 1s tick 秒桶发射 + canvas 渲染层显隐/暂停/倍速同步 + 设置订阅应用，横竖屏共享）
 │   ├── danmaku_scheduler.dart  # 弹幕调度器（纯逻辑：秒桶 + 前向补发 + seek 跳变检测 + 代数失效）
 │   ├── danmaku_memory.dart     # 弹幕手动导入记忆（视频路径→弹幕文件路径，SharedPreferences JSON 持久化）
+│   ├── danmaku_settings.dart   # 弹幕设置（样式：字号/字重/速度/描边/不透明度/随机色 + 配置：区域/行高/三类显隐/海量/去重 + 偏移：时间轴偏移，ChangeNotifier + 持久化）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -120,6 +126,7 @@ lib/
 │   │       ├── player_danmaku_layer.dart  # 弹幕渲染层（canvas_danmaku DanmakuScreen 封装，视频层与手势层之间，挂载/卸载即 rebind）
 │   │       ├── player_danmaku_buttons.dart# 弹幕开关/设置按钮组（Kazumi 图标：开=内联 SVG 主题色对勾，关/设置=资源 SVG）
 │   │       ├── player_danmaku_panel.dart  # 弹幕二级界面（本地弹幕=复用字幕选择器面板导入 / 网络弹幕 / 自动匹配 / 弹幕设置；DanmakuFileService）
+│   │       ├── player_danmaku_settings_panel.dart # 弹幕设置面板（样式：字号/字重/速度/描边/不透明度滑杆+随机渐变色；配置：区域/行高/三类显隐/海量/去重；偏移：时间轴偏移；横竖屏外壳共用）
 │   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间 + 弹幕开关/设置 + 右下角按钮簇
 │   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset；章节圆点 + 跳过色段）
 │   │       ├── player_chapter_bar.dart    # 章节名行（可点击呼出列表）+ 跳过胶囊（5 秒自动消失/控制层可见时常驻）
@@ -174,8 +181,10 @@ lib/
     ├── audio_shuffle.dart     #   听视频随机播放算法（结合当前时间刻，纯函数）
     ├── subtitle_auto_match.dart # 同名字幕自动匹配纯函数（扩展名优先级 + 同名优先 + 简/繁语言后缀，对齐小喵）
     ├── subtitle_sort.dart     #   自建字幕选择器排序纯函数（目录恒在前）
-    ├── danmaku_timeline.dart  #   弹幕时间轴纯函数（同秒多条 1 秒内错峰延迟）
+    ├── danmaku_timeline.dart  #   弹幕时间轴纯函数（同秒多条 1 秒内错峰延迟 + 时间轴偏移）
     ├── danmaku_local_file.dart #  同名弹幕文件查找纯函数（9 种命名规则，只查同目录）
+    ├── danmaku_random_color.dart # 随机渐变色纯函数（HSV 色轮黄金角步进推进器，忽略文件颜色）
+    ├── danmaku_dedup.dart     #   弹幕去重纯函数（文本归一化判同 + 时间窗合并）
     └── danmaku_xml.dart       #   B站 XML 弹幕解析纯函数（顶层函数供 compute 后台解析 + 实体反转义）
 ```
 
@@ -346,10 +355,11 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 
 **维护**：`third_party/media_kit` 是本地 fork（`pubspec.yaml` `dependency_overrides` 指向），升级 media_kit 时需手动把 `libassAndroidFontsDir` 这处魔改 merge 进新版本，禁止直接 `pub upgrade` 覆盖。依赖 `io.github.yubyf:truetypeparser-light:2.1.4` 与 `androidx.documentfile:documentfile:1.0.1`（`android/app/build.gradle.kts`）。
 
-### 4.11 弹幕（阶段1）—— canvas_danmaku 渲染 + 本地同名加载
+### 4.11 弹幕 —— canvas_danmaku 渲染 + 本地同名加载 + 设置面板
 
-> 弹幕移植方案（`杂项文件/弹幕移植方案/`）阶段1：**只做「显示/隐藏 + 本地同名弹幕加载」**，
-> 样式/字体/各项配置全部使用 canvas_danmaku 默认值；开关为会话级状态（不持久化，默认开启）。
+> 弹幕移植方案（`杂项文件/弹幕移植方案/`）阶段1 + 阶段2：**阶段1** =
+> 「显示/隐藏 + 本地同名弹幕加载」（开关为会话级，默认开启）；**阶段2** =
+> 「弹幕设置面板」（样式 + 配置全量持久化，工作.md 弹幕第 4/6 点）。
 > 渲染层用 pub `canvas_danmaku: ^0.3.3`（与参考项目 `canvas_danmaku-main` v0.3.3 同版本）。
 
 **分层**（自下而上）：
@@ -357,12 +367,15 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 层 | 文件 | 职责 |
 |---|---|---|
 | 数据模型 | `models/danmaku_entry.dart` | 单条弹幕（time/mode/color/text，纯数据可跨 isolate） |
-| 纯函数 | `utils/danmaku_local_file.dart` / `danmaku_xml.dart` / `danmaku_timeline.dart` | 9 种同名命名规则查找 / B站 XML 解析（`compute` 后台 isolate）/ 同秒错峰延迟 |
+| 纯函数 | `utils/danmaku_local_file.dart` / `danmaku_xml.dart` / `danmaku_timeline.dart` | 9 种同名命名规则查找 / B站 XML 解析（`compute` 后台 isolate）/ 同秒错峰延迟 + 时间轴偏移 |
 | 调度 | `services/danmaku_scheduler.dart` | 秒桶索引 + 1s tick 前向补发 + seek 跳变检测（±阈值）+ 代数失效（纯逻辑可单测） |
 | 业务 | `services/danmaku_service.dart` | `DanmakuController`：自订阅 `stream.position/playing/rate/buffering` + 1s Timer 发射（守卫链）+ 渲染层 registry + 倍速跟随 |
-| 渲染 | `pages/player/views/player_danmaku_layer.dart` | `DanmakuScreen` 封装，挂载/卸载即 attach/detach 到业务控制器 |
+| 渲染 | `pages/player/views/player_danmaku_layer.dart` | `DanmakuScreen` 封装，挂载/卸载即 attach/detach 到业务控制器；初始 option 从设置单例构建 |
 | UI | `pages/player/views/player_danmaku_buttons.dart` | 开关/设置按钮组（Kazumi 图标：开=内联 `kDanmakuOnSvg` 主题色对勾；关/设置=资源 SVG，`assets/icons/`） |
 | 面板 | `pages/player/views/player_danmaku_panel.dart` | 弹幕二级界面（更多→弹幕/顶栏槽位共用）：本地弹幕=复用 `SubtitleFilePickerPanel`（只换过滤器/图标/记忆键，content:// 走原生 `copyDanmakuFromUri` → `filesDir/danmaku/`）；网络弹幕/自动匹配 toast 待上线；弹幕设置与底栏按钮同一回调 |
+| 设置面板 | `pages/player/views/player_danmaku_settings_panel.dart` | 弹幕设置面板（横竖屏外壳共用）：三段式布局（样式 5 滑杆 + 随机渐变色 / 配置 2 滑杆 + 5 开关 / 偏移 1 滑杆）+ 恢复默认；字号/字重/描边/偏移松手提交，其余实时写 `DanmakuSettings` |
+| 设置 | `services/danmaku_settings.dart` | 弹幕设置单例（`ChangeNotifier` + SharedPreferences 持久化）：字号/字重/速度/描边/不透明度/随机色 + 区域/行高/三类显隐/海量/去重 + 时间轴偏移；启动 `ensureLoaded`（main.dart） |
+| 纯函数 | `utils/danmaku_random_color.dart` / `danmaku_dedup.dart` | 随机渐变色（HSV 色轮黄金角步进 + 随机漂移，种子可复现）/ 去重（文本归一化判同 + 时间窗合并，对齐 Kazumi） |
 
 **关键决策**：
 - **渲染层 registry（横竖屏双挂）**：横竖屏两个页面各挂一个 `DanmakuScreen`，业务层
@@ -387,15 +400,33 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 （用户显式选择不被自动查找覆盖），记忆的弹幕文件已失效（被删除/不可读/空弹幕）时
 清除该条记忆并回落同名查找。手动导入为会话级生效，记忆跨会话。
 自动加载（同名 / 记忆恢复）成功经 `onAutoLoadedDanmaku` 由播放页弹 toast
-「已自动加载弹幕：文件名」（对齐字幕 `onAutoLoadedSubtitle` 模式）。
+「已自动加载弹幕：文件名」（对齐字幕 `onAutoLoadedSubtitle` 模式）；**每个视频只在
+第一次自动加载时提示**（`DanmakuManualMemory` 另存「已提示」路径集合持久化去重，
+重启播放器/软件不再重复）。
 
 **选择器死路径防护**（字幕/音频/弹幕共用面板）：`DeviceServices.listDirectory` 对
 「目录不存在/不可读」返回 **null**（区别于真实空目录）；打开选择器时记忆文件夹失效
 则**向上回退**到最近存活祖先；导航到失效目录维持原状不落死路径（小喵 player 停在
 死路径卡死的教训）。
 
-**阶段1 未做**（后续阶段）：网络弹幕、自动匹配（弹弹play）、弹幕设置面板、
-持久化开关、屏蔽词、去重、时间偏移、B站 gRPC。
+**设置应用（阶段2）**：控制器订阅 `DanmakuSettings`（构造时 addListener，dispose 退订）。
+样式/配置（字号/字重/速度/描边/不透明度/区域/行高/三类显隐/海量）经 `updateOption`
+热更新下发渲染层（速度 = 横穿耗时 `scrollSeconds / rate`，静置弹幕取其一半）；
+**去重**开/关变化时按原始条目重灌秒桶（`_rawEntries` 保留原始数据）并锚定当前位置；
+**随机渐变色**开启时重建色轮（新随机起点）并清屏，发射时逐条覆盖文件颜色。新挂载
+渲染层的初始 `DanmakuOption` 由 `danmakuOptionFromSettings` 从设置单例构建（首帧即
+用户样式）。设置全量持久化（重启视频/播放/软件均保留，工作.md 弹幕第 6 点）；
+三入口（横屏左下角设置按钮/竖屏进度条上方设置按钮/更多→弹幕→弹幕设置）进入同一
+面板，面板内容横竖屏共用、只换外壳（§4.5）。
+
+**时间轴偏移（阶段2 补充）**：设置项 `DanmakuSettings.timeOffsetSeconds`
+（-180~+180 秒，整数步进，正 = 延后、负 = 提前），纯函数 `sourceDanmakuPosition`
+（`utils/danmaku_timeline.dart`，source = playback − offset）在发射/seek 锚定时把
+播放位置映射到源时间（负秒桶视为空）；偏移变化时重锚定秒桶 + 清屏重新对齐
+（对齐 Kazumi `DanmakuTimeline.resolveSourceSecond` + `danmakuTimeOffset`）。
+
+**阶段2 未做**（后续阶段）：网络弹幕、自动匹配（弹弹play）、屏蔽词、
+B站 gRPC。「弹幕设置」入口均已实现（不再 toast 待上线）。
 顶栏「弹幕」槽位与「更多→弹幕」进入弹幕二级界面（`implemented=true`）。
 
 ---
@@ -494,6 +525,10 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/danmaku_scheduler_test.dart` — 弹幕调度器（秒桶前向补发/首 tick 锚定/seek 检测/代数失效/微幅回抖）
   - `test/player_danmaku_panel_test.dart` — 弹幕二级界面（四入口齐全/待上线 toast/设置回调注入/无平台通道不崩溃）
   - `test/danmaku_memory_test.dart` — 弹幕手动导入记忆（set/get/remove/持久化恢复/损坏数据防御）
+  - `test/danmaku_settings_test.dart` — 弹幕设置服务（默认值/钳制/持久化恢复/越界收窄/恢复默认/通知）
+  - `test/danmaku_random_color_test.dart` — 随机渐变色纯函数（HSV 转换/色相环绕/种子可复现/色轮均匀分布/高明度约束）
+  - `test/danmaku_dedup_test.dart` — 弹幕去重纯函数（归一化判同/时间窗合并/链式推进/无序输入/原文保留）
+  - `test/player_danmaku_settings_panel_test.dart` — 弹幕设置面板（两段式布局/开关滑杆实时写设置/恢复默认/读数联动）
   - `test/subtitle_file_picker_panel_test.dart` — 自建选择器面板（记忆文件夹被删向上回退/空目录正常落地/导航失败维持原状/选择回调+文件夹记忆）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
@@ -584,3 +619,4 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 横竖屏页各挂一个 DanmakuScreen，只保存单个渲染层引用会在返回横屏时失联（`createdController` 仅在挂载时回调一次，pop 不重触发） | 业务层用渲染层 registry 同步驱动全部已挂载层，挂载/卸载走 `attachLayer`/`detachLayer`（§4.11） |
 | 横屏底栏 Expanded 内放固定尺寸按钮，分屏/自由窗口把横屏页压到 ~390dp 时 RenderFlex 溢出 | 弹幕按钮组包 `Flexible` + `FittedBox(scaleDown)`（常规宽度原尺寸，极窄等比缩小）；新增固定按钮一律照此兜底 |
 | 选择器记忆文件夹在系统侧被删除后，打开停在死路径（列表空白、看似卡死，小喵 player 实际踩坑） | `listDirectory` 目录不可用返回 null（区别空目录）；打开时向上回退最近存活祖先；导航失败维持原状（§4.11） |
+| 弹幕显示区域滑到 0 时 canvas 轨道数为 0（无弹幕可画） | 区域滑杆下限 0.1；「弹幕速度」语义 = 横穿屏幕耗时秒（越小越快），静置弹幕取其一半（canvas staticDuration 与 duration 无关联） |
