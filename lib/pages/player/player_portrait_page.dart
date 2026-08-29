@@ -10,6 +10,7 @@ import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/audio_panel.dart';
+import 'package:moumou/pages/player/views/equalizer_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
@@ -959,6 +960,10 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         body: const PlayerDecodePanel(),
       );
 
+  /// 均衡器面板页（底部弹出 [showPlayerBottomPanel]，工作.md 均衡器功能）
+  PlayerPanelPage _equalizerPanelPage() =>
+      const PlayerPanelPage(title: '音频均衡器', body: PlayerEqualizerPanel());
+
   /// 「更多」面板主页：未放入槽位的动作 +「编辑控制栏」入口（与横屏一致）。
   Widget _buildMorePanel() {
     return Builder(
@@ -1016,6 +1021,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         return _introOutroPanelPage();
       case PlayerTopAction.decode:
         return _decodePanelPage();
+      case PlayerTopAction.equalizer:
+        return _equalizerPanelPage();
       default:
         return null;
     }
@@ -1118,8 +1125,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.equalizer:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.equalizer:
+        break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.listen:
         _openAudioPlayer();
       case PlayerTopAction.pip:
@@ -1143,8 +1151,9 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.equalizer:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.equalizer:
+        break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.listen:
         // 先关闭「更多」面板再进入听视频（§4.5：不叠加第二个面板/弹窗）
         Navigator.of(panelContext).pop();

@@ -6,6 +6,7 @@ import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/decode_settings.dart';
+import 'package:moumou/services/equalizer_settings.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/media_scan_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
@@ -81,6 +82,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 解码设置（硬解/软解档位）：同 ensureLoaded 模式，播放页创建
     // VideoController 时同步读取（防竞态）
     DecodeSettings.instance.ensureLoaded();
+    // 音频均衡器设置（工作.md 均衡器功能）：同 ensureLoaded 模式，
+    // AudioController 构造时订阅、applyAudioOptions 读取（防竞态）
+    EqualizerSettings.instance.ensureLoaded();
   }
 
   @override

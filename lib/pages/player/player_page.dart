@@ -11,6 +11,7 @@ import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/player_portrait_page.dart';
 import 'package:moumou/pages/player/views/audio_panel.dart';
+import 'package:moumou/pages/player/views/equalizer_panel.dart';
 import 'package:moumou/pages/player/views/player_bottom_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
@@ -1635,8 +1636,9 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.audio:
         _openAudioPanel();
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.equalizer:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.equalizer:
+        _openEqualizerPanel();
       case PlayerTopAction.decode:
         _openDecodePanel();
       case PlayerTopAction.listen:
@@ -1669,6 +1671,8 @@ class _PlayerPageState extends State<PlayerPage>
         return _introOutroPanelPage();
       case PlayerTopAction.decode:
         return _decodePanelPage();
+      case PlayerTopAction.equalizer:
+        return _equalizerPanelPage();
       default:
         return null;
     }
@@ -1693,8 +1697,9 @@ class _PlayerPageState extends State<PlayerPage>
       case PlayerTopAction.decode:
         break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.danmaku:
-      case PlayerTopAction.equalizer:
         if (!action.implemented) _showComingSoon(action.label);
+      case PlayerTopAction.equalizer:
+        break; // 已在上方 _panelPageFor 分支处理
       case PlayerTopAction.listen:
         Navigator.of(panelContext).pop();
         _openAudioPlayer();
@@ -1837,6 +1842,18 @@ class _PlayerPageState extends State<PlayerPage>
   Future<void> _openDecodePanel() async {
     _hideTimer?.cancel();
     await showPlayerPanel(context, pages: [_decodePanelPage()]);
+    _resetHideTimer();
+  }
+
+  /// 均衡器面板页（顶栏/更多「音频均衡器」动作弹出，工作.md 均衡器功能）：
+  /// 5 频段 + 低音增强 + 虚拟环绕 + 预设，状态由 [EqualizerSettings] 全局持久化。
+  PlayerPanelPage _equalizerPanelPage() =>
+      const PlayerPanelPage(title: '音频均衡器', body: PlayerEqualizerPanel());
+
+  /// 打开均衡器面板（顶栏「音频均衡器」动作）
+  Future<void> _openEqualizerPanel() async {
+    _hideTimer?.cancel();
+    await showPlayerPanel(context, pages: [_equalizerPanelPage()]);
     _resetHideTimer();
   }
 

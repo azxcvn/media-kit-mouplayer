@@ -111,17 +111,28 @@ String audioChannelsPropertyValue(AudioChannels channels) {
 }
 
 /// 组装 mpv `af` 音频滤镜链（纯函数，可单测；对齐 mpvRx
-/// `PlayerViewModel.updateMpvAfProperty` 的 DRC / 音量标准化 / 反向立体声）：
+/// `PlayerViewModel.updateMpvAfProperty` 的 DRC / 音量标准化 / 反向立体声，
+/// 并追加小喵 player 的 5 段均衡器 / 低音增强 / 虚拟环绕）：
 ///
 /// - 动态范围压缩 → `lavfi=[acompressor=threshold=-20dB:ratio=4:attack=5:release=50:makeup=2]`
 /// - 音量标准化 → `dynaudnorm`
 /// - 反向立体声 → `pan=[stereo|c0=c1|c1=c0]`
+/// - 均衡器 → `@eq:lavfi=[equalizer=f=60:t=o:w=2:g=…,equalizer=f=230:…, …]`
+///   （5 段，octave 带宽 w=2，见 [buildEqualizerLavfi]）
+/// - 低音增强 → `@bass:lavfi=[lowshelf=f=250:t=s:g=…]`（增益 = 0-100 × 0.2 dB）
+/// - 虚拟环绕 → `@virt:lavfi=[extrastereo=m=…]`（强度 = 0-100 / 50）
 ///
 /// 返回逗号拼接串；无滤镜时返回空串（`af` 置空即清除滤镜链）。
+/// 均衡器各段/低音/虚拟环绕用命名滤镜（`@eq`/`@bass`/`@virt`），与小喵 player
+/// 的 `af add @xxx:…` 命名一致，便于后续按名移除。
 String buildAudioFilterChain({
   required AudioChannels channels,
   required bool volumeNormalization,
   required bool drc,
+  List<double> eqBands = const [0, 0, 0, 0, 0],
+  bool eqEnabled = false,
+  int bassBoost = 0,
+  int virtualizer = 0,
 }) {
   final parts = <String>[];
   if (drc) {
@@ -135,5 +146,38 @@ String buildAudioFilterChain({
   if (channels == AudioChannels.reverseStereo) {
     parts.add('pan=[stereo|c0=c1|c1=c0]');
   }
+  if (eqEnabled && !eqBands.every((b) => b.abs() < 0.01)) {
+    parts.add('@eq:${buildEqualizerLavfi(eqBands)}');
+  }
+  if (bassBoost > 0) {
+    parts.add('@bass:lavfi=[lowshelf=f=250:t=s:g=${_fmtEq(bassBoost * 0.2)}]');
+  }
+  if (virtualizer > 0) {
+    parts.add('@virt:lavfi=[extrastereo=m=${_fmtEq(virtualizer / 50)}]');
+  }
   return parts.join(',');
+}
+
+/// 构建 5 段均衡器的 lavfi equalizer 链（纯函数，可单测）。
+///
+/// 与小喵 player `PlaybackEngine.setEqualizer` 完全一致：中心频率
+/// 60/230/910/3600/14000 Hz（对应 [kEqualizerBandLabels]），带宽类型 octave
+/// （`t=o`，`w=2`），`g` = 各段增益 dB（-15 ~ +15）。
+String buildEqualizerLavfi(List<double> bands) {
+  const freqs = [60, 230, 910, 3600, 14000];
+  final parts = <String>[];
+  for (var i = 0; i < freqs.length; i++) {
+    final g = _fmtEq(i < bands.length ? bands[i] : 0.0);
+    parts.add('equalizer=f=${freqs[i]}:t=o:w=2:g=$g');
+  }
+  return 'lavfi=[${parts.join(',')}]';
+}
+
+/// 格式化均衡器增益/强度数值：去掉多余尾零（5.0 → 5、1.50 → 1.5）。
+String _fmtEq(double v) {
+  if (v == v.roundToDouble()) return v.toInt().toString();
+  return v
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
 }

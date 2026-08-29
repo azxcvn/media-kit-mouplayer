@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart' hide AudioTrack;
 import 'package:moumou/models/audio_track.dart';
+import 'package:moumou/services/equalizer_settings.dart';
 
 /// 音频控制器：绑定单个播放器（横竖屏共享同一实例），
 /// 维护「音频轨道列表 / 当前音轨 / 外部音轨 / 声道 / 音频处理」状态并直接驱动 mpv。
@@ -26,10 +27,18 @@ class AudioController extends ChangeNotifier {
     _tracksSubscription = _player.stream.tracks.listen((_) {
       reload();
     });
+    // 监听均衡器设置：用户调均衡器时自动重应用 af 滤镜链（均衡器为
+    // 全局持久化状态，控制器随播放器生命周期，故在构造订阅、dispose 反订阅）
+    EqualizerSettings.instance.addListener(_onEqualizerChanged);
   }
 
   final Player _player;
   StreamSubscription? _tracksSubscription;
+
+  /// 均衡器设置变更 → 重应用 af 滤镜链（含均衡器/低音/虚拟环绕）。
+  void _onEqualizerChanged() {
+    applyAudioOptions();
+  }
 
   // ── 会话级设置（每次进播放器重置，不持久化）────────────
 
@@ -265,8 +274,11 @@ class AudioController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 应用音频声道 + 音频处理（`audio-channels` + `af` 滤镜链）。
-  /// 值来自本控制器的会话级字段（每次进播放器重置为默认）。
+  /// 应用音频声道 + 音频处理 + 均衡器（`audio-channels` + `af` 滤镜链）。
+  ///
+  /// 声道/音频处理值来自本控制器的会话级字段（每次进播放器重置为默认）；
+  /// 均衡器/低音/虚拟环绕值来自全局持久化的 [EqualizerSettings.instance]
+  /// （与小喵 player 的「均衡器跨会话恢复」一致）。
   Future<void> applyAudioOptions() async {
     final native = _native;
     if (native == null) return;
@@ -275,12 +287,19 @@ class AudioController extends ChangeNotifier {
         'audio-channels',
         audioChannelsPropertyValue(_channels),
       );
+      final eq = EqualizerSettings.instance;
       await native.setProperty(
         'af',
         buildAudioFilterChain(
           channels: _channels,
           volumeNormalization: _volumeNormalization,
           drc: _drc,
+          eqBands: eq.bands,
+          eqEnabled: eq.enabled,
+          // 与小喵 player 一致：「启用均衡器」开关同时门控低音增强与
+          // 虚拟环绕（关时不生效，但保留存储值，重开即恢复）。
+          bassBoost: eq.enabled ? eq.bassBoost : 0,
+          virtualizer: eq.enabled ? eq.virtualizer : 0,
         ),
       );
     } catch (_) {
@@ -296,6 +315,7 @@ class AudioController extends ChangeNotifier {
   @override
   void dispose() {
     _tracksSubscription?.cancel();
+    EqualizerSettings.instance.removeListener(_onEqualizerChanged);
     _tracks = const [];
     _primary = null;
     _externalPaths.clear();

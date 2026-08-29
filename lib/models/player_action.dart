@@ -62,14 +62,14 @@ enum PlayerTopAction {
   danmaku('danmaku', '弹幕', Icons.comment_outlined, false),
   audio('audio', '音频', Icons.library_music_outlined, true),
   aspect('aspect', '比例', Icons.aspect_ratio, true),
-  // v2 新增：pip/listen 已规划实现（implemented=true，具体接入见后续任务）；
-  // equalizer/decode 仅入口（implemented=false → 点击提示即将上线）
+  // v2 新增：pip/listen 已实现（implemented=true）；
+  // equalizer（音频均衡器）已实现；decode 已实现；仅 danmaku 仍为占位
   pip('pip', '画中画', Icons.picture_in_picture_alt_outlined, true),
   // 听视频：已接入（工作.md 第 10 点），点击进入听视频界面
   listen('listen', '听视频', Icons.headphones_outlined, true),
   // v3：循环播放从设置页移入播放界面，作为可自定义槽位动作（可增删）
   loop('loop', '循环播放', Icons.repeat, true),
-  equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, false),
+  equalizer('equalizer', '音频均衡器', Icons.equalizer_outlined, true),
   // 解码：已接入（方案 A，四档 hwdec），点击呼出解码面板
   decode('decode', '解码', Icons.deblur_outlined, true),
   // 章节：已接入（工作.md 章节功能），点击呼出章节列表（无章节时提示）

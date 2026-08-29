@@ -129,6 +129,107 @@ void main() {
         'pan=[stereo|c0=c1|c1=c0]',
       );
     });
+
+    test('均衡器全平（eqEnabled=true 但全 0）不追加滤镜', () {
+      expect(
+        buildAudioFilterChain(
+          channels: AudioChannels.autoSafe,
+          volumeNormalization: false,
+          drc: false,
+          eqEnabled: true,
+          eqBands: const [0, 0, 0, 0, 0],
+        ),
+        '',
+      );
+    });
+
+    test('均衡器启用 → 命名滤镜 @eq 追加在已有链之后', () {
+      expect(
+        buildAudioFilterChain(
+          channels: AudioChannels.autoSafe,
+          volumeNormalization: false,
+          drc: false,
+          eqEnabled: true,
+          eqBands: const [4, 1, -1, 3, 5],
+        ),
+        '@eq:lavfi=[equalizer=f=60:t=o:w=2:g=4,'
+        'equalizer=f=230:t=o:w=2:g=1,'
+        'equalizer=f=910:t=o:w=2:g=-1,'
+        'equalizer=f=3600:t=o:w=2:g=3,'
+        'equalizer=f=14000:t=o:w=2:g=5]',
+      );
+    });
+
+    test('低音增强 → @bass lowshelf，增益 = 0-100 × 0.2 dB', () {
+      expect(
+        buildAudioFilterChain(
+          channels: AudioChannels.autoSafe,
+          volumeNormalization: false,
+          drc: false,
+          eqEnabled: true,
+          bassBoost: 50,
+        ),
+        '@bass:lavfi=[lowshelf=f=250:t=s:g=10]',
+      );
+    });
+
+    test('虚拟环绕 → @virt extrastereo，强度 = 0-100 / 50', () {
+      expect(
+        buildAudioFilterChain(
+          channels: AudioChannels.autoSafe,
+          volumeNormalization: false,
+          drc: false,
+          eqEnabled: true,
+          virtualizer: 100,
+        ),
+        '@virt:lavfi=[extrastereo=m=2]',
+      );
+    });
+
+    test('均衡器 + 低音 + 虚拟环绕按顺序追加', () {
+      expect(
+        buildAudioFilterChain(
+          channels: AudioChannels.autoSafe,
+          volumeNormalization: false,
+          drc: false,
+          eqEnabled: true,
+          eqBands: const [0, 0, 0, 0, 5],
+          bassBoost: 50,
+          virtualizer: 50,
+        ),
+        '@eq:lavfi=[equalizer=f=60:t=o:w=2:g=0,'
+        'equalizer=f=230:t=o:w=2:g=0,'
+        'equalizer=f=910:t=o:w=2:g=0,'
+        'equalizer=f=3600:t=o:w=2:g=0,'
+        'equalizer=f=14000:t=o:w=2:g=5],'
+        '@bass:lavfi=[lowshelf=f=250:t=s:g=10],'
+        '@virt:lavfi=[extrastereo=m=1]',
+      );
+    });
+  });
+
+  group('buildEqualizerLavfi', () {
+    test('5 段 octave equalizer 链（与小喵 player 参数一致）', () {
+      expect(
+        buildEqualizerLavfi(const [0, 0, 0, 0, 0]),
+        'lavfi=[equalizer=f=60:t=o:w=2:g=0,'
+        'equalizer=f=230:t=o:w=2:g=0,'
+        'equalizer=f=910:t=o:w=2:g=0,'
+        'equalizer=f=3600:t=o:w=2:g=0,'
+        'equalizer=f=14000:t=o:w=2:g=0]',
+      );
+    });
+
+    test('增益数值去掉多余尾零（5.0 → 5，1.50 → 1.5）', () {
+      expect(
+        buildEqualizerLavfi(const [5.0, -2.0, 1.5, 0, 2.25]),
+        'lavfi=[equalizer=f=60:t=o:w=2:g=5,'
+        'equalizer=f=230:t=o:w=2:g=-2,'
+        'equalizer=f=910:t=o:w=2:g=1.5,'
+        'equalizer=f=3600:t=o:w=2:g=0,'
+        'equalizer=f=14000:t=o:w=2:g=2.25]',
+      );
+    });
   });
 
   group('audioTrackLabel', () {
