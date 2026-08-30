@@ -16,6 +16,45 @@ SliderThemeData kazumiSliderTheme(ColorScheme scheme) => SliderThemeData(
       showValueIndicator: ShowValueIndicator.never,
     );
 
+/// 播放器**暗色面板**里的 Kazumi 滑杆主题（字幕/弹幕等面板共用）。
+///
+/// 播放器面板恒为暗色外壳，但强调色必须跟随用户主题（原实现用写死的
+/// `Color(0xFF4FC3F7)` 造模块级 ColorScheme，换主题色时滑杆不变）。
+/// 这里取当前主题的 [ColorScheme.primary] 作 seed 重新派生**暗色**方案：
+/// - 浅色主题下直接用 `scheme.primary` 会在暗底上偏暗、对比不足；
+/// - 派生暗色方案后 primary 自动提亮到暗底可读的色阶，同时保留用户色相。
+///
+/// 非活动轨道另外压暗（暗底面板上 `secondaryContainer` 偏亮抢视觉）。
+SliderThemeData playerPanelSliderTheme(BuildContext context) {
+  final scheme = playerPanelScheme(context);
+  return kazumiSliderTheme(scheme).copyWith(
+    inactiveTrackColor: Colors.white24,
+  );
+}
+
+/// 播放器暗色面板的强调色方案（滑杆/开关/选中态共用同一派生逻辑）。
+///
+/// 缓存最近一次派生结果：`ColorScheme.fromSeed` 每次调用都会跑一遍
+/// HCT 调色板计算，面板滑杆在拖动时每帧 build，无缓存会持续掉帧。
+ColorScheme playerPanelScheme(BuildContext context) {
+  final seed = Theme.of(context).colorScheme.primary;
+  final cached = _panelSchemeCache;
+  if (cached != null && cached.seed == seed) return cached.scheme;
+  final scheme = ColorScheme.fromSeed(
+    seedColor: seed,
+    brightness: Brightness.dark,
+  );
+  _panelSchemeCache = (seed: seed, scheme: scheme);
+  return scheme;
+}
+
+/// 播放器面板强调色的派生缓存（seed → 暗色方案）
+({Color seed, ColorScheme scheme})? _panelSchemeCache;
+
+/// 播放器暗色面板的强调色（跟随主题；替代各面板写死的 `_accent`）。
+Color playerPanelAccent(BuildContext context) =>
+    playerPanelScheme(context).primary;
+
 /// 密集档位滑杆（divisions 很大）的刻度点形状。
 ///
 /// Flutter 的 Slider 在刻度过密时（间距 < 3 × 刻度宽）会整条跳过绘制

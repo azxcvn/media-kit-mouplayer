@@ -26,9 +26,11 @@ import 'package:flutter/material.dart';
 import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/services/danmaku_network_service.dart';
 import 'package:moumou/services/danmaku_search_history.dart';
+import 'package:moumou/widgets/settings_ui.dart';
 
-/// 面板内统一强调色（对齐弹幕设置面板）
-const Color _accent = Color(0xFF4FC3F7);
+/// 面板内统一强调色（**跟随主题**，对齐弹幕设置面板的派生方式）：
+/// 由当前 `ColorScheme.primary` 派生暗色方案取 primary，见 [playerPanelAccent]。
+Color _accentOf(BuildContext context) => playerPanelAccent(context);
 
 /// 结果卡展开（进场）时长
 const Duration _expandInDuration = Duration(milliseconds: 320);
@@ -234,7 +236,7 @@ class _PlayerDanmakuNetworkPanelState extends State<PlayerDanmakuNetworkPanel> {
                 fontSize: 14,
                 height: 1.25,
               ),
-              cursorColor: _accent,
+              cursorColor: _accentOf(context),
               cursorHeight: 16,
               decoration: const InputDecoration.collapsed(
                 hintText: '输入番剧名称',
@@ -243,12 +245,15 @@ class _PlayerDanmakuNetworkPanelState extends State<PlayerDanmakuNetworkPanel> {
             ),
           ),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
               child: SizedBox(
                 width: 16,
                 height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2, color: _accent),
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: _accentOf(context),
+                ),
               ),
             )
           else ...[
@@ -262,7 +267,7 @@ class _PlayerDanmakuNetworkPanelState extends State<PlayerDanmakuNetworkPanel> {
             _MiniIconButton(
               icon: Icons.arrow_forward_rounded,
               tooltip: '搜索',
-              color: _accent,
+              color: _accentOf(context),
               onTap: () => _doSearch(_searchController.text),
             ),
           ],
@@ -311,7 +316,7 @@ class _PlayerDanmakuNetworkPanelState extends State<PlayerDanmakuNetworkPanel> {
           padding: const EdgeInsets.only(left: 12, right: 10),
           child: Row(
             children: [
-              const Icon(Icons.search, size: 15, color: _accent),
+              Icon(Icons.search, size: 15, color: _accentOf(context)),
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
@@ -362,17 +367,23 @@ class _PlayerDanmakuNetworkPanelState extends State<PlayerDanmakuNetworkPanel> {
   }
 
   Widget _buildLoading() {
-    return const Center(
+    return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             width: 28,
             height: 28,
-            child: CircularProgressIndicator(strokeWidth: 2.5, color: _accent),
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: _accentOf(context),
+            ),
           ),
-          SizedBox(height: 12),
-          Text('搜索中…', style: TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 12),
+          const Text(
+            '搜索中…',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
         ],
       ),
     );
@@ -745,7 +756,7 @@ class _EpisodeRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.download_outlined, size: 16, color: _accent),
+            Icon(Icons.download_outlined, size: 16, color: _accentOf(context)),
           ],
         ),
       ),

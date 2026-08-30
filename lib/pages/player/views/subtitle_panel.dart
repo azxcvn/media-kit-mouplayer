@@ -228,7 +228,7 @@ class _TrackTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF4FC3F7);
+    final accent = _accentOf(context);
     return ListTile(
       dense: true,
       leading: Icon(
@@ -359,17 +359,16 @@ class _SubtitleSettingsEntry extends StatelessWidget {
 // 通用样式（与设置页共用 Kazumi 滑杆外观）
 // ────────────────────────────────────────────────────────────
 
-/// 面板内统一强调色
-const Color _accent = Color(0xFF4FC3F7);
+/// 面板内统一强调色（**跟随主题**）：由当前 `ColorScheme.primary` 派生的暗色
+/// 方案取 primary，见 [playerPanelAccent]。
+///
+/// 原实现是写死的 `const Color(0xFF4FC3F7)`，换主题色时面板不跟随。
+Color _accentOf(BuildContext context) => playerPanelAccent(context);
 
-/// 字幕面板用的暗色 ColorScheme（供 kazumiSliderTheme 复用设置页滑杆外观）
-final ColorScheme _panelScheme = ColorScheme.fromSeed(
-  seedColor: _accent,
-  brightness: Brightness.dark,
-);
-
-/// 与「设置」页面一致的滑杆主题（Kazumi 风格：缺口轨道 + 小柄拇指）
-SliderThemeData _panelSliderTheme() => kazumiSliderTheme(_panelScheme);
+/// 与「设置」页面一致的滑杆主题（Kazumi 风格：缺口轨道 + 小柄拇指），
+/// 强调色跟随主题（见 [playerPanelSliderTheme]）。
+SliderThemeData _panelSliderTheme(BuildContext context) =>
+    playerPanelSliderTheme(context);
 
 /// 面板内圆角卡片容器（与设置页 SettingsCard 视觉一致，暗色适配）
 class _PanelCard extends StatelessWidget {
@@ -481,10 +480,10 @@ class _SettingSlider extends StatelessWidget {
                 const SizedBox(width: 10),
                 GestureDetector(
                   onTap: onReset,
-                  child: const Text(
+                  child: Text(
                     '重置',
                     style: TextStyle(
-                      color: _accent,
+                      color: _accentOf(context),
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -495,7 +494,7 @@ class _SettingSlider extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           SliderTheme(
-            data: _panelSliderTheme(),
+            data: _panelSliderTheme(context),
             child: Slider(
               min: min,
               max: max,
@@ -608,7 +607,7 @@ class _SubtitleDelayPanelState extends State<SubtitleDelayPanel> {
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(999),
-                  borderSide: const BorderSide(color: _accent),
+                  borderSide: BorderSide(color: _accentOf(context)),
                 ),
               ),
               onTap: () => _input.selection = TextSelection(
@@ -830,7 +829,7 @@ class SubtitleStylePanel extends StatelessWidget {
             _PanelCard(
               child: SwitchListTile(
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                activeThumbColor: _accent,
+                activeThumbColor: _accentOf(context),
                 title: const Text(
                   '强制覆盖内嵌样式',
                   style: TextStyle(color: Colors.white, fontSize: 15),
@@ -991,7 +990,7 @@ class _ColorEditorRowState extends State<_ColorEditorRow> {
                     : Colors.white.withValues(alpha: 0.06),
                 borderRadius: BorderRadius.circular(999),
                 border: Border.all(
-                  color: _custom ? _accent : Colors.white12,
+                  color: _custom ? _accentOf(context) : Colors.white12,
                 ),
               ),
               child: Row(
@@ -1151,7 +1150,7 @@ class _ColorDot extends StatelessWidget {
               : Colors.white.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: selected ? _accent : Colors.white12,
+            color: selected ? _accentOf(context) : Colors.white12,
           ),
         ),
         child: Row(
@@ -1225,7 +1224,9 @@ class _ChannelSlider extends StatelessWidget {
         ),
         Expanded(
           child: SliderTheme(
-            data: _panelSliderTheme().copyWith(
+            // RGBA 通道滑杆按通道着色（R/G/B/A 各自颜色），不跟随主题：
+            // 轨道色就是该通道语义本身，换主题色会让「R 是红的」失去意义
+            data: _panelSliderTheme(context).copyWith(
               activeTrackColor: trackColor,
               thumbColor: trackColor,
             ),
@@ -1279,7 +1280,7 @@ class _LabelSwitch extends StatelessWidget {
         Switch(
           value: value,
           onChanged: onChanged,
-          activeThumbColor: _accent,
+          activeThumbColor: _accentOf(context),
           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         ),
       ],
@@ -1663,10 +1664,10 @@ class _FontOptionTile extends StatelessWidget {
         width: 20,
         height: 20,
         decoration: BoxDecoration(
-          color: selected ? _accent : Colors.transparent,
+          color: selected ? _accentOf(context) : Colors.transparent,
           shape: BoxShape.circle,
           border: Border.all(
-            color: selected ? _accent : Colors.white24,
+            color: selected ? _accentOf(context) : Colors.white24,
           ),
         ),
         child: selected
@@ -1676,7 +1677,7 @@ class _FontOptionTile extends StatelessWidget {
       title: Text(
         label,
         style: TextStyle(
-          color: selected ? _accent : Colors.white,
+          color: selected ? _accentOf(context) : Colors.white,
           fontSize: 14,
           fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
         ),

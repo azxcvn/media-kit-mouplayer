@@ -101,7 +101,7 @@ lib/
 │   ├── danmaku_settings.dart   # 弹幕设置（样式：字号/字重/速度/描边/不透明度/随机色 + 配置：区域/行高/三类显隐/海量/去重 + 偏移：时间轴偏移，ChangeNotifier + 持久化）
 │   ├── dandan_play_keys.dart   # 弹弹Play API 密钥（私有，gitignored，禁止上传 GitHub）
 │   ├── dandan_play_api.dart    # 弹弹Play 开放弹幕网络 API 客户端（签名验证模式：搜索/拉取弹幕/文件匹配）
-│   ├── danmaku_server_settings.dart # 弹幕服务器设置（默认+自建服务器增删启停 + 切集自动匹配开关，ChangeNotifier + 持久化）
+│   ├── danmaku_server_settings.dart # 弹幕服务器设置（默认+自建服务器增删启停 + 切集自动匹配开关及其与默认服务器的互斥裁决，ChangeNotifier + 持久化）
 │   ├── danmaku_search_history.dart  # 网络弹幕搜索历史（关键词去重/上限淘汰最旧/一键清除，持久化）
 │   ├── danmaku_auto_match_cache_store.dart # 弹幕自动匹配缓存存储（番剧+集列表，切集自动匹配用）
 │   ├── danmaku_network_service.dart # 弹幕网络服务（搜索合并/文件匹配/下载落盘 filesDir/danmaku/network + 文件前16MB MD5，无 UI）
@@ -115,7 +115,7 @@ lib/
 │   ├── options_sheet.dart     #   统一排序弹窗（字段胶囊选择）
 │   ├── folder_card.dart       #   文件夹卡片（列表/树状共用）
 │   ├── video_card.dart        #   视频卡片（列表/树状/详情共用）
-│   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/滑杆主题）
+│   ├── settings_ui.dart       #   设置页公共组件（分组/卡片/设置项/滑杆主题 + 播放器暗色面板强调色派生 playerPanelAccent/playerPanelSliderTheme）
 │   ├── raw_thumb_image.dart   #   RGBA 帧直渲组件（FastThumbFrame → ui.Image，帧切换保持上一帧无缝）
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
@@ -175,7 +175,7 @@ lib/
 │       ├── appearance_page.dart      # 外观设置子页
 │       ├── player_settings_page.dart # 播放器设置子页（手势/视频方向/顶部信息/播放行为/阈值）
 │       ├── media_scan_settings_page.dart # 媒体扫描与过滤设置子页（.nomedia/隐藏文件夹/黑白名单）
-│       ├── danmaku_server_page.dart # 弹幕服务器设置子页（默认+自建服务器增删启停 + 切集自动匹配开关）
+│       ├── danmaku_server_page.dart # 弹幕服务器设置子页（默认+自建服务器增删启停 + 切集自动匹配开关，互斥时变灰+原因文案+点击 toast）
 │       ├── about_page.dart           # 关于页（软件信息/工具/信息）
 │       ├── license_page.dart         # 许可证书页（列表 + 二级详情页，非折叠式）
 │       ├── error_log_page.dart       # 错误日志页
@@ -234,7 +234,7 @@ models（模型）     → 无依赖（纯数据）
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 音频声道/音频处理（音量标准化/动态范围压缩）为**会话级状态**（随 `AudioController` 生命周期，每次进播放器重置为默认：安全自动/关/关），不持久化
 - 片头片尾跳过设置属 `IntroOutroSettings`（独立单例 ChangeNotifier）：启用开关（默认关闭）、片头/片尾跳过秒数（默认 0）、各自范围上限（10–600 秒，默认 180）；范围收窄时秒数联动收窄；一键重置只清秒数与范围、保留开关；跟踪器 `IntroOutroTracker` 为普通类（随播放页生命周期），就绪门控防 open 期间误触发
-- 弹幕服务器设置属 `DanmakuServerSettings`（独立单例 ChangeNotifier，阶段3）：服务器列表（默认弹弹Play 不可删 + 自建增删启停）+ 切集自动匹配开关（开发阶段解除「启用弹弹Play 时禁用」限制），启动 `ensureLoaded`（main.dart）
+- 弹幕服务器设置属 `DanmakuServerSettings`（独立单例 ChangeNotifier，阶段3）：服务器列表（默认弹弹Play 不可删 + 自建增删启停）+ 切集自动匹配开关（**与默认弹弹Play 服务器互斥**，互斥判定与提示文案统一由本服务提供，见 §4.11），启动 `ensureLoaded`（main.dart）
 - 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
 - **禁止**：新增全局 `ValueNotifier` hack / 全局可变单例来跨页面通信
@@ -456,7 +456,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 纯函数 | `utils/dandan_signature.dart` / `dandan_comment.dart` / `danmaku_episode.dart` | 签名 `base64(sha256(AppId+Timestamp+Path+AppSecret))` / 评论→条目 / 文件名集数提取+匹配 |
 | API | `services/dandan_play_api.dart` | 签名验证模式：`/api/v2/search/episodes`、`/api/v2/comment/{id}?withRelated=true`、`/api/v2/match`（响应按 UTF-8 解码，非 200/业务错误抛 `DandanApiException`） |
 | 网络业务 | `services/danmaku_network_service.dart` | 搜索合并（按 animeId 去重 + 记录来源服务器）、文件匹配合并、下载落盘 `filesDir/danmaku/network/`、文件前 16MB MD5 |
-| 设置 | `services/danmaku_server_settings.dart` / `danmaku_search_history.dart` / `danmaku_auto_match_cache_store.dart` | 服务器增删启停 + 切集自动匹配开关 / 搜索历史（上限淘汰最旧）/ 匹配缓存 |
+| 设置 | `services/danmaku_server_settings.dart` / `danmaku_search_history.dart` / `danmaku_auto_match_cache_store.dart` | 服务器增删启停 + 切集自动匹配开关（含与默认服务器的互斥裁决与提示文案）/ 搜索历史（上限淘汰最旧）/ 匹配缓存 |
 | UI | `views/player_danmaku_network_panel.dart` | 网络弹幕三级界面：40dp 胶囊搜索框 + 框下关键词历史胶囊 + 命中后折叠搜索条 + 结果卡自持动画展开集列表 |
 | 设置页 | `pages/settings/danmaku_server_page.dart` | 设置 → 弹幕 → 弹幕服务器（默认不可删 + 自建增删启停 + FAB 添加） |
 
@@ -495,9 +495,23 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
     箭头 `RotationTransition` 共用同一曲线；完全收起时子树不构建、展开时卡头
     `Scrollable.ensureVisible` 顶到可视区；集数 > 6 时集列表落在 264dp 定高滚动容器
     （动画期间布局量恒定）。手风琴式，同时只展开一个。
-- **切集自动匹配开关（开发阶段解除限制）**：工作.md 第 7 点要求**暂时解除**「启用弹弹Play
-  服务器时禁止打开切集自动匹配」的写死逻辑（收尾阶段再恢复禁用 + 提示），故当前开关
-  不因默认服务器启用而禁用。
+- **切集自动匹配与默认服务器互斥（工作.md 第 7 点，收尾阶段已恢复）**：启用默认
+  弹弹Play 服务器时**不允许**开启「切集自动匹配」。互斥**只在服务层裁决一处**
+  （`DanmakuServerSettings`），防 UI 与运行时各判一次而漂移：
+  - `autoMatchEnabled` = 唯一生效值（默认服务器启用时恒 false），设置页与
+    `DanmakuController._tryAutoMatch` 共用，运行时无需二次判断；
+  - `autoMatchPreference` = 用户原始偏好（**不含**互斥判定）：启用默认服务器只是
+    「暂时不生效」，停用后自动恢复用户选择，不静默丢偏好；
+  - `autoMatchAllowed` 判定是否可开；文案**两级**且都在服务层（页面内不写文案
+    字面量）：`autoMatchBlockedReason` = 短指引「请先停用弹弹Play 服务器」（副标题用，
+    窄屏单行不挤）、`autoMatchBlockedMessage` = 含服务器名与开关名的完整说明
+    （toast 用）；
+  - `setAutoMatchEnabled` 返回 `bool`：被互斥拒绝时返回 false 且不写偏好；**关闭
+    动作永远允许**。
+  - UI（`danmaku_server_page.dart` 的 `_AutoMatchTile`）：禁用时 `onChanged: null`
+    使 Switch 与整行变灰 + 副标题换成 error 色**短**原因，并盖一层
+    `kAutoMatchBlockedTapKey` 透明命中层吞掉点击、弹**完整说明** toast
+    （**变灰必须配文本提示**，否则用户以为是 bug）。
 
 ---
 
@@ -527,6 +541,13 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 2. 新分组直接追加；新设置子页参考 `appearance_page.dart`（`AppBar` + 分组列表）
 3. 设置项 UI 组件复用 `lib/widgets/settings_ui.dart`（`SettingsGroupTitle / SettingsCard / SettingsTile / SettingsRadioTile`）
 4. 播放器设置分组约定（`player_settings_page.dart`）：**手势**组 = 双击手势 + 快进/快退时长 + 音量/亮度灵敏度 + 长按倍速滑杆（**全部归为一张卡片**，项间 `Divider(height:1, indent:16, endIndent:16)` 分隔）；**视频方向**组 = 自动/锁定竖屏/锁定横屏（RadioTile 三选一）；**顶部信息**组 = 时间/电量/网速/数据类型（CheckboxTile 四项多选，默认全选，阶段1 第 1 点）；**播放行为**组 = 常驻进度线/进度条缩略图/记住上次倍速/保存音量到系统/双指缩小视频/按钮背景/自动连播/播放完毕自动退出/循环播放模式（RadioTile 三选一：关闭/列表循环/单集循环）/倍速播放指示器/启用播放界面动画（组内每项之间用 `Divider(height:1, indent:16, endIndent:16)` 分隔）；「已观看进度阈值」独立滑杆组（5% – 100%，步进 5%，默认 95%）
+5. **播放器暗色面板里的强调色/滑杆必须跟随主题**：面板恒为暗色外壳，但强调色不得写死。
+   统一用 `settings_ui.dart` 的 `playerPanelAccent(context)`（强调色）与
+   `playerPanelSliderTheme(context)`（滑杆主题）——它们以当前 `ColorScheme.primary` 为 seed
+   **派生暗色方案**再取 primary：浅色主题下直接用 `scheme.primary` 在暗底上偏暗、对比不足，
+   派生后自动提亮到暗底可读色阶且保留用户色相；派生结果按 seed 缓存（`fromSeed` 每次都跑
+   HCT 调色板计算，滑杆拖动时逐帧 build，无缓存会掉帧）。
+   例外：语义色不跟随主题——字幕 RGBA 通道滑杆的 R/G/B/A 轨道色就是通道语义本身。
 
 ### 5.4 新增模型字段
 
@@ -603,12 +624,14 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/dandan_comment_test.dart` — 弹弹Play 评论→弹幕条目/B站 XML（p 字段解析/容错/排序/XML 往返转义）
   - `test/dandan_models_test.dart` — 弹弹Play API 数据模型 fromJson（字段映射/容错）
   - `test/danmaku_server_test.dart` — 弹幕服务器模型（默认服务器/toJson/fromJson/copyWith）
-  - `test/danmaku_server_settings_test.dart` — 弹幕服务器设置服务（默认/增删启停/自动匹配开关/持久化/损坏防御）
+  - `test/danmaku_server_settings_test.dart` — 弹幕服务器设置服务（默认/增删启停/自动匹配开关/**与默认服务器互斥**：拒绝开启+偏好保留+停用后恢复+关闭永远允许/持久化/损坏防御）
+  - `test/danmaku_server_page_test.dart` — 弹幕服务器设置页（默认服务器启用时自动匹配开关变灰+副标题短原因+点击弹完整说明 toast；副标题显著短于 toast；停用后恢复可用；启用默认服务器即回落变灰）
   - `test/danmaku_search_history_test.dart` — 搜索历史（去重/上限淘汰最旧/清除/持久化/损坏防御）
   - `test/danmaku_auto_match_cache_test.dart` — 自动匹配缓存存储（保存/读回/清空/持久化/损坏防御）
   - `test/danmaku_network_service_test.dart` — 弹幕网络服务（文件名清洗/搜索合并去重来源/下载落盘可回读/落盘失败降级）
   - `test/player_danmaku_network_panel_test.dart` — 网络弹幕搜索面板（40dp 搜索框定高/框下历史胶囊+清除/命中折叠与重新展开/结果卡收起态不构建子树+手风琴/选集回调+关闭面板）
   - `test/player_danmaku_settings_panel_test.dart` — 弹幕设置面板（两段式布局/开关滑杆实时写设置/恢复默认/读数联动）
+  - `test/player_panel_theme_test.dart` — 播放器暗色面板强调色跟随主题（换主题色滑杆轨道/拇指随之改变且不等于旧写死蓝 0xFF4FC3F7；保留无气泡外观；浅色主题下派生色更亮；同 seed 复用缓存实例）
   - `test/subtitle_file_picker_panel_test.dart` — 自建选择器面板（记忆文件夹被删向上回退/空目录正常落地/导航失败维持原状/选择回调+文件夹记忆）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
@@ -672,6 +695,8 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 截图保存 / 右侧按钮背景 | `Player.screenshot` + `saver_gallery`；右侧截图/锁定固定灰黑底，不受按钮背景设置控制 |
 | 全面屏手势误触 / 双指捏合误触发滑动 | 手势层死区（垂直上下 8%、水平右 8%）+ 方向确认延迟 80ms + `onSwipeCancel` 撤销 |
 | 滑杆刻度过密被跳过 | `DenseSliderTickMarkShape` 声明极小宽度通过密度检查 |
+| 播放器面板滑杆/强调色写死 `Color(0xFF4FC3F7)`（模块级 `ColorScheme.fromSeed` 常量），换主题色不跟随 | 改用 `playerPanelSliderTheme(context)` / `playerPanelAccent(context)`；模块级 `final` 派生的方案在首次加载时即固化，**不会**随主题重建（§5.3 第 5 条） |
+| 暗色面板直接用 `Theme.of(context).colorScheme.primary` 作强调色 | 浅色主题下该色在暗底上偏暗、对比不足；必须以它为 seed 派生 `Brightness.dark` 方案后再取 primary |
 | 自动亮度读不到实时亮度 | 进入播放把系统值应用到窗口，退出恢复 -1 |
 | 崩溃日志无限累积 | 上限 50 条 / 10MB，读写后裁剪 |
 | 关于页跳转邮件/GitHub | AndroidManifest 声明 `mailto`/`https` `<queries>` |
@@ -702,6 +727,9 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 弹幕显示区域滑到 0 时 canvas 轨道数为 0（无弹幕可画） | 区域滑杆下限 0.1；「弹幕速度」语义 = 横穿屏幕耗时秒（越小越快），静置弹幕取其一半（canvas staticDuration 与 duration 无关联） |
 | 弹弹Play `AppSecret` 硬编码进源码会被上传 GitHub 泄露 | 密钥存 `lib/services/dandan_play_keys.dart` 并加入 .gitignore（工作.md 第 3 点，私有禁止提交） |
 | 真实密钥经**测试文件**绕过 .gitignore 泄露（签名测试写死 AppId/AppSecret 生成已知向量） | 测试一律用合成凭据（`dandan_signature_test.dart` 的 `_testAppId/_testAppSecret`）；提交前 `git diff --cached` 扫一遍 secret 字面量 |
+| 互斥限制在 UI 与运行时各判一次 → 两处漂移（开关看着关着却仍在自动匹配） | 互斥只在 `DanmakuServerSettings` 裁决：`autoMatchEnabled` 为唯一生效值，UI 与 `_tryAutoMatch` 共用；偏好另存 `autoMatchPreference` 不被擦除（§4.11） |
+| 开关变灰但不说明原因 → 用户当成 bug | 变灰必须同时把副标题换成 error 色原因 + 盖透明命中层点击弹 toast；文案两级都在服务层（副标题短句 `autoMatchBlockedReason` / toast 完整 `autoMatchBlockedMessage`），页面内不写字面量（§4.11） |
+| 副标题写整句解释 → 窄屏挤成两行 | 副标题只放短指引（≤15 字），完整解释交给 toast；⚠️ 别用像素高度断言行数——测试字体 Ahem 每字形等宽方块，把中文行宽算得远大于真实 CJK 字体，应断言字符数等字体无关量 |
 | Dart `http` 响应体缺 charset 时按 latin1 解码，中文乱码 | 统一 `utf8.decode(response.bodyBytes)`，不依赖 `Response.body`（§4.11 `dandan_play_api.dart`） |
 | 网络弹幕/自动匹配只存内存，重启播放/软件即丢（切集自动匹配与装载逻辑混在一起） | 成功装载即生成 B站 XML 落盘 `filesDir/danmaku/network/` 并写入 `DanmakuManualMemory`；`loadForVideo` 记忆恢复与开关无关（§4.11） |
 | 手动导入/网络弹幕重启后被当「自动加载」重复弹 toast | 「已自动加载」toast 只挂在同名自动查找路径（且每视频仅第一次）；记忆恢复一律静默（§4.11） |

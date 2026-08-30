@@ -40,18 +40,13 @@ const List<String> _fontWeightNames = [
   '极粗',
 ];
 
-/// 面板内统一强调色（对齐字幕面板「字幕杂项」滑杆的暗色主题）
-const Color _accent = Color(0xFF4FC3F7);
-
-/// 弹幕面板用的暗色 ColorScheme（供 kazumiSliderTheme 复用设置页滑杆外观）
-final ColorScheme _panelScheme = ColorScheme.fromSeed(
-  seedColor: _accent,
-  brightness: Brightness.dark,
-);
-
 /// 与「设置」页面 / 字幕面板一致的滑杆主题（Kazumi 风格：缺口轨道 + 小柄
-/// 拇指，无拖拽气泡——用户要的「字幕杂项」那种，而非默认大圆钮 + 气泡）
-SliderThemeData _panelSliderTheme() => kazumiSliderTheme(_panelScheme);
+/// 拇指，无拖拽气泡——用户要的「字幕杂项」那种，而非默认大圆钮 + 气泡）。
+///
+/// **跟随主题**：强调色由 [playerPanelSliderTheme] 从当前 `ColorScheme.primary`
+/// 派生暗色方案得到（原实现用写死的 `Color(0xFF4FC3F7)`，换主题色滑杆不变）。
+SliderThemeData _panelSliderTheme(BuildContext context) =>
+    playerPanelSliderTheme(context);
 
 class PlayerDanmakuSettingsPanel extends StatelessWidget {
   const PlayerDanmakuSettingsPanel({super.key});
@@ -348,7 +343,7 @@ class _SliderTile extends StatelessWidget {
             ),
           // 与字幕面板「字幕杂项」一致的滑杆（Kazumi 2024 新式外观，无拖拽气泡）
           SliderTheme(
-            data: _panelSliderTheme(),
+            data: _panelSliderTheme(context),
             child: Slider(
               value: value.clamp(min, max),
               min: min,
@@ -427,7 +422,7 @@ class _CommitSliderTileState extends State<_CommitSliderTile> {
             ],
           ),
           SliderTheme(
-            data: _panelSliderTheme(),
+            data: _panelSliderTheme(context),
             child: Slider(
               value: _preview.clamp(widget.min, widget.max),
               min: widget.min,
