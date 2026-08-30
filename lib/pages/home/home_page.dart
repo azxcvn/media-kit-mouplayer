@@ -7,6 +7,7 @@ import 'package:moumou/pages/home/tree_folder_page.dart';
 import 'package:moumou/pages/home/views/folder_list_view.dart';
 import 'package:moumou/pages/home/views/tree_list_view.dart';
 import 'package:moumou/pages/media_info/media_info_page.dart';
+import 'package:moumou/pages/network/network_storage_page.dart';
 import 'package:moumou/pages/player/player_page.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
@@ -14,6 +15,7 @@ import 'package:moumou/services/video_scanner.dart';
 import 'package:moumou/services/view_settings.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/options_sheet.dart';
+import 'package:moumou/widgets/speed_dial_fab.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 /// 首页：展示视频库（列表视图 / 树状视图，两种视图共用同一棵目录树）。
@@ -224,6 +226,55 @@ class _HomePageState extends State<HomePage>
         ],
       ),
       body: _buildBody(),
+      // 右下角加号略高于悬浮胶囊导航栏（与网络存储页保持同一高度）
+      floatingActionButton: Padding(
+        padding: const EdgeInsets.only(bottom: kFabLiftAboveNav),
+        child: _buildSpeedDial(),
+      ),
+    );
+  }
+
+  /// 右下角速拨按钮：最近播放 / 打开链接 / 哔哩番剧 / 网络存储。
+  /// 仅「网络存储」已接入，其余三项预留入口后续实现。
+  Widget _buildSpeedDial() {
+    return SpeedDialFab(
+      heroTag: 'home_speed_dial',
+      actions: [
+        SpeedDialAction(
+          icon: Icons.history,
+          label: '最近播放',
+          onTap: () => _comingSoon('最近播放'),
+        ),
+        SpeedDialAction(
+          icon: Icons.link,
+          label: '打开链接',
+          onTap: () => _comingSoon('打开链接'),
+        ),
+        SpeedDialAction(
+          icon: Icons.live_tv_outlined,
+          label: '哔哩番剧',
+          onTap: () => _comingSoon('哔哩番剧'),
+        ),
+        SpeedDialAction(
+          icon: Icons.cloud_outlined,
+          label: '网络存储',
+          onTap: _openNetworkStorage,
+        ),
+      ],
+    );
+  }
+
+  void _comingSoon(String feature) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(content: Text('「$feature」功能正在开发中，敬请期待')),
+      );
+  }
+
+  Future<void> _openNetworkStorage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const NetworkStoragePage()),
     );
   }
 

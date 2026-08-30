@@ -56,6 +56,10 @@ dependencies:
   # 弹幕网络服务（弹弹play 开放弹幕网络）：HTTP 请求 + 签名（SHA256/Base64）
   http: ^1.6.0
   crypto: ^3.0.7
+  # SMB 网络存储：纯 Dart 客户端，fork 自 smb_connect 0.0.9（去掉全局串行锁，
+  # 支持请求在途并发），配合 lib/services/network/smb_client.dart 的并发预读提升吞吐。
+  smb_connect:
+    path: third_party/smb_connect
 
 dev_dependencies:
   flutter_test:

@@ -61,6 +61,9 @@ class _VideoCardState extends State<VideoCard> {
   }
 
   Future<void> _loadThumb() async {
+    // 网络来源视频无本地缩略图，跳过 MediaMetadataRetriever（避免把远程
+    // 相对路径当本地文件解析）。
+    if (widget.video.source == VideoSource.network) return;
     final info = await VideoInfoService.get(widget.video.path);
     if (!mounted) return;
     setState(() {
@@ -69,6 +72,8 @@ class _VideoCardState extends State<VideoCard> {
   }
 
   Future<void> _loadMeta() async {
+    // 网络来源视频无本地元数据，跳过（避免把远程相对路径当本地文件解析）。
+    if (widget.video.source == VideoSource.network) return;
     final meta = await VideoInfoService.getBasicMetadata(widget.video.path);
     if (!mounted) return;
     setState(() => _meta = meta);

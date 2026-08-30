@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/services/device_services.dart';
+import 'package:moumou/services/network/network_streaming_proxy.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/utils/formatters.dart';
 
@@ -23,22 +24,23 @@ import 'package:moumou/utils/formatters.dart';
 /// 关闭时（四项全未勾选）不渲染任何内容、不占高度。
 /// 阴影/渐变由页面层统一提供（信息行 + 顶栏整体一个连续渐变，避免断层）。
 ///
-/// 刷新频率：时间 30s、电量 60s、网络类型 5s。
+/// 刷新频率：时间 30s、电量 60s、网络类型 5s、网速 1s（滑动窗口真实速率）。
 class PlayerStatusBar extends StatefulWidget {
   /// 是否竖屏（竖屏压缩高度）
   final bool portrait;
 
-  /// 当前是否为在线播放（网速详情仅在线播放时显示；本地播放一律隐藏）
+  /// 是否为在线播放（网速详情仅在线播放时显示；本地播放一律隐藏）。
   final bool isOnlinePlayback;
 
-  /// 当前网速（字节/秒）。仅在 [isOnlinePlayback] 为 true 且 > 0 时显示。
-  final double netSpeedBytesPerSec;
+  /// 在线播放时的回环代理流 URL。内部据此轮询已传输字节数计算网速；
+  /// 本地播放传 null 即可。
+  final String? streamUrl;
 
   const PlayerStatusBar({
     super.key,
     this.portrait = false,
     this.isOnlinePlayback = false,
-    this.netSpeedBytesPerSec = 0,
+    this.streamUrl,
   });
 
   @override
@@ -57,9 +59,13 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
   /// 当前网络类型（'wifi' / 'cellular' / 'ethernet' / 'none'）
   String _netType = 'none';
 
+  /// 网速（字节/秒）：每秒读取代理层「最近 1 秒滑动窗口」的真实下行速率。
+  double _netSpeedBytesPerSec = 0;
+
   Timer? _timeTimer;
   Timer? _batteryTimer;
   Timer? _netTypeTimer;
+  Timer? _netSpeedTimer;
 
   @override
   void initState() {
@@ -79,6 +85,21 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
       const Duration(seconds: 5),
       (_) => _refreshNetType(),
     );
+    _tickNetSpeed();
+    _netSpeedTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _tickNetSpeed(),
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant PlayerStatusBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 切集 / 换源：流 URL 或在线状态变了，重置网速显示，避免残留上一集的速度。
+    if (oldWidget.streamUrl != widget.streamUrl ||
+        oldWidget.isOnlinePlayback != widget.isOnlinePlayback) {
+      _netSpeedBytesPerSec = 0;
+    }
   }
 
   void _updateTime() {
@@ -99,11 +120,27 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
     if (mounted && type != _netType) setState(() => _netType = type);
   }
 
+  /// 每秒采样一次网速：直接读取代理层「最近 1 秒滑动窗口」的真实下行速率。
+  /// 不做差分、不做平滑，稳定且贴近实际下载速度；播放期间胶囊常驻（见 build 中显示条件）。
+  void _tickNetSpeed() {
+    if (!widget.isOnlinePlayback || widget.streamUrl == null) {
+      if (_netSpeedBytesPerSec != 0) setState(() => _netSpeedBytesPerSec = 0);
+      return;
+    }
+    final speed = NetworkStreamingProxy.instance
+        .recentSpeedBytesPerSec(widget.streamUrl!);
+    if (speed == null) return;
+    if ((speed - _netSpeedBytesPerSec).abs() > 1.0) {
+      setState(() => _netSpeedBytesPerSec = speed);
+    }
+  }
+
   @override
   void dispose() {
     _timeTimer?.cancel();
     _batteryTimer?.cancel();
     _netTypeTimer?.cancel();
+    _netSpeedTimer?.cancel();
     super.dispose();
   }
 
@@ -115,10 +152,9 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
         final s = _settings;
         final showTime = s.showTopTime && _timeText.isNotEmpty;
         final showBattery = s.showTopBattery && _battery != null;
-        // 网速详情：仅在线播放且有有效速度值时显示（本地播放一律隐藏）
-        final showNetSpeed = s.showTopNetSpeed &&
-            widget.isOnlinePlayback &&
-            widget.netSpeedBytesPerSec > 0;
+        // 网速详情：仅在线播放时显示（本地播放一律隐藏）。
+        // 播放期间胶囊常驻，速度无数据时平滑衰减而非消失，符合「一直显示」的直觉。
+        final showNetSpeed = s.showTopNetSpeed && widget.isOnlinePlayback;
         // 数据类型：无网络（'none'）时不显示图标
         final showNetType = s.showTopNetType && _netType != 'none';
 
@@ -249,7 +285,7 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
-              formatNetworkSpeed(widget.netSpeedBytesPerSec),
+              formatNetworkSpeed(_netSpeedBytesPerSec),
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.9),
                 fontSize: widget.portrait ? 9 : 10,

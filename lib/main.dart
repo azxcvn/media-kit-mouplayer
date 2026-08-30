@@ -11,6 +11,7 @@ import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/equalizer_settings.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/media_scan_settings.dart';
+import 'package:moumou/services/network/network_connection_settings.dart';
 import 'package:moumou/services/playback_progress_service.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/subtitle_settings.dart';
@@ -93,6 +94,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 弹幕服务器设置（阶段3 网络弹幕）：同 ensureLoaded 模式，切集自动匹配
     // 与网络搜索读取服务器列表/开关（setter 与这里共享同一 load Future）
     DanmakuServerSettings.instance.ensureLoaded();
+    // 网络存储账户（阶段4 网络存储）：同 ensureLoaded 模式，账户列表页
+    // ListenableBuilder 订阅、账户增删改用 setter 与这里共享同一 load Future
+    NetworkConnectionSettings.instance.ensureLoaded();
   }
 
   @override

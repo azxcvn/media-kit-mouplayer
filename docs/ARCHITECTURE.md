@@ -63,7 +63,7 @@ lib/
 ├── main.dart                  # 入口：主题装配 + AppFrame + 路由观察者 + 崩溃日志钩子
 ├── models/                    # 纯数据模型（无逻辑、无依赖）
 │   ├── tree_node.dart         # 目录树节点（folder/video）
-│   ├── video_file.dart        # 视频文件信息
+│   ├── video_file.dart        # 视频文件信息 + 来源枚举（本地 / 网络连接）
 │   ├── player_action.dart     # 播放器按钮动作 / 双击手势模式 / 视频方向模式
 │   ├── player_loop.dart       # 循环播放模式枚举（off/列表循环/单集循环）
 │   ├── playlist_sort.dart     # 播放列表排序 + 目录过滤纯函数
@@ -75,6 +75,8 @@ lib/
 │   ├── danmaku_entry.dart     # 弹幕条目纯数据模型（时间/模式/颜色/文本，可跨 isolate 发送）
 │   ├── danmaku_server.dart    # 弹幕服务器配置模型（默认弹弹Play + 自建服务器，toJson/fromJson）
 │   ├── dandan_models.dart     # 弹弹Play API 数据模型（番剧/集/评论/匹配候选，fromJson 容错）
+│   ├── network_connection.dart # 网络存储账户模型 + 协议枚举（WebDAV/SMB/FTP）+ 校验纯函数
+│   ├── network_file.dart      # 远程目录/文件条目模型（供网络浏览 UI 展示）
 │   └── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
@@ -105,6 +107,15 @@ lib/
 │   ├── danmaku_search_history.dart  # 网络弹幕搜索历史（关键词去重/上限淘汰最旧/一键清除，持久化）
 │   ├── danmaku_auto_match_cache_store.dart # 弹幕自动匹配缓存存储（番剧+集列表，切集自动匹配用）
 │   ├── danmaku_network_service.dart # 弹幕网络服务（搜索合并/文件匹配/下载落盘 filesDir/danmaku/network + 文件前16MB MD5，无 UI）
+│   ├── network/                    # 网络存储（WebDAV/SMB/FTP）抽象层
+│   │   ├── network_client.dart     #   NetworkClient 抽象接口（connect/listFiles/getFileSize/openStream/disconnect）
+│   │   ├── network_client_factory.dart # 按协议创建客户端（连接配置 → 具体客户端实例）
+│   │   ├── network_connection_settings.dart # 账户增删改查 + 密码加密 + SharedPreferences 持久化（ChangeNotifier）
+│   │   ├── network_repository.dart #   高层 API（浏览目录/解析播放流，统一异常）
+│   │   ├── network_streaming_proxy.dart # 本地回环流代理（dart:io HttpServer，Range/HEAD，供 mpv 拉流播放 + 最近 1 秒滑动窗口网速统计）
+│   │   ├── webdav_client.dart      #   WebDAV 客户端（纯 Dart http：PROPFIND Depth:1 列表 / Range 流式读取 + 自检）
+│   │   ├── ftp_client.dart         #   FTP 客户端（纯 Dart Socket 双连接被动模式 / MLSD→LIST 回退 / REST 偏移）
+│   │   └── smb_client.dart         #   SMB 客户端（纯 Dart smb_connect：4 路并发预读管线 + 管理共享过滤）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -119,6 +130,7 @@ lib/
 │   ├── raw_thumb_image.dart   #   RGBA 帧直渲组件（FastThumbFrame → ui.Image，帧切换保持上一帧无缝）
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
+│   ├── speed_dial_fab.dart    #   首页右下角悬浮快速拨号（最近播放/打开链接/哔哩番剧/网络存储）
 │   └── marquee_text.dart      #   无缝循环跑马灯
 ├── pages/                     # 页面（每页一个目录）
 │   ├── home/
@@ -135,7 +147,7 @@ lib/
 │   │   ├── audio_player_page.dart    # 听视频页（共享 Player 只播音频；封面模糊背景；1:1 圆角封面；后台播放；循环三态）
 │   │   └── views/             #   播放页专属控制组件
 │   │       ├── player_top_bar.dart        # 顶栏：返回 + 标题 + 5 槽位 + 更多
-│   │       ├── player_status_bar.dart     # 顶部信息行：时间/电量居中 + 网速胶囊/数据类型靠右（多选控制）
+│   │       ├── player_status_bar.dart     # 顶部信息行：时间/电量居中 + 网速胶囊/数据类型靠右（多选控制；网速=滑动窗口真实下行速率，在线常驻）
 │   │       ├── player_center_cluster.dart # 中央簇：快退/播放暂停/快进
 │   │       ├── player_danmaku_layer.dart  # 弹幕渲染层（canvas_danmaku DanmakuScreen 封装，视频层与手势层之间，挂载/卸载即 rebind）
 │   │       ├── player_danmaku_buttons.dart# 弹幕开关/设置按钮组（Kazumi 图标：开=内联 SVG 主题色对勾，关/设置=资源 SVG）
@@ -170,6 +182,10 @@ lib/
 │   │       └── portrait_edit_panel.dart       # 竖屏「编辑控制栏」页
 │   ├── media_info/
 │   │   └── media_info_page.dart # 媒体信息页（MediaInfoLib 解析 + 一键复制）
+│   ├── network/
+│   │   ├── network_storage_page.dart  # 网络存储账户列表（增删改入口 + 空态提示）
+│   │   ├── account_edit_page.dart     # 账户新增/编辑（协议切换 + 各协议字段表单）
+│   │   └── network_browser_page.dart  # 网络目录/文件浏览（复用 FolderCard/VideoCard + 面包屑回退 + 系统返回键逐级返回）
 │   └── settings/
 │       ├── settings_page.dart #   设置主页（分组结构）
 │       ├── appearance_page.dart      # 外观设置子页
@@ -204,7 +220,12 @@ lib/
     ├── danmaku_episode.dart   #   弹幕集数提取/匹配纯函数（文件名→集数 + 缓存集列表定位，切集自动匹配）
     ├── dandan_signature.dart  #   弹弹Play 签名纯函数（base64(sha256(AppId+Timestamp+Path+AppSecret))）
     ├── dandan_comment.dart    #   弹弹Play 评论→弹幕条目/B站 XML 纯函数（p 字段解析 + 排序 + 落盘 XML 生成）
-    └── danmaku_xml.dart       #   B站 XML 弹幕解析/生成纯函数（解析供 compute 后台执行 + 实体反转义 + 文本转义）
+    ├── danmaku_xml.dart       #   B站 XML 弹幕解析/生成纯函数（解析供 compute 后台执行 + 实体反转义 + 文本转义）
+    ├── webdav_xml.dart        #   WebDAV PROPFIND 多状态 XML 解析（命名空间剥离 + 百分号/UTF-8 解码 + HTTP 日期）
+    ├── ftp_parser.dart        #   FTP 目录列表解析（RFC3659 MLSD + Unix LIST 回退）
+    ├── http_byte_range.dart   #   HTTP Range 头解析（bytes=start-end / start- / -suffix）
+    ├── network_path.dart      #   网络路径规范化/校验/子路径拼接
+    └── network_mime_types.dart # 文件名→MIME 类型映射
 ```
 
 ---
@@ -735,3 +756,9 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 手动导入/网络弹幕重启后被当「自动加载」重复弹 toast | 「已自动加载」toast 只挂在同名自动查找路径（且每视频仅第一次）；记忆恢复一律静默（§4.11） |
 | 面板内搜索框被撑到 60dp+（`IconButton` suffix 的 48dp 最小点击区 + `OutlineInputBorder` 内边距） | 自绘 40dp 定高胶囊 + `InputDecoration.collapsed` + 28dp 迷你按钮（§4.11 搜索 UI 规范） |
 | `AnimatedAlign(heightFactor)` 展开动画生硬（内容被裁边挤压、长列表反复布局） | 卡片自持 `AnimationController`：高度与内容淡入淡出 `Interval` 错峰 + 收起态不构建子树 + 超 6 集用定高滚动容器（§4.11） |
+| SMB smb_connect 全局互斥锁串行化读请求 → 吞吐被压到 ~1.5MB/s | fork 到 `third_party/smb_connect` 去掉全局锁、改 messageId 并发响应匹配；`smb_client` 用 4 个独立句柄并发预读（64KB 块）按块序号合并 |
+| SMB 并发读去锁后写 socket 竞态（`StreamSink is bound to a stream`，流中断画面永远转圈） | `smb_transport` 加发送队列 `_sendQueue` 串行化「编码+写+flush」，响应等待仍走并发 sendrecv（吞吐不受影响） |
+| SMB 根目录列出 ADMIN$/C$/D$/IPC$ 等管理/隐藏共享 | `smb_client.listFiles` 根路径过滤 `name.endsWith('$')`，只保留普通共享 |
+| Windows 拒绝枚举共享列表却允许直连具体共享 | 路径字段留空/`/` 才 `listShares` 列共享；被拒时就填 `/共享名` 跳过枚举直连 |
+| 网络浏览页按系统返回键直接退回首页而非上级目录 | `NetworkBrowserPage` 包 `PopScope(canPop:false)` 拦截系统返回，与左上角箭头一致逐级回退、到根才真正退出 |
+| 播放页网速忽高忽低 / 比系统状态栏低估（周期性差分 + 突发下载采样错位） | 代理层记录每笔 chunk 时间戳，网速 = 最近 1 秒滑动窗口字节 ÷ 实际跨度，1s 刷新、不做平滑；网速胶囊在线播放常驻（本地隐藏） |

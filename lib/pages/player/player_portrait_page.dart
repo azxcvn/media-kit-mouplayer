@@ -160,6 +160,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
   late String _path;
   late String _title;
   bool _playing = false;
+  bool _buffering = false;
 
   // ── 播放位置/时长（risk_audit #1）────────────────────────
   // 与横屏页同款：位置流高频更新只走 ValueNotifier，底栏（进度条/时间文本）
@@ -397,6 +398,13 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
           // 暂停时总是显示控制层（含中央播放键）
           if (!p) _controlsVisible = true;
         });
+      }),
+    );
+    // 缓冲状态：联网加载/seek 缓冲时驱动中央转圈动画
+    _subs.add(
+      _player.stream.buffering.listen((b) {
+        if (!mounted) return;
+        if (b != _buffering) setState(() => _buffering = b);
       }),
     );
     // 位置/时长：只更新 ValueNotifier，不再整页 setState（risk_audit #1）
@@ -1754,6 +1762,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                               PlayerStatusBar(
                                 portrait: true,
                                 isOnlinePlayback: isOnlineMedia(_path),
+                                streamUrl: isOnlineMedia(_path) ? _path : null,
                               ),
                               PortraitPlayerTopBar(
                                 title: _title,
@@ -2091,6 +2100,25 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
                             _dismissResume();
                           },
                           onClose: _dismissResume,
+                        ),
+                      ),
+                    ),
+                  ),
+                // 网络加载/缓冲转圈：mpv 上报 buffering=true 时居中显示。
+                // 恢复进度封层已自带黑底转圈，二者不同时出现。
+                if (_buffering && !_restoring)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: Center(
+                        child: SizedBox(
+                          width: 34,
+                          height: 34,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.6,
+                            valueColor: const AlwaysStoppedAnimation<Color>(
+                              Colors.white70,
+                            ),
+                          ),
                         ),
                       ),
                     ),
