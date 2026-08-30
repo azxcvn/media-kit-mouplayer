@@ -6,6 +6,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:moumou/models/player_action.dart';
 import 'package:moumou/models/playlist_sort.dart';
+import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
@@ -17,6 +18,7 @@ import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_chapter_panel.dart';
 import 'package:moumou/pages/player/views/player_center_cluster.dart';
 import 'package:moumou/pages/player/views/player_danmaku_layer.dart';
+import 'package:moumou/pages/player/views/player_danmaku_network_panel.dart';
 import 'package:moumou/pages/player/views/player_danmaku_panel.dart';
 import 'package:moumou/pages/player/views/player_danmaku_settings_panel.dart';
 import 'package:moumou/pages/player/views/player_decode_panel.dart';
@@ -39,6 +41,7 @@ import 'package:moumou/pages/player/views/subtitle_panel.dart';
 import 'package:moumou/services/audio_service.dart';
 import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/danmaku_service.dart';
+import 'package:moumou/services/danmaku_network_service.dart';
 import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
@@ -49,6 +52,7 @@ import 'package:moumou/services/player_controls_settings.dart';
 import 'package:moumou/services/subtitle_service.dart';
 import 'package:moumou/services/subtitle_settings.dart';
 import 'package:moumou/services/super_resolution_service.dart';
+import 'package:moumou/utils/app_dialog.dart';
 import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/intro_outro_skip.dart';
 import 'package:moumou/utils/pip_aspect.dart';
@@ -404,6 +408,10 @@ class _PlayerPageState extends State<PlayerPage>
     // 自动加载弹幕（同名/记忆恢复）成功后弹提示（服务层不依赖 UI）
     _danmakuController.onAutoLoadedDanmaku = (fileName) {
       if (mounted) _toast('已自动加载弹幕：$fileName');
+    };
+    // 网络弹幕（弹弹Play 搜索选中/自动匹配/切集自动匹配）加载成功提示
+    _danmakuController.onNetworkDanmakuLoaded = (message) {
+      if (mounted) _toast('已加载弹幕：$message');
     };
     // 精确落帧：hr-seek=absolute 后所有绝对 seek 帧级精确解码
     // （对齐 mpvRx 的 "seek absolute+exact"——拖动松手即停在预览帧，
@@ -1823,9 +1831,10 @@ class _PlayerPageState extends State<PlayerPage>
     _resetHideTimer();
   }
 
-  /// 弹幕面板页（顶栏/更多「弹幕」动作，阶段2）：
-  /// 二级入口列表——本地弹幕（文件选择器导入）/ 网络弹幕 / 自动匹配 /
-  /// 弹幕设置（面板内就地切换到设置页，不叠加第二个面板，§4.5）。
+  /// 弹幕面板页（顶栏/更多「弹幕」动作，阶段2+3）：
+  /// 二级入口列表——本地弹幕（文件选择器导入）/ 网络弹幕（弹弹Play 搜索）/
+  /// 自动匹配（弹弹Play 文件匹配）/ 弹幕设置（面板内就地切换到设置页，
+  /// 不叠加第二个面板，§4.5）。
   PlayerPanelPage _danmakuPanelPage() => PlayerPanelPage(
         title: '弹幕',
         body: Builder(
@@ -1843,6 +1852,15 @@ class _PlayerPageState extends State<PlayerPage>
                 PlayerPanelPage(title: title, body: body),
               ),
               onPopSubPage: () => navigator.pop(),
+              onNetworkTap: () => navigator.push(
+                PlayerPanelPage(
+                  title: '网络弹幕',
+                  body: PlayerDanmakuNetworkPanel(
+                    onEpisodeSelected: _onNetworkEpisodeSelected,
+                  ),
+                ),
+              ),
+              onAutoMatchTap: _autoMatchDanmaku,
             );
           },
         ),
@@ -1853,6 +1871,121 @@ class _PlayerPageState extends State<PlayerPage>
     _hideTimer?.cancel();
     await showPlayerPanel(context, pages: [_danmakuPanelPage()]);
     _resetHideTimer();
+  }
+
+  // ── 网络弹幕 / 自动匹配（阶段3：弹弹Play 开放弹幕网络）────────
+
+  /// 网络搜索选中某集：保存自动匹配缓存（切集自动匹配用）→ 拉取并装载。
+  void _onNetworkEpisodeSelected(
+    DandanAnime anime,
+    DandanEpisode episode,
+    String? serverUrl,
+  ) {
+    unawaited(_loadSelectedNetworkDanmaku(anime, episode, serverUrl));
+  }
+
+  Future<void> _loadSelectedNetworkDanmaku(
+    DandanAnime anime,
+    DandanEpisode episode,
+    String? serverUrl,
+  ) async {
+    await _danmakuController.saveAutoMatchCache(
+      animeId: anime.animeId,
+      animeTitle: anime.animeTitle,
+      serverUrl: serverUrl,
+      episodes: anime.episodes,
+    );
+    final ok = await _danmakuController.loadNetworkDanmaku(
+      episodeId: episode.episodeId,
+      animeTitle: anime.animeTitle,
+      episodeTitle: episode.episodeTitle,
+      serverUrl: serverUrl,
+    );
+    if (!mounted) return;
+    if (!ok) _toast('弹幕加载失败');
+  }
+
+  /// 自动匹配按钮：对当前视频文件匹配弹幕，候选唯一直接加载，多个弹选择框。
+  Future<void> _autoMatchDanmaku() async {
+    _toast('正在匹配弹幕，请稍候…');
+    final results = await _danmakuController.matchCurrentVideo();
+    if (!mounted) return;
+    if (results.isEmpty) {
+      _toast('未找到匹配的弹幕');
+      return;
+    }
+    if (results.length == 1) {
+      await _loadMatchedDanmaku(results.first);
+      return;
+    }
+    await _showMatchSelectionDialog(results);
+  }
+
+  /// 加载一条自动匹配候选，并异步取回该番剧完整集列表存入缓存（切集自动匹配）。
+  Future<void> _loadMatchedDanmaku(DanmakuMatchItem item) async {
+    final match = item.match;
+    final ok = await _danmakuController.loadNetworkDanmaku(
+      episodeId: match.episodeId,
+      animeTitle: match.animeTitle,
+      episodeTitle: match.episodeTitle,
+      serverUrl: item.serverUrl,
+    );
+    if (!mounted) return;
+    if (!ok) {
+      _toast('弹幕加载失败');
+      return;
+    }
+    unawaited(_cacheMatchedAnime(item));
+  }
+
+  Future<void> _cacheMatchedAnime(DanmakuMatchItem item) async {
+    final match = item.match;
+    final episodes = await _danmakuController.fetchAnimeEpisodes(
+      animeId: match.animeId,
+      animeTitle: match.animeTitle,
+      serverUrl: item.serverUrl,
+    );
+    if (episodes == null || episodes.isEmpty) return;
+    await _danmakuController.saveAutoMatchCache(
+      animeId: match.animeId,
+      animeTitle: match.animeTitle,
+      serverUrl: item.serverUrl,
+      episodes: episodes,
+    );
+  }
+
+  /// 自动匹配多个候选时的选择弹窗（§4.5 统一用 showAppDialog）。
+  Future<void> _showMatchSelectionDialog(List<DanmakuMatchItem> results) async {
+    final selected = await showAppDialog<DanmakuMatchItem>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('选择匹配结果'),
+        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final item in results)
+                ListTile(
+                  title: Text(
+                    '[${item.serverName}] ${item.match.animeTitle} - '
+                    '${item.match.episodeTitle}',
+                  ),
+                  onTap: () => Navigator.of(context).pop(item),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+    if (selected != null) await _loadMatchedDanmaku(selected);
   }
 
   // ── 画中画 / 循环播放 / 听视频 ──────────────────────────

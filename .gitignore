@@ -57,3 +57,6 @@ app.*.map.json
 # 杂项文件（个人杂项，不提交）
 /杂项文件/
 /杂项文件/参考项目/
+
+# 弹弹Play 开放弹幕网络密钥（私有，禁止上传 GitHub，工作.md 第 3 点）
+/lib/services/dandan_play_keys.dart

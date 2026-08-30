@@ -1,6 +1,7 @@
-/// 弹幕控制器（业务层，弹幕移植方案阶段2）：绑定共享 [Player]，
-/// 驱动本地同名弹幕的加载（9 种命名规则 + B站 XML 后台解析）、
-/// 1s tick 秒桶调度发射（六守卫）、canvas_danmaku 渲染层的
+/// 弹幕控制器（业务层，弹幕移植方案阶段2+阶段3）：绑定共享 [Player]，
+/// 驱动本地同名弹幕的加载（9 种命名规则 + B站 XML 后台解析）与
+/// 网络弹幕（弹弹Play 搜索选中 / 自动匹配 / 切集自动匹配，下载落盘 +
+/// 记忆持久化）、1s tick 秒桶调度发射（六守卫）、canvas_danmaku 渲染层的
 /// 挂载/显隐/暂停恢复/倍速跟随。
 ///
 /// 横竖屏播放页共享同一实例（同一 Player）；两个页面各自的
@@ -20,11 +21,17 @@ import 'dart:ui' show Color;
 import 'package:canvas_danmaku/canvas_danmaku.dart' as canvas;
 import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:moumou/models/danmaku_auto_match_cache.dart';
 import 'package:moumou/models/danmaku_entry.dart';
+import 'package:moumou/models/dandan_models.dart';
+import 'package:moumou/services/danmaku_auto_match_cache_store.dart';
 import 'package:moumou/services/danmaku_memory.dart';
+import 'package:moumou/services/danmaku_network_service.dart';
 import 'package:moumou/services/danmaku_scheduler.dart';
+import 'package:moumou/services/danmaku_server_settings.dart';
 import 'package:moumou/services/danmaku_settings.dart';
 import 'package:moumou/utils/danmaku_dedup.dart';
+import 'package:moumou/utils/danmaku_episode.dart';
 import 'package:moumou/utils/danmaku_local_file.dart';
 import 'package:moumou/utils/danmaku_random_color.dart';
 import 'package:moumou/utils/danmaku_timeline.dart';
@@ -100,6 +107,12 @@ class DanmakuController extends ChangeNotifier {
   /// 手动导入记忆（按视频路径持久化，重启播放器/软件后自动恢复）
   final DanmakuManualMemory _memory = DanmakuManualMemory();
 
+  /// 弹幕网络服务（弹弹Play：搜索 / 自动匹配 / 拉取，阶段3 网络弹幕）
+  final DanmakuNetworkService _network = DanmakuNetworkService();
+
+  /// 自动匹配缓存（切集自动匹配弹幕，工作.md 第 7 点）
+  final DanmakuAutoMatchCacheStore _autoMatchCache = DanmakuAutoMatchCacheStore();
+
   /// 渲染层注册表（横竖屏页各挂一个 DanmakuScreen，同步驱动）
   final List<canvas.DanmakuController<void>> _layers = [];
 
@@ -163,6 +176,10 @@ class DanmakuController extends ChangeNotifier {
   /// 同名自动加载与手动导入记忆恢复共用；服务层不依赖 UI，
   /// 对齐 SubtitleController.onAutoLoadedSubtitle。
   void Function(String fileName)? onAutoLoadedDanmaku;
+
+  /// 网络弹幕（弹弹Play 搜索 / 自动匹配 / 切集自动匹配）加载成功后的回调
+  /// （参数为提示文案，如「番剧名 · 第02话」），由播放页注入以弹提示。
+  void Function(String message)? onNetworkDanmakuLoaded;
 
   bool get danmakuOn => _danmakuOn;
 
@@ -268,24 +285,26 @@ class DanmakuController extends ChangeNotifier {
 
   /// 加载视频的弹幕（首开 / 切集统一入口）。
   ///
-  /// 优先级：**手动导入记忆 → 同名自动查找**（用户显式选择不被自动查找
-  /// 覆盖，对齐字幕外挂记忆语义）。切集竞态防护：进入即开新会话并重置
-  /// 调度器（清桶 + 清屏），异步读取/解析完成后会话号已变则丢弃。
+  /// 优先级：**记忆恢复（静默）→ 同名自动查找（首次弹 toast）→ 网络自动
+  /// 匹配（切集自动匹配开关）**。记忆里同时存有手动导入与网络弹幕落盘
+  /// 文件（工作.md 第 2 点：成功装载过一次即持久化），恢复不弹「已自动
+  /// 加载」提示。切集竞态防护：进入即开新会话并重置调度器（清桶 + 清屏），
+  /// 异步读取/解析完成后会话号已变则丢弃。
   Future<void> loadForVideo(String mediaPath) async {
     final session = ++_loadSession;
     _currentMediaPath = mediaPath;
     _scheduler.reset();
     _clearLayers();
     _hasDanmaku = false;
-    // 1. 手动导入记忆：命中即恢复（重启播放器/软件无需重新选择）
+    // 1. 手动导入记忆：命中即恢复（重启播放器/软件无需重新选择）。
+    //    **记忆恢复一律静默**——记忆里既有手动导入、也有网络弹幕/自动匹配
+    //    的落盘文件，都是用户显式选择或已提示过的结果，不能弹「已自动加载」
+    //    提示（工作.md 第 3 点：手动加载后重启误报自动加载的 bug）。
     final remembered = await _memory.get(mediaPath);
     if (_disposed) return;
     if (remembered != null && session == _loadSession) {
       final ok = await _tryLoadFile(remembered, session);
-      if (ok) {
-        await _notifyAutoLoaded(p.basename(remembered));
-        return;
-      }
+      if (ok) return;
       if (_disposed || session != _loadSession) return;
       // 记忆的弹幕文件已失效（被删除/不可读/空弹幕）→ 清除记忆，
       // 回落同名自动查找（小喵 player 卡记忆死路径的教训）
@@ -294,7 +313,11 @@ class DanmakuController extends ChangeNotifier {
     // 2. 同名自动查找（9 种命名规则，B站 XML）
     final loaded = await _loadLocalDanmaku(mediaPath);
     if (_disposed || session != _loadSession) return;
-    if (loaded == null) return; // 未找到 / 解析失败：无弹幕继续播放
+    if (loaded == null) {
+      // 3. 本地无匹配：尝试网络自动匹配（切集自动匹配弹幕，工作.md 第 7 点）
+      await _tryAutoMatch(session);
+      return;
+    }
     _feedEntries(loaded.entries);
     _hasDanmaku = loaded.entries.isNotEmpty;
     if (loaded.entries.isNotEmpty) {
@@ -311,8 +334,9 @@ class DanmakuController extends ChangeNotifier {
     _scheduler.feed(_effectiveEntries(entries));
   }
 
-  /// 自动加载成功通知（同名 / 记忆恢复共用；回调未注入时静默）。
-  /// 每个视频只在**第一次**自动加载时提示（持久化去重，重启不再重复）。
+  /// 同名自动加载成功通知（**仅同名自动查找路径**；记忆恢复/手动导入
+  /// 静默——见 loadForVideo 第 1 步说明）。每个视频只在**第一次**自动
+  /// 加载时提示（持久化去重，重启不再重复）。
   Future<void> _notifyAutoLoaded(String fileName) async {
     final mediaPath = _currentMediaPath;
     if (mediaPath != null) {
@@ -391,6 +415,148 @@ class DanmakuController extends ChangeNotifier {
     } catch (_) {
       return false;
     }
+  }
+
+  // ── 网络弹幕 / 自动匹配（阶段3：弹弹Play 开放弹幕网络）──────────
+
+  /// 下载并装载网络弹幕（弹弹Play 搜索选中 / 自动匹配命中共用）。
+  /// 成功返回 true（触发 [onNetworkDanmakuLoaded]），并自动开启弹幕显示；
+  /// 同时生成 B站 XML 落盘并记忆到当前视频（重启播放/软件自动恢复，
+  /// 与切集自动匹配开关无关，工作.md 第 2 点）。
+  /// 会话号保护：在途网络请求与后续切集竞态时结果判废。
+  Future<bool> loadNetworkDanmaku({
+    required int episodeId,
+    required String animeTitle,
+    required String episodeTitle,
+    String? serverUrl,
+  }) async {
+    final session = ++_loadSession;
+    _scheduler.reset();
+    _clearLayers();
+    _hasDanmaku = false;
+    ({List<DanmakuEntry> entries, String? filePathOrNull}) download;
+    try {
+      download = await _network.downloadEpisode(
+        episodeId: episodeId,
+        animeTitle: animeTitle,
+        episodeTitle: episodeTitle,
+        serverUrl: serverUrl,
+      );
+    } catch (_) {
+      download = (entries: const [], filePathOrNull: null);
+    }
+    if (_disposed || session != _loadSession) return false;
+    if (download.entries.isEmpty) return false;
+    _feedEntries(download.entries);
+    _hasDanmaku = true;
+    if (!_danmakuOn) {
+      _danmakuOn = true;
+      notifyListeners();
+    }
+    // 持久化记忆（工作.md 第 2 点）：网络弹幕落盘后按视频路径记忆，
+    // 重启播放/软件与 loadForVideo 第 1 步（手动记忆）同一恢复路径，
+    // 与「切集自动匹配」开关无关。
+    await _rememberDownload(download.filePathOrNull);
+    onNetworkDanmakuLoaded?.call('$animeTitle · $episodeTitle');
+    return true;
+  }
+
+  /// 对当前视频发起自动匹配（「自动匹配」按钮）：计算文件哈希 + 向所有
+  /// 启用服务器匹配，返回候选列表（空 = 无匹配 / 失败）。
+  Future<List<DanmakuMatchItem>> matchCurrentVideo() async {
+    final path = _currentMediaPath;
+    if (path == null) return const [];
+    try {
+      final hash = await _network.calculateFileHash(path);
+      if (hash == null) return const [];
+      final file = File(path);
+      final size = await file.length();
+      return _network.matchVideo(
+        fileName: p.basename(path),
+        fileHash: hash,
+        fileSize: size,
+      );
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  /// 保存自动匹配缓存（选中某番剧后记录其完整集列表，供切集自动匹配）。
+  Future<void> saveAutoMatchCache({
+    required int animeId,
+    required String animeTitle,
+    required String? serverUrl,
+    required List<DandanEpisode> episodes,
+  }) async {
+    await _autoMatchCache.save(DanmakuAutoMatchCache(
+      animeId: animeId,
+      animeTitle: animeTitle,
+      serverUrl: serverUrl,
+      episodes: episodes,
+    ));
+  }
+
+  /// 通过番剧名 + animeId 取回完整集列表（自动匹配命中后保存切集缓存用）。
+  Future<List<DandanEpisode>?> fetchAnimeEpisodes({
+    required int animeId,
+    required String animeTitle,
+    String? serverUrl,
+  }) async {
+    try {
+      return await _network.fetchAnimeEpisodesById(
+        animeId,
+        animeTitle,
+        serverUrl: serverUrl,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 切集自动匹配（loadForVideo 本地无弹幕后调用）：开启开关 + 存在缓存时，
+  /// 从文件名提取集数 → 在缓存集列表中定位对应集 → 拉取并装载弹幕。
+  /// 装载成功同样落盘记忆（该视频之后再进直接走记忆恢复，不再依赖开关）。
+  Future<void> _tryAutoMatch(int session) async {
+    if (!DanmakuServerSettings.instance.autoMatchEnabled) return;
+    final cache = await _autoMatchCache.load();
+    if (_disposed || session != _loadSession || cache == null) return;
+    final path = _currentMediaPath;
+    if (path == null) return;
+    final episodeNumber = extractEpisodeNumber(p.basename(path));
+    if (episodeNumber == null) return;
+    final matched = findMatchingEpisode(cache.episodes, episodeNumber);
+    if (matched == null) return;
+    ({List<DanmakuEntry> entries, String? filePathOrNull}) download;
+    try {
+      download = await _network.downloadEpisode(
+        episodeId: matched.episodeId,
+        animeTitle: cache.animeTitle,
+        episodeTitle: matched.episodeTitle,
+        serverUrl: cache.serverUrl,
+      );
+    } catch (_) {
+      download = (entries: const [], filePathOrNull: null);
+    }
+    if (_disposed || session != _loadSession) return;
+    if (download.entries.isEmpty) return;
+    _feedEntries(download.entries);
+    _hasDanmaku = true;
+    if (!_danmakuOn) {
+      _danmakuOn = true;
+      notifyListeners();
+    }
+    await _rememberDownload(download.filePathOrNull);
+    onNetworkDanmakuLoaded?.call('${cache.animeTitle} ${matched.episodeTitle}');
+  }
+
+  /// 把网络弹幕落盘文件记忆到当前视频（工作.md 第 2 点：无论本地导入、
+  /// 自动匹配还是网络搜索下载，成功装载过一次即持久化记忆）。落盘失败
+  /// （filePathOrNull 为 null）跳过记忆，本次会话仍正常播放。
+  Future<void> _rememberDownload(String? filePath) async {
+    if (filePath == null) return;
+    final mediaPath = _currentMediaPath;
+    if (mediaPath == null) return;
+    await _memory.set(mediaPath, filePath);
   }
 
   // ── 1s tick 发射（守卫链对齐 Kazumi 六守卫，减去阶段1 未有的屏蔽词）──

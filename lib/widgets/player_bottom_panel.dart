@@ -104,13 +104,19 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
   @override
   Widget build(BuildContext context) {
     final page = _pages.last;
-    final maxHeight =
-        MediaQuery.sizeOf(context).height * widget.maxHeightFactor;
+    // 当前页可覆写最大高度占比（如网络弹幕搜索需要更大的结果区），
+    // 未指定则用外壳默认值；页内切换时高度差由 AnimatedContainer 平滑过渡。
+    final factor = page.bottomHeightFactor ?? widget.maxHeightFactor;
+    final maxHeight = MediaQuery.sizeOf(context).height * factor;
     return Material(
       color: const Color(0xFF1C1C1E),
       borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
+      child: AnimatedContainer(
+        duration: widget.animate
+            ? const Duration(milliseconds: 240)
+            : Duration.zero,
+        curve: Curves.easeOutCubic,
         constraints: BoxConstraints(maxHeight: maxHeight),
         // SafeArea 放在 Material 内部：面板背景铺满（含手势条区域），
         // 内容避让底部系统导航键/手势条（竖屏下系统栏可见时）

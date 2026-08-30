@@ -1,6 +1,6 @@
-/// 弹幕二级界面（播放器「更多 → 弹幕」/ 顶栏「弹幕」槽位共用，阶段1）：
-/// 四个入口——本地弹幕（文件选择器导入，已实现）/ 网络弹幕（待上线）/
-/// 自动匹配（待上线）/ 弹幕设置（与底栏弹幕设置按钮同一行为）。
+/// 弹幕二级界面（播放器「更多 → 弹幕」/ 顶栏「弹幕」槽位共用，阶段1+3）：
+/// 四个入口——本地弹幕（文件选择器导入）/ 网络弹幕（弹弹Play 搜索三级界面）/
+/// 自动匹配（弹弹Play 文件匹配）/ 弹幕设置（与底栏弹幕设置按钮同一行为）。
 ///
 /// 本地弹幕的文件选择器**规则与参数风格与本地字幕文件选择器一致**（工作.md
 /// 弹幕第 2 点）：
@@ -10,7 +10,8 @@
 ///   器 / 图标 / 记忆键，对齐音频选择器的复用方式，§4.5「不得另写一套外壳」），
 ///   支持排序与文件夹记忆（独立记忆键）。
 ///
-/// 网络弹幕 / 自动匹配 / 弹幕设置以 toast 提示待上线（阶段1 只铺基础设施）。
+/// 网络弹幕 / 自动匹配由播放页注入回调（阶段3 实现，见 player_page /
+/// player_portrait_page）；弹幕设置与底栏按钮同一回调。
 library;
 
 import 'package:flutter/material.dart';
@@ -54,12 +55,20 @@ class PlayerDanmakuPanel extends StatelessWidget {
   /// 选择器二级页返回（由页面注入）
   final VoidCallback? onPopSubPage;
 
+  /// 打开网络弹幕搜索三级界面（由页面注入，阶段3）
+  final VoidCallback? onNetworkTap;
+
+  /// 触发自动匹配（由页面注入，阶段3）
+  final VoidCallback? onAutoMatchTap;
+
   const PlayerDanmakuPanel({
     super.key,
     required this.controller,
     required this.onSettingsTap,
     this.onPushSubPage,
     this.onPopSubPage,
+    this.onNetworkTap,
+    this.onAutoMatchTap,
   });
 
   @override
@@ -75,12 +84,12 @@ class PlayerDanmakuPanel extends StatelessWidget {
         _DanmakuOptionTile(
           icon: Icons.cloud_outlined,
           label: '网络弹幕',
-          onTap: () => _toast(context, '「网络弹幕」功能即将上线'),
+          onTap: onNetworkTap ?? () => _toast(context, '「网络弹幕」功能即将上线'),
         ),
         _DanmakuOptionTile(
           icon: Icons.auto_fix_high,
           label: '自动匹配',
-          onTap: () => _toast(context, '「自动匹配」功能即将上线'),
+          onTap: onAutoMatchTap ?? () => _toast(context, '「自动匹配」功能即将上线'),
         ),
         _DanmakuOptionTile(
           icon: Icons.settings_outlined,

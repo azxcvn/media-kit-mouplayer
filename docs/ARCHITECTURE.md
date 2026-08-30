@@ -42,6 +42,11 @@ Flutter 本地视频播放器（Android），核心能力：
   + 弹幕偏移（时间轴偏移 -180~+180 秒，正 = 延后、负 = 提前，对齐 Kazumi）；
   设置全量持久化（`DanmakuSettings`），三入口（横屏底栏设置按钮/竖屏进度条上方设置
   按钮/更多→弹幕→弹幕设置）进入同一面板（§4.11）
+- **网络弹幕 / 自动匹配（阶段3）**：接入弹弹Play 开放弹幕网络（签名验证模式）——
+  网络弹幕三级界面搜索（搜索历史胶囊 + 一键清除 + 上限淘汰最旧）、自动匹配
+  （文件前 16MB MD5 匹配）、切集自动匹配（缓存番剧集列表按集数自动加载）、
+  弹幕服务器管理（默认弹弹Play 不可删 + 自建服务器增删启停，搜索合并展示）；
+  密钥存 gitignored 私有文件（§4.11）
 - 外观设置：23 种主题色 + 21 种调色板风格（flex_seed_scheme）
 
 技术栈：Flutter 3.44+ / Dart 3.12+，依赖见 `pubspec.yaml`。
@@ -67,7 +72,10 @@ lib/
 │   ├── subtitle_track.dart    # 字幕轨道模型 + 展示名/格式过滤/对齐/颜色/RGBA 转换/字体过滤纯函数
 │   ├── super_resolution_mode.dart  # 超分模式/质量枚举 + 着色器链构建纯函数
 │   ├── equalizer_preset.dart  # 音频均衡器预设模型（14 预设 + 频段标签 + 反查/相等纯函数）
-│   └── danmaku_entry.dart     # 弹幕条目纯数据模型（时间/模式/颜色/文本，可跨 isolate 发送）
+│   ├── danmaku_entry.dart     # 弹幕条目纯数据模型（时间/模式/颜色/文本，可跨 isolate 发送）
+│   ├── danmaku_server.dart    # 弹幕服务器配置模型（默认弹弹Play + 自建服务器，toJson/fromJson）
+│   ├── dandan_models.dart     # 弹弹Play API 数据模型（番剧/集/评论/匹配候选，fromJson 容错）
+│   └── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
@@ -87,10 +95,16 @@ lib/
 │   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/自定义字体/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
 │   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 同名字幕自动加载 + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
 │   ├── equalizer_settings.dart # 音频均衡器设置（5 频段/低音增强/虚拟环绕/预设，ChangeNotifier + 持久化，AudioController 订阅重应用 af 链）
-│   ├── danmaku_service.dart    # 弹幕控制器（业务层：本地同名/手动导入加载 + 1s tick 秒桶发射 + canvas 渲染层显隐/暂停/倍速同步 + 设置订阅应用，横竖屏共享）
+│   ├── danmaku_service.dart    # 弹幕控制器（业务层：本地同名/手动导入/网络弹幕装载 + 1s tick 秒桶发射 + canvas 渲染层显隐/暂停/倍速同步 + 设置订阅应用 + 切集自动匹配，横竖屏共享）
 │   ├── danmaku_scheduler.dart  # 弹幕调度器（纯逻辑：秒桶 + 前向补发 + seek 跳变检测 + 代数失效）
 │   ├── danmaku_memory.dart     # 弹幕手动导入记忆（视频路径→弹幕文件路径，SharedPreferences JSON 持久化）
 │   ├── danmaku_settings.dart   # 弹幕设置（样式：字号/字重/速度/描边/不透明度/随机色 + 配置：区域/行高/三类显隐/海量/去重 + 偏移：时间轴偏移，ChangeNotifier + 持久化）
+│   ├── dandan_play_keys.dart   # 弹弹Play API 密钥（私有，gitignored，禁止上传 GitHub）
+│   ├── dandan_play_api.dart    # 弹弹Play 开放弹幕网络 API 客户端（签名验证模式：搜索/拉取弹幕/文件匹配）
+│   ├── danmaku_server_settings.dart # 弹幕服务器设置（默认+自建服务器增删启停 + 切集自动匹配开关，ChangeNotifier + 持久化）
+│   ├── danmaku_search_history.dart  # 网络弹幕搜索历史（关键词去重/上限淘汰最旧/一键清除，持久化）
+│   ├── danmaku_auto_match_cache_store.dart # 弹幕自动匹配缓存存储（番剧+集列表，切集自动匹配用）
+│   ├── danmaku_network_service.dart # 弹幕网络服务（搜索合并/文件匹配/下载落盘 filesDir/danmaku/network + 文件前16MB MD5，无 UI）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -126,6 +140,7 @@ lib/
 │   │       ├── player_danmaku_layer.dart  # 弹幕渲染层（canvas_danmaku DanmakuScreen 封装，视频层与手势层之间，挂载/卸载即 rebind）
 │   │       ├── player_danmaku_buttons.dart# 弹幕开关/设置按钮组（Kazumi 图标：开=内联 SVG 主题色对勾，关/设置=资源 SVG）
 │   │       ├── player_danmaku_panel.dart  # 弹幕二级界面（本地弹幕=复用字幕选择器面板导入 / 网络弹幕 / 自动匹配 / 弹幕设置；DanmakuFileService）
+│   │       ├── player_danmaku_network_panel.dart # 网络弹幕搜索三级界面（40dp 胶囊搜索框 + 框下关键词历史胶囊 + 命中后折叠为关键词条 + 结果卡自持动画展开集列表，横竖屏共用）
 │   │       ├── player_danmaku_settings_panel.dart # 弹幕设置面板（样式：字号/字重/速度/描边/不透明度滑杆+随机渐变色；配置：区域/行高/三类显隐/海量/去重；偏移：时间轴偏移；横竖屏外壳共用）
 │   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间 + 弹幕开关/设置 + 右下角按钮簇
 │   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset；章节圆点 + 跳过色段）
@@ -160,6 +175,7 @@ lib/
 │       ├── appearance_page.dart      # 外观设置子页
 │       ├── player_settings_page.dart # 播放器设置子页（手势/视频方向/顶部信息/播放行为/阈值）
 │       ├── media_scan_settings_page.dart # 媒体扫描与过滤设置子页（.nomedia/隐藏文件夹/黑白名单）
+│       ├── danmaku_server_page.dart # 弹幕服务器设置子页（默认+自建服务器增删启停 + 切集自动匹配开关）
 │       ├── about_page.dart           # 关于页（软件信息/工具/信息）
 │       ├── license_page.dart         # 许可证书页（列表 + 二级详情页，非折叠式）
 │       ├── error_log_page.dart       # 错误日志页
@@ -185,7 +201,10 @@ lib/
     ├── danmaku_local_file.dart #  同名弹幕文件查找纯函数（9 种命名规则，只查同目录）
     ├── danmaku_random_color.dart # 随机渐变色纯函数（HSV 色轮黄金角步进推进器，忽略文件颜色）
     ├── danmaku_dedup.dart     #   弹幕去重纯函数（文本归一化判同 + 时间窗合并）
-    └── danmaku_xml.dart       #   B站 XML 弹幕解析纯函数（顶层函数供 compute 后台解析 + 实体反转义）
+    ├── danmaku_episode.dart   #   弹幕集数提取/匹配纯函数（文件名→集数 + 缓存集列表定位，切集自动匹配）
+    ├── dandan_signature.dart  #   弹弹Play 签名纯函数（base64(sha256(AppId+Timestamp+Path+AppSecret))）
+    ├── dandan_comment.dart    #   弹弹Play 评论→弹幕条目/B站 XML 纯函数（p 字段解析 + 排序 + 落盘 XML 生成）
+    └── danmaku_xml.dart       #   B站 XML 弹幕解析/生成纯函数（解析供 compute 后台执行 + 实体反转义 + 文本转义）
 ```
 
 ---
@@ -215,6 +234,7 @@ models（模型）     → 无依赖（纯数据）
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 音频声道/音频处理（音量标准化/动态范围压缩）为**会话级状态**（随 `AudioController` 生命周期，每次进播放器重置为默认：安全自动/关/关），不持久化
 - 片头片尾跳过设置属 `IntroOutroSettings`（独立单例 ChangeNotifier）：启用开关（默认关闭）、片头/片尾跳过秒数（默认 0）、各自范围上限（10–600 秒，默认 180）；范围收窄时秒数联动收窄；一键重置只清秒数与范围、保留开关；跟踪器 `IntroOutroTracker` 为普通类（随播放页生命周期），就绪门控防 open 期间误触发
+- 弹幕服务器设置属 `DanmakuServerSettings`（独立单例 ChangeNotifier，阶段3）：服务器列表（默认弹弹Play 不可删 + 自建增删启停）+ 切集自动匹配开关（开发阶段解除「启用弹弹Play 时禁用」限制），启动 `ensureLoaded`（main.dart）
 - 播放页位置/时长属于**页面局部 ValueNotifier + 局部订阅**（risk_audit #1）：位置流几十毫秒一次事件，若整页 `setState` 会重建整棵 Stack（视频层/手势层/控制层），实际只有进度条、时间文本、常驻进度线需要跟随。横竖屏播放页把 `_position`/`_duration`/`_dragPosition` 抽为页面级 `ValueNotifier`，底栏与常驻进度线用 `Listenable.merge` 局部订阅只重建自身；页面级 `setState` 只留给低频状态（播放/暂停、控制层显隐、锁定、切集）。**注意这是页面局部 ValueNotifier**（dispose 时销毁），不属于被禁的「全局 ValueNotifier hack」
 - 超分记忆语义（`SuperResolutionService`，默认关闭）：无论开关状态都记录「最近一次设置的 模式/质量」；开启记忆后 `load()`/`enterPlayer()` 自动恢复该组合应用到所有视频；**未开启记忆时 `enterPlayer()`（播放页 initState）把本次会话重置为关闭/均衡**——退出播放或重启后都回到默认关闭（参考 mpv-android-anime4k）
 - **禁止**：新增全局 `ValueNotifier` hack / 全局可变单例来跨页面通信
@@ -249,7 +269,7 @@ models（模型）     → 无依赖（纯数据）
 
 - **所有弹窗统一用** `showAppDialog`（`lib/utils/app_dialog.dart`，缩放 + 淡入动画），**不要**直接 `showDialog`
 - **播放器内右侧滑入面板统一用** `showPlayerPanel`（`lib/widgets/player_panel.dart`，滑入 + 淡入 + 面板内页面栈）。倍速 / 超分 / 画面比例 / 更多 / 编辑控制栏共用；面板内二级页面用 `PlayerPanelNavigator.of(context).push(...)` 就地切换，禁止叠加第二个面板。**新增类似右侧面板需求时直接复用，勿另写一套**。注意：`of` 必须用面板树内的 context（内容里先包一层 `Builder` 再取），不能用页面 State 的 context。`showPlayerPanel` / `showPlayerBottomPanel` 的 `animate` 参数（默认 null = 跟随「播放器设置 → 启用播放界面动画」开关）控制进出场与页内切换动画
-- **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音频等后续功能）的，**横屏一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；**竖屏播放页（`player_portrait_page.dart`）一律使用 `showPlayerBottomPanel` 底部弹出外壳**（`lib/widgets/player_bottom_panel.dart`，底部上滑 + 淡入，Material 外壳，面板内页面栈 `PlayerBottomPanelNavigator`）。两种外壳的面板内容组件（倍速/超分/画面比例/编辑控制栏）共用同一份数据与交互逻辑，只换容器。面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**
+- **播放界面二级界面硬性约定**：播放器内凡需弹出二级界面（倍速、超分、画面比例、字幕/音频等后续功能）的，**横屏一律使用 `showPlayerPanel` 右侧滑入外壳**（同款外壳必须保证）；**竖屏播放页（`player_portrait_page.dart`）一律使用 `showPlayerBottomPanel` 底部弹出外壳**（`lib/widgets/player_bottom_panel.dart`，底部上滑 + 淡入，Material 外壳，面板内页面栈 `PlayerBottomPanelNavigator`）。两种外壳的面板内容组件（倍速/超分/画面比例/编辑控制栏）共用同一份数据与交互逻辑，只换容器。面板内容可选用 `PlayerOptionChip` 胶囊选择（视功能而定），也可用列表等其他形式，但**不得另写一套弹窗/面板外壳**。**竖屏页高需求**：`PlayerPanelPage.bottomHeightFactor`（默认 null = 外壳 0.42）可按页覆写底部外壳最大高度占比，只影响该页、返回上一页自动收回（高度差 240ms easeOutCubic 过渡）；网络弹幕搜索页用 0.82。**禁止**为了页高另开一个外壳
 - **「更多」面板交互**：横竖屏「更多」面板均只列出**未放入槽位的动作**（`PlayerTopAction.values` 中不在 `topActions` 的）；点面板类动作（字幕/音频/比例/循环/章节/片头片尾）→ 面板内 `push` 就地切换（外壳 header 自动显示返回按钮，可返回「更多」列表，勿再关面板重开）；点动作类（画中画/听视频）→ 先关「更多」面板再执行（防叠加第二面板）；未实现动作提示「即将上线」；「编辑控制栏」为固定入口。**一级菜单 ListView 带 `PageStorageKey('more_panel')` 记忆滚动位置**（进二级再返回不回顶部）
 - **编辑控制栏交互**：横竖屏编辑控制栏的「已启用/可添加」列表项**无副标题**（图标与名字用 `titleAlignment: center` 对齐）；槽位已满（5/5）时点「添加」→ toast「最多允许放 5 个」（不再禁用按钮 + 副标题提示）；「重置控制栏」无副标题。竖屏与横屏一致最多 5 槽位（`PortraitPlayerTopBar.maxPortraitSlots = 5`），不再区分 4/5
 - **排序/字段弹窗统一用** `showSortOptionsSheet(context, viewSettings, hasFolders:, hasVideos:, showViewMode:)`（`lib/widgets/options_sheet.dart`）
@@ -425,9 +445,59 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 播放位置映射到源时间（负秒桶视为空）；偏移变化时重锚定秒桶 + 清屏重新对齐
 （对齐 Kazumi `DanmakuTimeline.resolveSourceSecond` + `danmakuTimeOffset`）。
 
-**阶段2 未做**（后续阶段）：网络弹幕、自动匹配（弹弹play）、屏蔽词、
-B站 gRPC。「弹幕设置」入口均已实现（不再 toast 待上线）。
+**阶段2 未做**（后续阶段）：屏蔽词、B站 gRPC。
 顶栏「弹幕」槽位与「更多→弹幕」进入弹幕二级界面（`implemented=true`）。
+
+**网络弹幕 / 自动匹配 / 弹幕服务器（阶段3）**：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 数据模型 | `models/danmaku_server.dart` / `dandan_models.dart` / `danmaku_auto_match_cache.dart` | 服务器配置 / API DTO（番剧·集·评论·匹配）/ 切集自动匹配缓存 |
+| 纯函数 | `utils/dandan_signature.dart` / `dandan_comment.dart` / `danmaku_episode.dart` | 签名 `base64(sha256(AppId+Timestamp+Path+AppSecret))` / 评论→条目 / 文件名集数提取+匹配 |
+| API | `services/dandan_play_api.dart` | 签名验证模式：`/api/v2/search/episodes`、`/api/v2/comment/{id}?withRelated=true`、`/api/v2/match`（响应按 UTF-8 解码，非 200/业务错误抛 `DandanApiException`） |
+| 网络业务 | `services/danmaku_network_service.dart` | 搜索合并（按 animeId 去重 + 记录来源服务器）、文件匹配合并、下载落盘 `filesDir/danmaku/network/`、文件前 16MB MD5 |
+| 设置 | `services/danmaku_server_settings.dart` / `danmaku_search_history.dart` / `danmaku_auto_match_cache_store.dart` | 服务器增删启停 + 切集自动匹配开关 / 搜索历史（上限淘汰最旧）/ 匹配缓存 |
+| UI | `views/player_danmaku_network_panel.dart` | 网络弹幕三级界面：40dp 胶囊搜索框 + 框下关键词历史胶囊 + 命中后折叠搜索条 + 结果卡自持动画展开集列表 |
+| 设置页 | `pages/settings/danmaku_server_page.dart` | 设置 → 弹幕 → 弹幕服务器（默认不可删 + 自建增删启停 + FAB 添加） |
+
+**关键决策**：
+- **密钥私有**：`AppId/AppSecret` 存 `services/dandan_play_keys.dart`（已 gitignore，禁止提交
+  GitHub；工作.md 第 3 点，优先用 AppSecret2）。签名验证模式比凭证模式更安全（AppSecret
+  不随每次请求外发）。
+- **网络弹幕持久化（工作.md 第 2 点）**：无论本地导入 / 自动匹配 / 手动搜索下载，成功
+  装载过一次即**落盘 + 记忆**——`DanmakuController.loadNetworkDanmaku`（及切集自动匹配）
+  拉取评论后生成 B站 XML 落盘 `filesDir/danmaku/network/<番剧>_<集>_<episodeId>.xml`
+  并写入 `DanmakuManualMemory`（视频路径 → 文件路径）。`loadForVideo` 第 1 步的记忆恢复
+  **与切集自动匹配开关无关**；切集自动匹配开关只门控「新视频（无记忆）自动匹配下一集」。
+- **toast 语义（工作.md 第 3 点）**：「已自动加载弹幕：文件名」只在**同名自动查找**路径
+  触发（且每视频仅第一次，持久化去重）；记忆恢复一律**静默**（记忆里既有手动导入也有
+  网络弹幕，恢复时不能误报「自动加载」）。网络弹幕显式加载经 `onNetworkDanmakuLoaded`
+  弹「已加载弹幕：番剧 · 集」。
+- **切集自动匹配（工作.md 第 7 点）**：`loadForVideo` 本地同名无匹配后，若
+  `DanmakuServerSettings.autoMatchEnabled` 且存在 `DanmakuAutoMatchCache`，按
+  `extractEpisodeNumber(文件名)` → `findMatchingEpisode(缓存集列表)` 定位对应集并下载；
+  缓存由「自动匹配命中 / 网络搜索选中」写入（自动匹配命中后异步 `searchAnime` 取回
+  完整集列表再存）；装载成功同样落盘记忆，该视频之后再进直接走记忆恢复。
+- **自动匹配按钮**：`matchCurrentVideo` 算前 16MB MD5 + 文件名 + 大小 → 合并启用服务器
+  候选；单候选直接加载，多候选 `showAppDialog` 弹「选择匹配结果」列表。
+- **搜索 UI 设计规范（本轮重设计，工作.md 网络弹幕 4 点）**：
+  - **紧凑搜索框**：自绘 40dp 定高胶囊 + `InputDecoration.collapsed` + 28dp 迷你按钮
+    （清空/搜索）。**禁止**回到 `TextField` 默认 `OutlineInputBorder` + `IconButton` suffix
+    ——后者的 48dp 最小点击区会把输入框顶到 60dp+（原「搜索框太高」的根因）。
+  - **关键词历史**：胶囊 `Wrap` 直接贴在搜索框下方（末尾一枚「清除」胶囊），**不独占分组
+    卡片、无分组标签**；搜索框折叠时历史一并隐藏。
+  - **命中即折叠**：搜到结果后搜索区收成 34dp 的「关键词 · N 部」胶囊条（点击重新展开，
+    结果保留），把竖向空间全部让给结果列表；无结果/出错保持展开便于改词。竖屏另经
+    `PlayerPanelPage.bottomHeightFactor: 0.82` 抬高底部外壳（§4.5）。
+  - **展开/收起动画**：每张结果卡自持 `AnimationController`（进 320ms easeOutCubic /
+    退 250ms easeInCubic），`Align(heightFactor)` 高度与内容 `FadeTransition` **错峰**
+    （展开先长高后显形 `Interval(0.30,1)`、收起先淡出后收高 `Interval(0.55,1)`），
+    箭头 `RotationTransition` 共用同一曲线；完全收起时子树不构建、展开时卡头
+    `Scrollable.ensureVisible` 顶到可视区；集数 > 6 时集列表落在 264dp 定高滚动容器
+    （动画期间布局量恒定）。手风琴式，同时只展开一个。
+- **切集自动匹配开关（开发阶段解除限制）**：工作.md 第 7 点要求**暂时解除**「启用弹弹Play
+  服务器时禁止打开切集自动匹配」的写死逻辑（收尾阶段再恢复禁用 + 提示），故当前开关
+  不因默认服务器启用而禁用。
 
 ---
 
@@ -523,11 +593,21 @@ B站 gRPC。「弹幕设置」入口均已实现（不再 toast 待上线）。
   - `test/danmaku_local_file_test.dart` — 同名弹幕查找纯函数（9 种命名规则优先级/排除视频自身/无匹配）+ 选择器文件过滤
   - `test/danmaku_xml_test.dart` — B站 XML 弹幕解析（基础字段/实体反转义/坏条目跳过/排序）
   - `test/danmaku_scheduler_test.dart` — 弹幕调度器（秒桶前向补发/首 tick 锚定/seek 检测/代数失效/微幅回抖）
-  - `test/player_danmaku_panel_test.dart` — 弹幕二级界面（四入口齐全/待上线 toast/设置回调注入/无平台通道不崩溃）
+  - `test/player_danmaku_panel_test.dart` — 弹幕二级界面（四入口齐全/网络·自动匹配回调注入/设置回调注入/无平台通道不崩溃）
   - `test/danmaku_memory_test.dart` — 弹幕手动导入记忆（set/get/remove/持久化恢复/损坏数据防御）
   - `test/danmaku_settings_test.dart` — 弹幕设置服务（默认值/钳制/持久化恢复/越界收窄/恢复默认/通知）
   - `test/danmaku_random_color_test.dart` — 随机渐变色纯函数（HSV 转换/色相环绕/种子可复现/色轮均匀分布/高明度约束）
   - `test/danmaku_dedup_test.dart` — 弹幕去重纯函数（归一化判同/时间窗合并/链式推进/无序输入/原文保留）
+  - `test/danmaku_episode_test.dart` — 弹幕集数提取/匹配纯函数（文件名各规则 + 集列表定位，切集自动匹配）
+  - `test/dandan_signature_test.dart` — 弹弹Play 签名纯函数（官方示例 + 三条真实路径的**合成密钥**已知向量；⚠️ 禁止写入真实 AppId/AppSecret）
+  - `test/dandan_comment_test.dart` — 弹弹Play 评论→弹幕条目/B站 XML（p 字段解析/容错/排序/XML 往返转义）
+  - `test/dandan_models_test.dart` — 弹弹Play API 数据模型 fromJson（字段映射/容错）
+  - `test/danmaku_server_test.dart` — 弹幕服务器模型（默认服务器/toJson/fromJson/copyWith）
+  - `test/danmaku_server_settings_test.dart` — 弹幕服务器设置服务（默认/增删启停/自动匹配开关/持久化/损坏防御）
+  - `test/danmaku_search_history_test.dart` — 搜索历史（去重/上限淘汰最旧/清除/持久化/损坏防御）
+  - `test/danmaku_auto_match_cache_test.dart` — 自动匹配缓存存储（保存/读回/清空/持久化/损坏防御）
+  - `test/danmaku_network_service_test.dart` — 弹幕网络服务（文件名清洗/搜索合并去重来源/下载落盘可回读/落盘失败降级）
+  - `test/player_danmaku_network_panel_test.dart` — 网络弹幕搜索面板（40dp 搜索框定高/框下历史胶囊+清除/命中折叠与重新展开/结果卡收起态不构建子树+手风琴/选集回调+关闭面板）
   - `test/player_danmaku_settings_panel_test.dart` — 弹幕设置面板（两段式布局/开关滑杆实时写设置/恢复默认/读数联动）
   - `test/subtitle_file_picker_panel_test.dart` — 自建选择器面板（记忆文件夹被删向上回退/空目录正常落地/导航失败维持原状/选择回调+文件夹记忆）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
@@ -620,3 +700,10 @@ B站 gRPC。「弹幕设置」入口均已实现（不再 toast 待上线）。
 | 横屏底栏 Expanded 内放固定尺寸按钮，分屏/自由窗口把横屏页压到 ~390dp 时 RenderFlex 溢出 | 弹幕按钮组包 `Flexible` + `FittedBox(scaleDown)`（常规宽度原尺寸，极窄等比缩小）；新增固定按钮一律照此兜底 |
 | 选择器记忆文件夹在系统侧被删除后，打开停在死路径（列表空白、看似卡死，小喵 player 实际踩坑） | `listDirectory` 目录不可用返回 null（区别空目录）；打开时向上回退最近存活祖先；导航失败维持原状（§4.11） |
 | 弹幕显示区域滑到 0 时 canvas 轨道数为 0（无弹幕可画） | 区域滑杆下限 0.1；「弹幕速度」语义 = 横穿屏幕耗时秒（越小越快），静置弹幕取其一半（canvas staticDuration 与 duration 无关联） |
+| 弹弹Play `AppSecret` 硬编码进源码会被上传 GitHub 泄露 | 密钥存 `lib/services/dandan_play_keys.dart` 并加入 .gitignore（工作.md 第 3 点，私有禁止提交） |
+| 真实密钥经**测试文件**绕过 .gitignore 泄露（签名测试写死 AppId/AppSecret 生成已知向量） | 测试一律用合成凭据（`dandan_signature_test.dart` 的 `_testAppId/_testAppSecret`）；提交前 `git diff --cached` 扫一遍 secret 字面量 |
+| Dart `http` 响应体缺 charset 时按 latin1 解码，中文乱码 | 统一 `utf8.decode(response.bodyBytes)`，不依赖 `Response.body`（§4.11 `dandan_play_api.dart`） |
+| 网络弹幕/自动匹配只存内存，重启播放/软件即丢（切集自动匹配与装载逻辑混在一起） | 成功装载即生成 B站 XML 落盘 `filesDir/danmaku/network/` 并写入 `DanmakuManualMemory`；`loadForVideo` 记忆恢复与开关无关（§4.11） |
+| 手动导入/网络弹幕重启后被当「自动加载」重复弹 toast | 「已自动加载」toast 只挂在同名自动查找路径（且每视频仅第一次）；记忆恢复一律静默（§4.11） |
+| 面板内搜索框被撑到 60dp+（`IconButton` suffix 的 48dp 最小点击区 + `OutlineInputBorder` 内边距） | 自绘 40dp 定高胶囊 + `InputDecoration.collapsed` + 28dp 迷你按钮（§4.11 搜索 UI 规范） |
+| `AnimatedAlign(heightFactor)` 展开动画生硬（内容被裁边挤压、长列表反复布局） | 卡片自持 `AnimationController`：高度与内容淡入淡出 `Interval` 错峰 + 收起态不构建子树 + 超 6 集用定高滚动容器（§4.11） |

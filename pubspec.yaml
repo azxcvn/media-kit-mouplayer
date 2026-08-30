@@ -53,6 +53,9 @@ dependencies:
   canvas_danmaku: ^0.3.3
   # 关于页跳转（写邮件 / 打开浏览器）
   url_launcher: ^6.3.0
+  # 弹幕网络服务（弹弹play 开放弹幕网络）：HTTP 请求 + 签名（SHA256/Base64）
+  http: ^1.6.0
+  crypto: ^3.0.7
 
 dev_dependencies:
   flutter_test:

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/settings/about_page.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
+import 'package:moumou/pages/settings/danmaku_server_page.dart';
 import 'package:moumou/pages/settings/media_scan_settings_page.dart';
 import 'package:moumou/pages/settings/player_settings_page.dart';
 import 'package:moumou/theme/theme_controller.dart';
@@ -71,6 +72,22 @@ class SettingsPage extends StatelessWidget {
                     Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const MediaScanSettingsPage(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // ── 弹幕（工作.md 第 6 点：弹幕服务器管理）────────
+              const SettingsGroupTitle(title: '弹幕'),
+              SettingsCard(
+                child: SettingsTile(
+                  icon: Icons.dns_outlined,
+                  title: '弹幕服务器',
+                  subtitle: const Text('网络弹幕服务器与切集自动匹配'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const DanmakuServerPage(),
                       ),
                     );
                   },

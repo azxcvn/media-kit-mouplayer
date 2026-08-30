@@ -7,7 +7,17 @@ class PlayerPanelPage {
   final String title;
   final Widget body;
 
-  const PlayerPanelPage({required this.title, required this.body});
+  /// 竖屏底部外壳（[PlayerBottomPanel]）为本页请求的最大高度占屏比。
+  ///
+  /// null = 用外壳默认值（0.42）。内容需要大量竖向空间的页面（如网络弹幕
+  /// 搜索结果列表）可显式抬高，只影响该页，返回上一页自动恢复。
+  final double? bottomHeightFactor;
+
+  const PlayerPanelPage({
+    required this.title,
+    required this.body,
+    this.bottomHeightFactor,
+  });
 }
 
 /// 面板导航器：面板内容通过 [PlayerPanelNavigator.of] 获取，push/pop 二级页面。

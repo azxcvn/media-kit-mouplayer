@@ -1,4 +1,5 @@
-/// B站 XML 弹幕解析纯函数（顶层函数，供 `compute` 放后台 isolate 执行）。
+/// B站 XML 弹幕解析/生成纯函数（顶层函数，解析供 `compute` 放后台 isolate
+/// 执行；生成用于网络弹幕落盘持久化）。
 ///
 /// 解析格式：`<d p="time,mode,fontsize,color,ctime,pool,midHash,id">文本</d>`，
 /// 对齐参考项目的 SAX 解析语义：单条损坏跳过、不打断整体；文本做 XML
@@ -70,4 +71,15 @@ String unescapeXml(String input) {
       }
     },
   );
+}
+
+/// XML 文本转义（生成弹幕 XML 落盘用，与 [unescapeXml] 对称；
+/// 顺序必须先转义 `&`，防止二次转义）。
+String escapeXmlText(String input) {
+  return input
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&apos;');
 }
