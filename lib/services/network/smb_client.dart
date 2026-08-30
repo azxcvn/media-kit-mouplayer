@@ -6,7 +6,6 @@ library;
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:smb_connect/smb_connect.dart';
 import 'package:moumou/models/network_connection.dart';

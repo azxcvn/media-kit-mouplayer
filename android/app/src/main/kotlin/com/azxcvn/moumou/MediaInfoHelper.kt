@@ -34,7 +34,15 @@ object MediaInfoHelper {
         }.getOrNull() ?: return emptyMap()
 
         val fd = pfd.detachFd()
-        val mi = MediaInfo()
+        val mi = try {
+            MediaInfo()
+        } catch (e: Throwable) {
+            // so 库缺失（如 x86 模拟器无 libzen.so）时为 UnsatisfiedLinkError，
+            // 不是 Exception 子类——必须捕 Throwable 才能兜住
+            Log.w(TAG, "MediaInfo native lib unavailable: ${e.message}")
+            pfd.close()
+            return emptyMap()
+        }
         return try {
             mi.Open(fd, File(path).name)
 
@@ -74,7 +82,7 @@ object MediaInfoHelper {
                 "hasSubtitles" to hasSubtitles,
                 "subtitleCodec" to subtitleCodec,
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "extractBasicMetadata failed: ${e.message}")
             emptyMap()
         } finally {
@@ -92,7 +100,13 @@ object MediaInfoHelper {
         }.getOrNull() ?: return null
 
         val fd = pfd.detachFd()
-        val mi = MediaInfo()
+        val mi = try {
+            MediaInfo()
+        } catch (e: Throwable) {
+            Log.w(TAG, "MediaInfo native lib unavailable: ${e.message}")
+            pfd.close()
+            return null
+        }
         return try {
             mi.Open(fd, File(path).name)
 
@@ -107,7 +121,7 @@ object MediaInfoHelper {
                 "audioStreams" to audioStreams,
                 "textStreams" to textStreams,
             )
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.w(TAG, "getMediaInfo failed: ${e.message}")
             null
         } finally {

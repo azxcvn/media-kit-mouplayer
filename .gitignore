@@ -60,3 +60,6 @@ app.*.map.json
 
 # 弹弹Play 开放弹幕网络密钥（私有，禁止上传 GitHub，工作.md 第 3 点）
 /lib/services/dandan_play_keys.dart
+
+# WorkBuddy 工作目录（AI 助手本地数据：记忆/身份/技能等，不提交）
+/.workbuddy/

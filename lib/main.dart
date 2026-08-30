@@ -145,8 +145,10 @@ class _MoumouAppState extends State<MoumouApp> {
                 page: HomePage(viewSettings: _viewSettings),
               ),
               CapsuleNavItem(
-                icon: Icons.settings_outlined,
-                label: '设置',
+                // 「我的」页：账号 + 设置（对齐手机系统设置的信息架构），
+                // 图标用联系人头像样式占位（登录后可换成用户头像）
+                icon: Icons.account_circle_outlined,
+                label: '我的',
                 page: SettingsPage(controller: _themeController),
               ),
             ],

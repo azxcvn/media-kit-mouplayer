@@ -61,14 +61,15 @@ class _BottomPanelNavigatorScope extends InheritedWidget {
 /// - 必须用 Material 外壳（面板内容含 ListTile/SwitchListTile/TextField，
 ///   要求 Material 祖先，防 "No Material widget found" 崩溃，同 PlayerPanel）；
 /// - 面板内部维护页面栈，支持二级设置就地切换（[PlayerBottomPanelNavigator]）；
-/// - 高度自适应内容，最高不超过屏幕 [maxHeightFactor]；
+/// - 高度固定为屏幕 [heightFactor]（一级/二级/三级页面高度一致，
+///   内容超出可滚动——比例/循环等短内容面板不再比更多面板矮）；
 /// - 显示/隐藏由 [showPlayerBottomPanel] 统一处理（底部上滑 + 淡入）。
 class PlayerBottomPanel extends StatefulWidget {
   final List<PlayerPanelPage> pages;
   final VoidCallback onClose;
 
-  /// 面板最大高度占屏幕比例（竖屏下避免盖满画面）
-  final double maxHeightFactor;
+  /// 面板高度占屏幕比例（竖屏下避免盖满画面）
+  final double heightFactor;
 
   /// 是否启用进出场/页内切换动画（工作.md 第 7 点）
   final bool animate;
@@ -77,7 +78,7 @@ class PlayerBottomPanel extends StatefulWidget {
     super.key,
     required this.pages,
     required this.onClose,
-    this.maxHeightFactor = 0.42,
+    this.heightFactor = 0.42,
     this.animate = true,
   });
 
@@ -104,10 +105,7 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
   @override
   Widget build(BuildContext context) {
     final page = _pages.last;
-    // 当前页可覆写最大高度占比（如网络弹幕搜索需要更大的结果区），
-    // 未指定则用外壳默认值；页内切换时高度差由 AnimatedContainer 平滑过渡。
-    final factor = page.bottomHeightFactor ?? widget.maxHeightFactor;
-    final maxHeight = MediaQuery.sizeOf(context).height * factor;
+    final panelHeight = MediaQuery.sizeOf(context).height * widget.heightFactor;
     return Material(
       color: const Color(0xFF1C1C1E),
       borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -117,7 +115,7 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
             ? const Duration(milliseconds: 240)
             : Duration.zero,
         curve: Curves.easeOutCubic,
-        constraints: BoxConstraints(maxHeight: maxHeight),
+        height: panelHeight,
         // SafeArea 放在 Material 内部：面板背景铺满（含手势条区域），
         // 内容避让底部系统导航键/手势条（竖屏下系统栏可见时）
         child: SafeArea(
@@ -236,7 +234,7 @@ class _PlayerBottomPanelState extends State<PlayerBottomPanel> {
 Future<void> showPlayerBottomPanel(
   BuildContext context, {
   required List<PlayerPanelPage> pages,
-  double maxHeightFactor = 0.42,
+  double heightFactor = 0.42,
   bool? animate,
 }) {
   final withAnimation = animate ?? PlayerControlsSettings.instance.playerAnimations;
@@ -254,7 +252,7 @@ Future<void> showPlayerBottomPanel(
       alignment: Alignment.bottomCenter,
       child: PlayerBottomPanel(
         pages: pages,
-        maxHeightFactor: maxHeightFactor,
+        heightFactor: heightFactor,
         animate: withAnimation,
         onClose: () => Navigator.of(context).pop(),
       ),

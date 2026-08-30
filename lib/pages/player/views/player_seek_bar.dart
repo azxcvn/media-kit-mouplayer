@@ -29,6 +29,16 @@ class PlayerSeekBar extends StatefulWidget {
   /// 可跳过片段（OP/ED/预告等）：非空时在轨道上方绘制类型色时间段
   final List<SkipSegment> skipSegments;
 
+  /// 组件整体高度（含可点击热区），轨道垂直居中。
+  ///
+  /// 默认 [barHeight]=40（竖屏用）；横屏底栏传更小的值让轨道贴近
+  /// 下方控制行（高度差即轨道下移量，进度条上方元素随之外移跟随）。
+  final double height;
+
+  /// 轨道起点（相对组件左缘）。默认 [kPlayerLeftInset]（竖屏用）；
+  /// 横屏底栏传入更小的值：轨道左端与「下一集」按钮图标左缘对齐。
+  final double trackLeftInset;
+
   const PlayerSeekBar({
     super.key,
     required this.valueMs,
@@ -37,9 +47,11 @@ class PlayerSeekBar extends StatefulWidget {
     required this.onChangeEnd,
     this.chapters = const [],
     this.skipSegments = const [],
+    this.height = barHeight,
+    this.trackLeftInset = kPlayerLeftInset,
   });
 
-  /// 进度条整体高度（含可点击热区）
+  /// 进度条默认高度（含可点击热区）
   static const double barHeight = 40;
 
   /// 右缘间距（与底栏按钮行右缘对齐）
@@ -64,11 +76,11 @@ class _PlayerSeekBarState extends State<PlayerSeekBar> {
     final valueMs = widget.valueMs;
     final maxMs = widget.maxMs;
     return SizedBox(
-      height: PlayerSeekBar.barHeight,
+      height: widget.height,
       width: double.infinity,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final trackLeft = kPlayerLeftInset;
+          final trackLeft = widget.trackLeftInset;
           final trackWidth = (constraints.maxWidth -
                   trackLeft -
                   PlayerSeekBar.rightInset)
@@ -76,7 +88,7 @@ class _PlayerSeekBarState extends State<PlayerSeekBar> {
           final fraction =
               maxMs > 0 ? (valueMs / maxMs).clamp(0.0, 1.0) : 0.0;
           final thumbDx = trackLeft + trackWidth * fraction;
-          final centerY = PlayerSeekBar.barHeight / 2;
+          final centerY = widget.height / 2;
 
           void handleAt(double dx) {
             if (trackWidth <= 0 || maxMs <= 0) return;

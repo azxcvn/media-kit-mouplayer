@@ -9,7 +9,6 @@ import 'package:moumou/models/playlist_sort.dart';
 import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
-import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/player_portrait_page.dart';
 import 'package:moumou/pages/player/views/audio_panel.dart';
 import 'package:moumou/pages/player/views/equalizer_panel.dart';
@@ -2644,7 +2643,8 @@ class _PlayerPageState extends State<PlayerPage>
                     children: [
                       // 跳过胶囊（工作.md 第 4 点）：进入 OP/ED 等片段自动弹出
                       // （5 秒倒计时自动消失）；控制层可见且仍在片段内时常驻；
-                      // 回拖进片段可重复触发。位置与章节名称行同左缘对齐。
+                      // 回拖进片段可重复触发。left 28 与进度条轨道起点/
+                      // 章节名称行同左缘对齐（横屏）。
                       ListenableBuilder(
                         listenable: _chapterTracker,
                         builder: (context, _) {
@@ -2662,7 +2662,7 @@ class _PlayerPageState extends State<PlayerPage>
                                   ? const SizedBox.shrink()
                                   : Padding(
                                       padding: const EdgeInsets.only(
-                                        left: kPlayerLeftInset,
+                                        left: 28,
                                         bottom: 8,
                                       ),
                                       child: ChapterSkipChip(
@@ -2935,12 +2935,12 @@ class _PlayerPageState extends State<PlayerPage>
                   ),
                 ),
                 // 进度条拖动缩略图预览（进度条上方跟随拖动位置；
-                // 松手淡出后再卸载）
+                // 松手淡出后再卸载）；bottom 96 = 轨道下移 8px 后同步
                 if (_thumbPreview != null)
                   Positioned(
                     left: 0,
                     right: 0,
-                    bottom: 104,
+                    bottom: 96,
                     child: PlayerThumbnailPreview(
                       frame: _thumbPreview!.frame,
                       time: _thumbPreview!.time,

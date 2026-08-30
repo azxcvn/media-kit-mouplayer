@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 /// 右下角 FAB 的底部额外抬升量（相对 Scaffold 默认 endFloat 的 16dp 底距）。
 ///
 /// 悬浮胶囊导航栏（CapsuleNavBar）高 64 + 底部间距 8，顶缘距内容底 72；
-/// 再抬 64 使 FAB 底缘距底 80，即「略高于」导航栏顶缘约 8dp。主页速拨按钮
-/// 与网络存储页新增按钮共用此值，保证两处加号高度一致。
+/// 再抬 64 使 FAB 底缘距底 80，即「略高于」导航栏顶缘约 8dp。
+/// 仅主页速拨按钮使用（网络存储页无底部导航栏，用标准 endFloat 位置）。
 const double kFabLiftAboveNav = 64;
 
 /// 悬浮速拨菜单项

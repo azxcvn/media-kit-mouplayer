@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/player_action.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 import 'package:moumou/services/player_controls_settings.dart';
 
 /// 顶栏：返回 + 标题 + 自定义槽位（最多 5 个，空槽隐藏）+ 固定「更多」按钮。
@@ -99,7 +100,8 @@ class PlayerTopBar extends StatelessWidget {
 }
 
 /// 顶栏图标按钮：[showBackground] 为 true 时套半透明圆角背景
-/// （样式与底栏倍速图标胶囊一致），false 时纯图标。
+/// （样式与底栏倍速图标胶囊一致），false 时纯图标；
+/// 带按压缩放反馈（[PlayerPressable]，黑底上水波纹过淡的替代方案）。
 class _TopIconButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -115,27 +117,34 @@ class _TopIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 无背景：默认 IconButton（48dp 触摸目标，纯图标）
+    // 无背景：48dp 触摸目标（与原 IconButton 一致），纯图标
     if (!showBackground) {
-      return IconButton(
-        icon: Icon(icon, color: Colors.white, size: 22),
-        tooltip: tooltip,
-        onPressed: onPressed,
+      return PlayerPressable(
+        onTap: onPressed,
+        child: Tooltip(
+          message: tooltip,
+          child: Padding(
+            padding: const EdgeInsets.all(13),
+            child: Icon(icon, color: Colors.white, size: 22),
+          ),
+        ),
       );
     }
     // 有背景：小圆形背景（28×28）+ 小图标，紧凑不占空间
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        shape: BoxShape.circle,
-      ),
-      child: IconButton(
-        constraints: const BoxConstraints.tightFor(width: 28, height: 28),
-        padding: EdgeInsets.zero,
-        icon: Icon(icon, color: Colors.white, size: 16),
-        tooltip: tooltip,
-        onPressed: onPressed,
+    return PlayerPressable(
+      onTap: onPressed,
+      child: Tooltip(
+        message: tooltip,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 1, vertical: 1),
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.15),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(icon, color: Colors.white, size: 16),
+        ),
       ),
     );
   }

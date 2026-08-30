@@ -3,6 +3,7 @@ import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_danmaku_buttons.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
 /// 竖屏播放页底栏（v3 布局）：
@@ -160,18 +161,22 @@ class PortraitPlayerBottomBar extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 0, 20, 10),
               child: Row(
                 children: [
-                  // 下一集：紧凑尺寸（默认 48dp 触摸目标在竖屏窄屏会溢出）
-                  IconButton(
-                    icon: const Icon(Icons.skip_next_rounded, size: 26),
-                    style: IconButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      disabledForegroundColor: Colors.white38,
-                      padding: const EdgeInsets.all(2),
-                      minimumSize: const Size(38, 40),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  // 下一集：紧凑尺寸（默认 48dp 触摸目标在竖屏窄屏会溢出）；
+                  // 视觉尺寸与原 IconButton（minimumSize 38×40）一致
+                  PlayerPressable(
+                    onTap: hasNext ? onNext : null,
+                    child: Tooltip(
+                      message: '下一集',
+                      child: SizedBox(
+                        width: 38,
+                        height: 40,
+                        child: Icon(
+                          Icons.skip_next_rounded,
+                          size: 26,
+                          color: hasNext ? Colors.white : Colors.white38,
+                        ),
+                      ),
                     ),
-                    tooltip: '下一集',
-                    onPressed: hasNext ? onNext : null,
                   ),
                   const SizedBox(width: 2),
                   // 时间文本：下一集右侧（v3 用户反馈改回此款式），
@@ -237,7 +242,8 @@ class PortraitPlayerBottomBar extends StatelessWidget {
   }
 }
 
-/// 底栏右下角的固定功能胶囊（超分辨率，样式对齐横屏底栏）
+/// 底栏右下角的固定功能胶囊（超分辨率，样式对齐横屏底栏），
+/// 带按压缩放反馈（[PlayerPressable]）。
 class _PortraitBottomPill extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
@@ -246,7 +252,7 @@ class _PortraitBottomPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return PlayerPressable(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -308,10 +314,6 @@ class _PortraitBottomIconButton extends StatelessWidget {
     final child = tooltip == null
         ? inner
         : Tooltip(message: tooltip!, child: inner);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: child,
-    );
+    return PlayerPressable(onTap: onTap, child: child);
   }
 }

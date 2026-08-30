@@ -3,6 +3,7 @@ import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
 import 'package:moumou/pages/player/views/player_chapter_bar.dart';
 import 'package:moumou/pages/player/views/player_danmaku_buttons.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 import 'package:moumou/pages/player/views/player_seek_bar.dart';
 
 /// 底栏：全宽进度条 + 下一集 + 时间 + 弹幕开关/设置 + 右下角按钮组
@@ -114,12 +115,20 @@ class PlayerBottomBar extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 章节名称行：进度条上方（工作.md 章节功能第 2 点），
-            // 点击呼出章节列表；无章节时不占位
+            // 点击呼出章节列表；无章节时不占位。
+            // bottom 10：进度条下移（height 24）后同步下移 8px，
+            // 保持与轨道的间距不变（竖屏底栏用组件默认 padding）；
+            // left 28：与进度条轨道起点（trackLeftInset）对齐
             if (currentChapterName != null && onChapterTap != null)
               PlayerChapterNameRow(
                 name: currentChapterName!,
                 onTap: onChapterTap!,
+                padding: const EdgeInsets.fromLTRB(28, 8, 20, 10),
               ),
+            // 进度条贴近下方控制行（用户反馈：间距过大）：
+            // - height 24（默认 40）：轨道下移 8px，离控制行约 10px；
+            // - trackLeftInset 28：轨道左端与「下一集」按钮图标左缘对齐
+            //   （原 20 会比按钮多伸出 8px）
             PlayerSeekBar(
               valueMs: valueMs,
               maxMs: maxMs,
@@ -127,20 +136,28 @@ class PlayerBottomBar extends StatelessWidget {
               onChangeEnd: onSeekEnd,
               chapters: chapters,
               skipSegments: skipSegments,
+              height: 24,
+              trackLeftInset: 28,
             ),
             Padding(
               // 左缘与进度条开端对齐（kPlayerLeftInset），右缘留 20
               padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 0, 20, 8),
               child: Row(
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.skip_next_rounded, size: 32),
-                    style: IconButton.styleFrom(
-                      foregroundColor: Colors.white,
-                      disabledForegroundColor: Colors.white38,
+                  // 下一集（无兄弟视频时置灰）；48dp 触摸目标与原 IconButton 一致
+                  PlayerPressable(
+                    onTap: hasNext ? onNext : null,
+                    child: Tooltip(
+                      message: '下一集',
+                      child: Padding(
+                        padding: const EdgeInsets.all(8),
+                        child: Icon(
+                          Icons.skip_next_rounded,
+                          size: 32,
+                          color: hasNext ? Colors.white : Colors.white38,
+                        ),
+                      ),
                     ),
-                    tooltip: '下一集',
-                    onPressed: hasNext ? onNext : null,
                   ),
                   const SizedBox(width: 4),
                   // 时间文本：下一集右侧（v3 用户反馈改回此款式），
@@ -236,7 +253,8 @@ class PlayerBottomBar extends StatelessWidget {
   }
 }
 
-/// 底栏右下角的固定功能胶囊（倍速 / 超分辨率共用样式）
+/// 底栏右下角的固定功能胶囊（倍速 / 超分辨率共用样式），
+/// 带按压缩放反馈（[PlayerPressable]）。
 class _BottomPill extends StatelessWidget {
   final String label;
   final VoidCallback onTap;
@@ -245,7 +263,7 @@ class _BottomPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return PlayerPressable(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -303,10 +321,6 @@ class _BottomIconButton extends StatelessWidget {
       );
     }
     final child = tooltip == null ? inner : Tooltip(message: tooltip!, child: inner);
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: child,
-    );
+    return PlayerPressable(onTap: onTap, child: child);
   }
 }

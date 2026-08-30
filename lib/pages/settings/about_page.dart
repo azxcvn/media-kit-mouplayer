@@ -9,7 +9,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// 关于页（设置 → 其他 → 关于）：
-/// - 顶部卡片式软件信息（三部分等宽：左 icon、中 名称+版本 水平居中、右 邮箱/GitHub 纯图标按钮）；
+/// - 顶部卡片式软件信息（左图标 + 中两行名称/版本 + 右纵排联系图标）；
 /// - 「工具」组：缓存管理、错误日志（崩溃日志查看/导出/复制）；
 /// - 「信息」组：许可证书（自定义 LicensePage：紧凑卡片头部 + 自动收集全部开源许可）。
 class AboutPage extends StatefulWidget {
@@ -87,7 +87,9 @@ class _AboutPageState extends State<AboutPage> {
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
         children: [
           const SizedBox(height: 8),
-          // ── 顶部卡片：软件信息（横向）──────────────────
+          // ── 顶部卡片：软件信息────────────────────────────
+          // 左侧大图标；中间两行（大字名称 + 版本号，宽度视觉接近）；
+          // 右缘 GitHub/邮箱 图标纵排。单卡片单行高，紧凑无空洞
           Card(
             elevation: 0,
             color: scheme.surfaceContainerLow,
@@ -95,43 +97,44 @@ class _AboutPageState extends State<AboutPage> {
               borderRadius: BorderRadius.circular(20),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 18),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               child: Row(
                 children: [
-                  // 左：icon 居中
-                  Expanded(
-                    child: Center(
-                      child: Container(
-                        width: 76,
-                        height: 76,
-                        decoration: BoxDecoration(
-                          color: scheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(22),
-                        ),
-                        child: Icon(
-                          Icons.play_circle_fill_rounded,
-                          size: 48,
-                          color: scheme.primary,
-                        ),
-                      ),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    child: Icon(
+                      Icons.play_circle_fill_rounded,
+                      size: 42,
+                      color: scheme.primary,
                     ),
                   ),
-                  // 中：名称 + 版本（水平居中，上名字下版本）
+                  const SizedBox(width: 14),
+                  // 名称 + 版本：两行左对齐；名称 24sp，视觉宽度与
+                  // 下行「版本 v1.0.0」接近
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
                         const Text(
                           '小牛Player',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 20,
+                            fontSize: 24,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 4),
                         Text(
-                          _version == null ? '版本信息读取中…' : '版本 v$_version',
+                          _version == null ? '版本读取中' : '版本 v$_version',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 13,
                             color: scheme.onSurfaceVariant,
@@ -140,40 +143,39 @@ class _AboutPageState extends State<AboutPage> {
                       ],
                     ),
                   ),
-                  // 右：邮箱（上）/ GitHub（下），纵向居中排列
-                  Expanded(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _HeaderIconButton(
-                          tooltip: '发送使用反馈',
-                          onTap: _openEmail,
-                          child: SvgPicture.asset(
-                            'assets/icons/email.svg',
-                            width: 22,
-                            height: 22,
-                            colorFilter: ColorFilter.mode(
-                              scheme.onSurfaceVariant,
-                              BlendMode.srcIn,
-                            ),
+                  const SizedBox(width: 8),
+                  // 右侧联系图标纵排：GitHub 在上，邮箱在下
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _HeaderIconButton(
+                        tooltip: 'GitHub',
+                        onTap: _openGitHub,
+                        child: SvgPicture.asset(
+                          'assets/icons/github.svg',
+                          width: 20,
+                          height: 20,
+                          colorFilter: ColorFilter.mode(
+                            scheme.onSurfaceVariant,
+                            BlendMode.srcIn,
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        _HeaderIconButton(
-                          tooltip: 'GitHub',
-                          onTap: _openGitHub,
-                          child: SvgPicture.asset(
-                            'assets/icons/github.svg',
-                            width: 22,
-                            height: 22,
-                            colorFilter: ColorFilter.mode(
-                              scheme.onSurfaceVariant,
-                              BlendMode.srcIn,
-                            ),
+                      ),
+                      const SizedBox(height: 2),
+                      _HeaderIconButton(
+                        tooltip: '发送使用反馈',
+                        onTap: _openEmail,
+                        child: SvgPicture.asset(
+                          'assets/icons/email.svg',
+                          width: 20,
+                          height: 20,
+                          colorFilter: ColorFilter.mode(
+                            scheme.onSurfaceVariant,
+                            BlendMode.srcIn,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ],
               ),

@@ -18,6 +18,10 @@ import 'package:moumou/widgets/options_sheet.dart';
 import 'package:moumou/widgets/speed_dial_fab.dart';
 import 'package:permission_handler/permission_handler.dart';
 
+/// 首页速拨 FAB 相对 Scaffold 默认 endFloat 位置的额外右移避让量：
+/// 让按钮离屏幕右缘更远一点（仅首页生效，不影响其他页面）。
+const double kHomeFabInsetRight = 12;
+
 /// 首页：展示视频库（列表视图 / 树状视图，两种视图共用同一棵目录树）。
 ///
 /// 右上角从左到右：**搜索**（文件夹 + 视频文件名过滤）→ 排序与字段。
@@ -226,9 +230,13 @@ class _HomePageState extends State<HomePage>
         ],
       ),
       body: _buildBody(),
-      // 右下角加号略高于悬浮胶囊导航栏（与网络存储页保持同一高度）
+      // 右下角加号略高于悬浮胶囊导航栏（与网络存储页保持同一高度），
+      // 水平方向额外左移 12dp，离屏幕右缘更远（仅首页调整）
       floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: kFabLiftAboveNav),
+        padding: const EdgeInsets.only(
+          bottom: kFabLiftAboveNav,
+          right: kHomeFabInsetRight,
+        ),
         child: _buildSpeedDial(),
       ),
     );

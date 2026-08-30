@@ -55,6 +55,7 @@ import 'package:moumou/utils/formatters.dart';
 import 'package:moumou/utils/intro_outro_skip.dart';
 import 'package:moumou/utils/playback_completion.dart';
 import 'package:moumou/utils/playback_restore.dart';
+import 'package:moumou/utils/pip_aspect.dart';
 import 'package:moumou/utils/player_gestures.dart';
 import 'package:moumou/widgets/app_frame.dart';
 import 'package:moumou/widgets/player_bottom_panel.dart';
@@ -1150,9 +1151,8 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
             onNetworkTap: () => navigator.push(
               PlayerPanelPage(
                 title: '网络弹幕',
-                // 搜索结果需要竖向空间：该页把底部外壳抬到 0.82 屏高
-                // （只影响本页，返回「弹幕」列表自动收回，§4.5）
-                bottomHeightFactor: 0.82,
+                // 与一级/二级页面保持同一固定高度（外壳统一高度，
+                // 搜索结果区在面板内滚动），不再单独抬高
                 body: PlayerDanmakuNetworkPanel(
                   onEpisodeSelected: _onNetworkEpisodeSelected,
                 ),
@@ -1218,7 +1218,7 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
       case PlayerTopAction.listen:
         _openAudioPlayer();
       case PlayerTopAction.pip:
-        break;
+        _enterPip();
     }
   }
 
@@ -1245,7 +1245,36 @@ class _PlayerPortraitPageState extends State<PlayerPortraitPage>
         Navigator.of(panelContext).pop();
         _openAudioPlayer();
       case PlayerTopAction.pip:
-        break;
+        // 先关闭「更多」面板再进入画中画（与横屏一致，§4.5）
+        Navigator.of(panelContext).pop();
+        _enterPip();
+    }
+  }
+
+  /// 进入画中画小窗（与横屏 [PlayerPage._enterPip] 同款）：
+  /// 先查设备支持（API 26+ 且系统具备 PiP 特性），再隐藏控制层，
+  /// 以当前视频宽高比进入小窗；media_kit 在 PiP 期间保持播放。
+  Future<void> _enterPip() async {
+    final supported = await DeviceServices.isPipSupported();
+    if (!supported) {
+      _toast('当前设备不支持画中画');
+      return;
+    }
+    _hideTimer?.cancel();
+    if (mounted && _controlsVisible) {
+      setState(() => _controlsVisible = false);
+    }
+    final ratio = pipAspectRatio(
+      _player.state.width ?? 0,
+      _player.state.height ?? 0,
+    );
+    final ok = await DeviceServices.enterPip(
+      aspectWidth: ratio.width,
+      aspectHeight: ratio.height,
+    );
+    if (!ok && mounted) {
+      _toast('进入画中画失败');
+      _resetHideTimer();
     }
   }
 

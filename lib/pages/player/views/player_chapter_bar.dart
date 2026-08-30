@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/chapter_info.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 
 /// 当前章节名称行：位于进度条上方，点击呼出章节列表。
 ///
@@ -10,16 +11,24 @@ class PlayerChapterNameRow extends StatelessWidget {
   final String name;
   final VoidCallback onTap;
 
-  const PlayerChapterNameRow({super.key, required this.name, required this.onTap});
+  /// 外边距（默认竖屏底栏样式）；横屏底栏传更大的 bottom 让章节名行
+  /// 跟随进度条下移（保持与轨道的间距不变）。
+  final EdgeInsetsGeometry padding;
+
+  const PlayerChapterNameRow({
+    super.key,
+    required this.name,
+    required this.onTap,
+    this.padding = const EdgeInsets.fromLTRB(kPlayerLeftInset, 8, 20, 2),
+  });
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
+    return PlayerPressable(
       onTap: onTap,
       child: Padding(
         // 左缘与进度条开端对齐，右缘与底栏一致
-        padding: const EdgeInsets.fromLTRB(kPlayerLeftInset, 8, 20, 2),
+        padding: padding,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -57,9 +66,8 @@ class ChapterSkipChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return PlayerPressable(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
         decoration: BoxDecoration(

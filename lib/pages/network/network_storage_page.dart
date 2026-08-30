@@ -3,7 +3,6 @@ import 'package:moumou/models/network_connection.dart';
 import 'package:moumou/pages/network/account_edit_page.dart';
 import 'package:moumou/pages/network/network_browser_page.dart';
 import 'package:moumou/services/network/network_connection_settings.dart';
-import 'package:moumou/widgets/speed_dial_fab.dart';
 
 /// 网络存储账户列表：新增 / 编辑 / 删除 WebDAV、SMB、FTP 账户。
 ///
@@ -54,15 +53,13 @@ class NetworkStoragePage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('网络存储')),
-      // 与主页速拨按钮一致：略高于悬浮胶囊导航栏的高度
-      floatingActionButton: Padding(
-        padding: const EdgeInsets.only(bottom: kFabLiftAboveNav),
-        child: FloatingActionButton(
-          heroTag: 'network_add',
-          tooltip: '添加账户',
-          onPressed: () => _openEdit(context),
-          child: const Icon(Icons.add),
-        ),
+      // 标准 endFloat 右下角位置（与弹幕服务器页的加号保持一致）；
+      // 本页无悬浮胶囊导航栏，不做高度抬升
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'network_add',
+        tooltip: '添加账户',
+        onPressed: () => _openEdit(context),
+        child: const Icon(Icons.add),
       ),
       body: ListenableBuilder(
         listenable: NetworkConnectionSettings.instance,

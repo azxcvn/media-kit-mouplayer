@@ -13,6 +13,7 @@ library;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 
 /// 弹幕开启图标（带对勾；对勾色 `#00AEEC` 运行时替换为主题色）。
 const String kDanmakuOnSvg = '''
@@ -115,7 +116,8 @@ class PlayerDanmakuButtons extends StatelessWidget {
   }
 }
 
-/// 弹幕图标按钮：纯图标无背景（与底栏列表按钮同款样式），带 Tooltip。
+/// 弹幕图标按钮：纯图标无背景（与底栏列表按钮同款样式），带 Tooltip
+/// 与按压缩放反馈（[PlayerPressable]）。
 class _DanmakuIconButton extends StatelessWidget {
   final String tooltip;
   final EdgeInsetsGeometry padding;
@@ -131,9 +133,8 @@ class _DanmakuIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return PlayerPressable(
       onTap: onTap,
-      behavior: HitTestBehavior.opaque,
       child: Tooltip(
         message: tooltip,
         child: Padding(padding: padding, child: icon),

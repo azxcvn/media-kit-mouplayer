@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 
 /// 播放页右侧竖排操作按钮：截图 + 锁定（对齐 Kazumi 的左侧控制栏布局）。
 ///
@@ -40,7 +41,7 @@ class PlayerRightActions extends StatelessWidget {
   }
 }
 
-/// 固定灰黑圆角背景的圆形按钮（截图/锁定专用）
+/// 固定灰黑圆角背景的圆形按钮（截图/锁定专用），带按压缩放反馈
 class _FixedBackgroundButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -54,17 +55,19 @@ class _FixedBackgroundButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: IconButton(
-        constraints: const BoxConstraints.tightFor(width: 40, height: 40),
-        padding: EdgeInsets.zero,
-        icon: Icon(icon, color: Colors.white, size: 22),
-        tooltip: tooltip,
-        onPressed: onPressed,
+    return PlayerPressable(
+      onTap: onPressed,
+      child: Tooltip(
+        message: tooltip,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
       ),
     );
   }

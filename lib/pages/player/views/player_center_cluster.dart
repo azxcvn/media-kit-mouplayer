@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/player/views/player_play_pause_button.dart';
+import 'package:moumou/pages/player/views/player_pressable.dart';
 
 /// 中央控制簇：快退 - 播放/暂停 - 快进（对称三键）。
 /// 快进/快退使用双三角图标（fast_rewind / fast_forward），贴住大播放键，
-/// 拇指横屏自然覆盖。
+/// 拇指横屏自然覆盖；三键均带按压缩放反馈。
 class PlayerCenterCluster extends StatelessWidget {
   final int seekSeconds;
   final bool playing;
@@ -25,26 +26,37 @@ class PlayerCenterCluster extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        IconButton(
-          icon: const Icon(
-            Icons.fast_rewind_rounded,
-            color: Colors.white,
-            size: 40,
+        // 48dp 触摸目标与原 IconButton 一致
+        PlayerPressable(
+          onTap: onSeekBackward,
+          child: Tooltip(
+            message: '快退 $seekSeconds 秒',
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: const Icon(
+                Icons.fast_rewind_rounded,
+                color: Colors.white,
+                size: 40,
+              ),
+            ),
           ),
-          tooltip: '快退 $seekSeconds 秒',
-          onPressed: onSeekBackward,
         ),
         const SizedBox(width: 24),
         _BigPlayPauseButton(playing: playing, onPressed: onTogglePlay),
         const SizedBox(width: 24),
-        IconButton(
-          icon: const Icon(
-            Icons.fast_forward_rounded,
-            color: Colors.white,
-            size: 40,
+        PlayerPressable(
+          onTap: onSeekForward,
+          child: Tooltip(
+            message: '快进 $seekSeconds 秒',
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: const Icon(
+                Icons.fast_forward_rounded,
+                color: Colors.white,
+                size: 40,
+              ),
+            ),
           ),
-          tooltip: '快进 $seekSeconds 秒',
-          onPressed: onSeekForward,
         ),
       ],
     );
