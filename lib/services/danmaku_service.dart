@@ -516,6 +516,9 @@ class DanmakuController extends ChangeNotifier {
   /// 切集自动匹配（loadForVideo 本地无弹幕后调用）：开启开关 + 存在缓存时，
   /// 从文件名提取集数 → 在缓存集列表中定位对应集 → 拉取并装载弹幕。
   /// 装载成功同样落盘记忆（该视频之后再进直接走记忆恢复，不再依赖开关）。
+  ///
+  /// `autoMatchEnabled` 已内含「默认弹弹Play 服务器启用时不生效」的互斥判定
+  /// （工作.md 第 7 点），此处无需再判一次——互斥只在服务层裁决一处。
   Future<void> _tryAutoMatch(int session) async {
     if (!DanmakuServerSettings.instance.autoMatchEnabled) return;
     final cache = await _autoMatchCache.load();

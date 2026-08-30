@@ -5,6 +5,12 @@
 ///
 /// 启用的服务器同时用于网络弹幕搜索与自动匹配，搜索结果合并展示
 /// （见 `services/danmaku_network_service.dart`）。
+///
+/// **互斥约束（工作.md 第 7 点，收尾阶段恢复）**：默认弹弹Play 服务器启用时
+/// 不允许开启「切集自动匹配」。为避免 UI 与运行时各判一次而漂移，互斥统一
+/// 由本服务裁决——[autoMatchEnabled] 是唯一生效值（默认服务器启用时恒 false），
+/// [autoMatchAllowed] / [autoMatchBlockedReason] 供 UI 变灰与提示文案复用。
+/// 用户原始偏好保留在 [autoMatchPreference]，停用默认服务器后自动恢复生效。
 library;
 
 import 'dart:convert';
@@ -36,8 +42,34 @@ class DanmakuServerSettings extends ChangeNotifier {
   List<DanmakuServer> get enabledServers =>
       _servers.where((s) => s.isEnabled).toList();
 
-  /// 是否启用「切集自动匹配弹幕」
-  bool get autoMatchEnabled => _autoMatchEnabled;
+  /// 「切集自动匹配弹幕」**生效值**（UI 显示与运行时判定都用这个）。
+  ///
+  /// 与默认弹弹Play 服务器**互斥**（工作.md 第 7 点收尾恢复的限制）：默认
+  /// 服务器启用时恒为 false，无论用户此前存过什么偏好。
+  bool get autoMatchEnabled => _autoMatchEnabled && !isDefaultEnabled;
+
+  /// 用户存下来的原始偏好（**不含互斥判定**，仅供设置页/测试观察）。
+  ///
+  /// 保留原始值的意义：用户停用默认服务器 → 开启自动匹配 → 又启用默认服务器
+  /// 时，只是「暂时不生效」；再次停用默认服务器即恢复其选择，不静默丢偏好。
+  bool get autoMatchPreference => _autoMatchEnabled;
+
+  /// 当前是否允许开启「切集自动匹配」（默认服务器启用时不允许）
+  bool get autoMatchAllowed => !isDefaultEnabled;
+
+  /// 不允许开启时的**短**原因文案（副标题用）；允许时为 null。
+  ///
+  /// 副标题空间有限（窄屏两行就显挤），这里只给动作指引；完整解释见
+  /// [autoMatchBlockedMessage]（点击时的 toast）。两句都放在服务层，
+  /// 页面里不出现文案字面量，避免多处措辞漂移。
+  String? get autoMatchBlockedReason =>
+      autoMatchAllowed ? null : '请先停用弹弹Play 服务器';
+
+  /// 不允许开启时的**完整**说明（toast 用）；允许时为 null。
+  String? get autoMatchBlockedMessage => autoMatchAllowed
+      ? null
+      : '已启用「${DanmakuServer.defaultName}」服务器时不可开启'
+          '「切集自动匹配弹幕」，如需使用请先停用该服务器';
 
   /// 默认（弹弹Play）服务器当前是否启用
   bool get isDefaultEnabled =>
@@ -130,16 +162,19 @@ class DanmakuServerSettings extends ChangeNotifier {
 
   /// 设置「切集自动匹配弹幕」开关。
   ///
-  /// 说明（工作.md 第 7 点）：开发阶段**故意解除**「启用弹弹Play 服务器时
-  /// 禁止打开此开关」的写死限制，待弹弹Play 自动匹配联调通过、收尾阶段再
-  /// 恢复该限制。
-  Future<void> setAutoMatchEnabled(bool enabled) async {
+  /// 限制（工作.md 第 7 点，收尾阶段恢复）：默认弹弹Play 服务器启用时
+  /// **拒绝开启**，返回 false 供 UI 弹 toast；关闭永远允许。写偏好本身
+  /// 不做互斥擦除——互斥在读取侧（[autoMatchEnabled]）生效，用户停用默认
+  /// 服务器后其选择自动恢复。
+  Future<bool> setAutoMatchEnabled(bool enabled) async {
     await ensureLoaded();
-    if (_autoMatchEnabled == enabled) return;
+    if (enabled && !autoMatchAllowed) return false;
+    if (_autoMatchEnabled == enabled) return true;
     _autoMatchEnabled = enabled;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyAutoMatch, enabled);
+    return true;
   }
 
   /// 测试用：恢复默认值并清加载标记（单例在测试间共享，避免状态泄漏）。

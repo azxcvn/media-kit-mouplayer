@@ -1,8 +1,10 @@
 /// 弹幕服务器设置子页（工作.md 第 6/7 点）：
 /// - 启用/停用已添加的弹幕服务器（弹弹Play 默认服务器不可删除，只能开关）；
 /// - 右下角加号添加自建服务器（名称 + 地址），已添加服务器可自由删除/启停；
-/// - 「切集自动匹配弹幕」开关（开发阶段**解除**弹弹Play 启用时禁用的写死
-///   限制，待联调通过、收尾阶段再恢复，见 [DanmakuServerSettings]）。
+/// - 「切集自动匹配弹幕」开关：与默认弹弹Play 服务器**互斥**（工作.md 第 7 点，
+///   收尾阶段恢复的限制）——默认服务器启用时开关变灰 + 副标题换成禁用原因，
+///   点击弹 toast 说明；停用默认服务器后自动恢复用户此前的选择
+///   （判定与文案统一由 [DanmakuServerSettings] 提供，见 `_AutoMatchTile`）。
 ///
 /// 启用的服务器同时用于网络弹幕搜索（结果合并展示）与自动匹配。
 library;
@@ -12,6 +14,12 @@ import 'package:moumou/models/danmaku_server.dart';
 import 'package:moumou/services/danmaku_server_settings.dart';
 import 'package:moumou/utils/app_dialog.dart';
 import 'package:moumou/widgets/settings_ui.dart';
+
+/// 「切集自动匹配弹幕」被禁用时，盖在该行上的透明命中层 key。
+///
+/// 禁用态下 `Switch`/`ListTile` 都不响应手势，命中层负责吞掉点击并弹 toast；
+/// 暴露 key 供 UI 测试稳定定位（否则只能点被遮挡的文本，触发命中警告）。
+const Key kAutoMatchBlockedTapKey = Key('auto_match_blocked_tap');
 
 class DanmakuServerPage extends StatelessWidget {
   const DanmakuServerPage({super.key});
@@ -41,13 +49,7 @@ class DanmakuServerPage extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               SettingsCard(
-                child: SettingsSwitchTile(
-                  icon: Icons.autorenew,
-                  title: '切集自动匹配弹幕',
-                  subtitle: const Text('切集时自动匹配并加载对应集弹幕'),
-                  value: settings.autoMatchEnabled,
-                  onChanged: (v) => settings.setAutoMatchEnabled(v),
-                ),
+                child: _AutoMatchTile(settings: settings),
               ),
               const SizedBox(height: 16),
               const SettingsGroupTitle(title: '服务器'),
@@ -72,6 +74,72 @@ class DanmakuServerPage extends StatelessWidget {
       context: context,
       builder: (context) => const _AddServerDialog(),
     );
+  }
+}
+
+/// 「切集自动匹配弹幕」开关行（工作.md 第 7 点互斥限制的 UI 呈现）。
+///
+/// 默认弹弹Play 服务器启用时：开关**变灰禁用**（`onChanged: null`）+ 副标题
+/// 换成禁用原因；此时点整行仍会弹 toast 说明为什么不能开（变灰而不解释会让
+/// 用户以为是 bug）。
+///
+/// 两级文案都取自服务层（页面内不写文案字面量，防措辞漂移）：副标题用短句
+/// [DanmakuServerSettings.autoMatchBlockedReason]（窄屏不挤），toast 用完整
+/// 说明 [DanmakuServerSettings.autoMatchBlockedMessage]。
+class _AutoMatchTile extends StatelessWidget {
+  final DanmakuServerSettings settings;
+
+  const _AutoMatchTile({required this.settings});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final blockedReason = settings.autoMatchBlockedReason;
+    final allowed = blockedReason == null;
+    final tile = SettingsSwitchTile(
+      icon: Icons.autorenew,
+      title: '切集自动匹配弹幕',
+      subtitle: Text(
+        blockedReason ?? '切集时自动匹配并加载对应集弹幕',
+        style: allowed
+            ? null
+            : TextStyle(color: scheme.error, fontWeight: FontWeight.w500),
+      ),
+      value: settings.autoMatchEnabled,
+      // 禁用态传 null：Switch 与整行同时变灰（Flutter 语义化的禁用外观）
+      onChanged: allowed ? (v) => settings.setAutoMatchEnabled(v) : null,
+    );
+    if (allowed) return tile;
+    // 变灰后整行仍可点：吞掉点击并解释原因（`Switch(onChanged: null)` 与
+    // `ListTile(onTap: null)` 本身不响应手势，故在外层盖一个透明命中层）
+    return Stack(
+      children: [
+        tile,
+        Positioned.fill(
+          child: GestureDetector(
+            key: kAutoMatchBlockedTapKey,
+            behavior: HitTestBehavior.opaque,
+            // toast 用完整说明（副标题只放短指引，窄屏两行会挤）
+            onTap: () => _toast(
+              context,
+              settings.autoMatchBlockedMessage ?? blockedReason,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _toast(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(milliseconds: 2600),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
   }
 }
 
