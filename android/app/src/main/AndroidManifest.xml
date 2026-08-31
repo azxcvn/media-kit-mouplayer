@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 网络访问：网络弹幕（弹弹Play）、网络存储（WebDAV/SMB/FTP）等必需。
+         仅 debug/profile 清单自带 INTERNET（供热重载调试），release 需在此显式声明，
+         否则 release 包 DNS 解析失败（Failed host lookup） -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Android 16+ 本地网络保护：访问局域网设备（NAS 的 SMB/FTP/WebDAV、
+         局域网自建弹幕服务器）需此运行时权限；缺失会被系统拦截局域网访问 -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"/>
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
@@ -16,7 +23,8 @@
     <application
         android:label="小牛Player"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:networkSecurityConfig="@xml/network_security_config">
         <activity
             android:name=".MainActivity"
             android:exported="true"

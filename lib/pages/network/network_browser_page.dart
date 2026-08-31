@@ -38,10 +38,16 @@ class _NetworkBrowserPageState extends State<NetworkBrowserPage> {
   @override
   void initState() {
     super.initState();
-    // 路径字段为根 `/` 时列共享清单；填成 `/共享名` 时跳过列共享、直接进入该共享。
-    // 部分 Windows 会拒绝「枚举共享列表」却允许直接访问具体共享，此时需靠后者绕过。
-    final initial = widget.connection.path;
-    _stack = [(initial.isEmpty || initial == '/') ? '/' : initial];
+    // 路径字段语义因协议而异，必须区分，否则会拼出双份路径（如 /dav/dav/ → 404）：
+    // - SMB：connection.path 是「初始目录/共享名」（SMB 客户端不把它当基前缀），
+    //   填 `/共享名` 时跳过列共享、直接进入该共享（部分 Windows 拒绝列共享、只能直连共享）；
+    // - FTP/WebDAV：connection.path 是「根路径基前缀」（客户端请求时会再拼一层），
+    //   浏览必须从 `/` 开始，才能拼成 connection.path + /xxx。
+    final p = widget.connection.path;
+    final initial = widget.connection.protocol == NetworkProtocol.smb
+        ? ((p.isEmpty || p == '/') ? '/' : p)
+        : '/';
+    _stack = [initial];
     _load();
   }
 

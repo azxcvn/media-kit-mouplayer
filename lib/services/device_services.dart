@@ -132,6 +132,18 @@ class DeviceServices {
     }
   }
 
+  /// 请求本地网络权限（Android 16+ ACCESS_LOCAL_NETWORK，访问局域网 NAS/
+  /// 自建弹幕服务器前调用）。Android 16 以下或已授权返回 true；拒绝返回 false。
+  static Future<bool> requestLocalNetworkPermission() async {
+    try {
+      final granted =
+          await _channel.invokeMethod<bool>('requestLocalNetworkPermission');
+      return granted ?? false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── 听视频后台播放（前台服务保活，工作.md 阶段1 第 2 点）────
 
   /// 启动后台播放前台服务：保活进程，使音频在退到后台后继续播放（像音乐播放器）。

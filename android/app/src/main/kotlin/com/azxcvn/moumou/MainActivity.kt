@@ -43,6 +43,9 @@ class MainActivity : FlutterActivity() {
     /** 字体目录选择器（ACTION_OPEN_DOCUMENT_TREE）的待回结果。 */
     private var pendingFontDirPickerResult: MethodChannel.Result? = null
 
+    /** 本地网络权限（Android 16+ ACCESS_LOCAL_NETWORK）请求的待回结果。 */
+    private var pendingLocalNetworkResult: MethodChannel.Result? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Flutter 首帧前按 App 主题设置系统导航栏（三大金刚键区域）颜色，
@@ -180,6 +183,23 @@ class MainActivity : FlutterActivity() {
                     "getBatteryLevel" -> result.success(getBatteryLevel())
                     // 播放界面顶部网络类型显示（工作.md 阶段1 第 1 点）
                     "getNetworkType" -> result.success(getNetworkType())
+                    // 本地网络权限（Android 16+）：连局域网 NAS/自建服务器前请求；
+                    // 16 以下无此权限直接视为已授权
+                    "requestLocalNetworkPermission" -> {
+                        if (Build.VERSION.SDK_INT < 36) {
+                            result.success(true)
+                        } else if (checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") ==
+                            PackageManager.PERMISSION_GRANTED
+                        ) {
+                            result.success(true)
+                        } else {
+                            pendingLocalNetworkResult = result
+                            requestPermissions(
+                                arrayOf("android.permission.ACCESS_LOCAL_NETWORK"),
+                                2004,
+                            )
+                        }
+                    }
                     // 听视频后台播放前台服务启停（工作.md 阶段1 第 2 点）
                     "startBackgroundPlayback" -> {
                         startBackgroundPlayback(call.argument<String>("title") ?: "")
@@ -712,6 +732,22 @@ class MainActivity : FlutterActivity() {
                 }
                 pending?.success(uri?.toString())
             }
+        }
+    }
+
+    /** 运行时权限结果回传（本地网络权限 ACCESS_LOCAL_NETWORK） */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 2004) {
+            val pending = pendingLocalNetworkResult
+            pendingLocalNetworkResult = null
+            val granted = grantResults.isNotEmpty() &&
+                grantResults[0] == PackageManager.PERMISSION_GRANTED
+            pending?.success(granted)
         }
     }
 

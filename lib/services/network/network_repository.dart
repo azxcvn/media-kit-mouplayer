@@ -4,6 +4,7 @@ library;
 
 import 'package:moumou/models/network_connection.dart';
 import 'package:moumou/models/network_file.dart';
+import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/network/network_client_factory.dart';
 import 'package:moumou/services/network/network_streaming_proxy.dart';
 
@@ -14,6 +15,8 @@ class NetworkRepository {
 
   /// 连接并列出 [path] 下的内容（用完即断开）。
   Future<List<NetworkFile>> browse(NetworkConnection connection, String path) async {
+    // Android 16+ 本地网络保护：连局域网 NAS 前先请求权限（缺失会被系统拦截）
+    await DeviceServices.requestLocalNetworkPermission();
     final client = createNetworkClient(connection);
     try {
       await client.connect();

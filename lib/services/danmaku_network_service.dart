@@ -18,6 +18,7 @@ import 'package:moumou/models/danmaku_entry.dart';
 import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/services/dandan_play_api.dart';
 import 'package:moumou/services/danmaku_server_settings.dart';
+import 'package:moumou/services/device_services.dart';
 import 'package:moumou/utils/dandan_comment.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -91,6 +92,11 @@ class DanmakuNetworkService {
     final items = <DanmakuSearchItem>[];
     final seenIds = <int>{};
     final errors = <String>[];
+    // 存在自建服务器时先请求本地网络权限（自建服务器可能在局域网，
+    // Android 16+ 缺权限会被系统拦截）
+    if (_serverSettings.enabledServers.any((s) => !s.isDefault)) {
+      await DeviceServices.requestLocalNetworkPermission();
+    }
     for (final server in _serverSettings.enabledServers) {
       try {
         final serverUrl = server.isDefault ? null : server.url;
@@ -119,6 +125,10 @@ class DanmakuNetworkService {
   }) async {
     final items = <DanmakuMatchItem>[];
     final seenIds = <int>{};
+    // 存在自建服务器时先请求本地网络权限（同 search）
+    if (_serverSettings.enabledServers.any((s) => !s.isDefault)) {
+      await DeviceServices.requestLocalNetworkPermission();
+    }
     for (final server in _serverSettings.enabledServers) {
       try {
         final serverUrl = server.isDefault ? null : server.url;

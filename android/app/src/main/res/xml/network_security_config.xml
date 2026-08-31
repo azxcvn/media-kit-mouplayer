@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 网络明文策略：允许明文 HTTP（局域网 NAS 的 WebDAV 与自建弹幕服务器常走
+     http://，Android 9+ 默认禁止明文）。全局放行是因为用户可填任意局域网 IP/域名，
+     无法预先枚举；HTTPS 信任锚保持系统默认（system）不变。 -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>
