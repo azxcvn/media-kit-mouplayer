@@ -23,7 +23,9 @@ import 'package:flutter/foundation.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:moumou/models/danmaku_auto_match_cache.dart';
 import 'package:moumou/models/danmaku_entry.dart';
+import 'package:moumou/models/danmaku_font_mode.dart';
 import 'package:moumou/models/dandan_models.dart';
+import 'package:moumou/services/app_font_settings.dart';
 import 'package:moumou/services/danmaku_auto_match_cache_store.dart';
 import 'package:moumou/services/danmaku_memory.dart';
 import 'package:moumou/services/danmaku_network_service.dart';
@@ -42,10 +44,19 @@ import 'package:path/path.dart' as p;
 /// 单一事实来源）。样式（字号/字重/描边/不透明度）+ 配置（区域/行高/三类
 /// 显隐/海量）全量映射；速度（duration/staticDuration）由控制器按倍速叠加
 /// （见 [_buildOption]），不在此处设置。
+///
+/// 弹幕字体（工作.md 第 4 点）：三态解析见 [resolveDanmakuFontFamily]，
+/// 每次新建 DanmakuOption（fontFamily 恒为解析结果，跟随系统时 = null，
+/// 规避 copyWith 无法清空 fontFamily 的问题）。
 canvas.DanmakuOption danmakuOptionFromSettings(DanmakuSettings s) {
   return canvas.DanmakuOption(
     fontSize: s.fontSize,
     fontWeight: s.fontWeight,
+    fontFamily: resolveDanmakuFontFamily(
+      mode: s.fontMode,
+      customFontFamily: s.customFontFamily,
+      appFontFamily: AppFontSettings.instance.effectiveFamily,
+    ),
     area: s.area,
     opacity: s.opacity,
     strokeWidth: s.strokeWidth,
@@ -77,6 +88,9 @@ class DanmakuController extends ChangeNotifier {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _onTick());
     // 阶段2：订阅弹幕设置（面板/全局改动 → 实时应用）
     DanmakuSettings.instance.addListener(_onSettingsChanged);
+    // App 全局字体变化也触发重映射（仅「跟随 App」模式的弹幕字体会变；
+    // 其余模式解析结果不变，canvas 的 fontFamilyChanged 为 false 不清屏）
+    AppFontSettings.instance.addListener(_onSettingsChanged);
     _lastDedup = _settings.deduplication;
     _lastRandomColor = _settings.randomColor;
     _lastTimeOffset = _settings.timeOffsetSeconds;
@@ -650,6 +664,7 @@ class DanmakuController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     DanmakuSettings.instance.removeListener(_onSettingsChanged);
+    AppFontSettings.instance.removeListener(_onSettingsChanged);
     _timer.cancel();
     for (final s in _subs) {
       s.cancel();

@@ -1516,50 +1516,53 @@ class _SubtitleFontPanelState extends State<SubtitleFontPanel> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const _CardLabel('字体目录'),
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.folder_open,
-                        color: Colors.white, size: 22),
-                    title: const Text(
-                      '选择字体目录',
-                      style: TextStyle(color: Colors.white, fontSize: 15),
-                    ),
-                    subtitle: Text(
-                      _loading
-                          ? '正在加载...'
-                          : (hasSource
-                              ? '已加载 ${_entries.length} 种字体'
-                              : '点击选择包含 .ttf/.otf 字体的目录'),
-                      style: TextStyle(
-                        color: _entries.isNotEmpty
-                            ? const Color(0xFF81C784)
-                            : Colors.white38,
-                        fontSize: 12,
+                  Material(
+                    type: MaterialType.transparency,
+                    child: ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.folder_open,
+                          color: Colors.white, size: 22),
+                      title: const Text(
+                        '选择字体目录',
+                        style: TextStyle(color: Colors.white, fontSize: 15),
                       ),
+                      subtitle: Text(
+                        _loading
+                            ? '正在加载...'
+                            : (hasSource
+                                ? '已加载 ${_entries.length} 种字体'
+                                : '点击选择包含 .ttf/.otf 字体的目录'),
+                        style: TextStyle(
+                          color: _entries.isNotEmpty
+                              ? const Color(0xFF81C784)
+                              : Colors.white38,
+                          fontSize: 12,
+                        ),
+                      ),
+                      trailing: hasSource
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.refresh,
+                                      color: Color(0xFF64B5F6), size: 22),
+                                  tooltip: '刷新',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: _loading ? null : _refresh,
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.close,
+                                      color: Color(0xFFEF5350), size: 22),
+                                  tooltip: '清除目录',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: _loading ? null : _clear,
+                                ),
+                              ],
+                            )
+                          : const Icon(Icons.chevron_right,
+                              color: Colors.white54),
+                      onTap: () => _pickDirectory(),
                     ),
-                    trailing: hasSource
-                        ? Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                icon: const Icon(Icons.refresh,
-                                    color: Color(0xFF64B5F6), size: 22),
-                                tooltip: '刷新',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: _loading ? null : _refresh,
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close,
-                                    color: Color(0xFFEF5350), size: 22),
-                                tooltip: '清除目录',
-                                visualDensity: VisualDensity.compact,
-                                onPressed: _loading ? null : _clear,
-                              ),
-                            ],
-                          )
-                        : const Icon(Icons.chevron_right,
-                            color: Colors.white54),
-                    onTap: () => _pickDirectory(),
                   ),
                 ],
               ),
@@ -1571,51 +1574,64 @@ class _SubtitleFontPanelState extends State<SubtitleFontPanel> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const _CardLabel('当前字体'),
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.text_fields,
-                        color: Colors.white, size: 22),
-                    title: Text(
-                      hasCustom ? settings.font : '默认字体',
-                      style: const TextStyle(
-                          color: Colors.white, fontSize: 15),
-                    ),
-                    trailing: _entries.isNotEmpty
-                        ? Icon(
-                            _expanded
-                                ? Icons.expand_less
-                                : Icons.expand_more,
-                            color: Colors.white54,
-                          )
-                        : const Text(
-                            '请先选择字体目录',
-                            style: TextStyle(
-                                color: Colors.white38, fontSize: 11),
-                          ),
-                    onTap: _entries.isNotEmpty
-                        ? () => setState(() => _expanded = !_expanded)
-                        : null,
-                  ),
-                  if (_expanded) ...[
-                    const Divider(
-                        height: 1,
-                        indent: 16,
-                        endIndent: 16,
-                        color: Colors.white12),
-                    _FontOptionTile(
-                      label: '默认字体',
-                      subtitle: '跟随系统字库',
-                      selected: !hasCustom,
-                      onTap: _selectDefault,
-                    ),
-                    for (final e in _entries)
-                      _FontOptionTile(
-                        label: e.family,
-                        subtitle: e.file,
-                        selected: settings.font == e.family,
-                        onTap: () => _selectFont(e),
+                  Material(
+                    type: MaterialType.transparency,
+                    child: ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.text_fields,
+                          color: Colors.white, size: 22),
+                      title: Text(
+                        hasCustom ? settings.font : '默认字体',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 15),
                       ),
-                  ],
+                      trailing: _entries.isNotEmpty
+                          ? Icon(
+                              _expanded
+                                  ? Icons.expand_less
+                                  : Icons.expand_more,
+                              color: Colors.white54,
+                            )
+                          : const Text(
+                              '请先选择字体目录',
+                              style: TextStyle(
+                                  color: Colors.white38, fontSize: 11),
+                            ),
+                      onTap: _entries.isNotEmpty
+                          ? () => setState(() => _expanded = !_expanded)
+                          : null,
+                    ),
+                  ),
+                  // 展开/收起动画（弹幕字体面板同款 AnimatedSize）
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.topCenter,
+                    child: _expanded
+                        ? Column(
+                            children: [
+                              const Divider(
+                                  height: 1,
+                                  indent: 16,
+                                  endIndent: 16,
+                                  color: Colors.white12),
+                              _FontOptionTile(
+                                label: '默认字体',
+                                subtitle: '跟随系统字库',
+                                selected: !hasCustom,
+                                onTap: _selectDefault,
+                              ),
+                              for (final e in _entries)
+                                _FontOptionTile(
+                                  label: e.family,
+                                  subtitle: e.file,
+                                  selected: settings.font == e.family,
+                                  onTap: () => _selectFont(e),
+                                ),
+                            ],
+                          )
+                        : const SizedBox.shrink(),
+                  ),
                 ],
               ),
             ),
@@ -1658,37 +1674,40 @@ class _FontOptionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      leading: Container(
-        width: 20,
-        height: 20,
-        decoration: BoxDecoration(
-          color: selected ? _accentOf(context) : Colors.transparent,
-          shape: BoxShape.circle,
-          border: Border.all(
-            color: selected ? _accentOf(context) : Colors.white24,
+    return Material(
+      type: MaterialType.transparency,
+      child: ListTile(
+        dense: true,
+        leading: Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: selected ? _accentOf(context) : Colors.transparent,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? _accentOf(context) : Colors.white24,
+            ),
+          ),
+          child: selected
+              ? const Icon(Icons.check, size: 13, color: Colors.black87)
+              : null,
+        ),
+        title: Text(
+          label,
+          style: TextStyle(
+            color: selected ? _accentOf(context) : Colors.white,
+            fontSize: 14,
+            fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
           ),
         ),
-        child: selected
-            ? const Icon(Icons.check, size: 13, color: Colors.black87)
-            : null,
+        subtitle: subtitle.isEmpty
+            ? null
+            : Text(
+                subtitle,
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+        onTap: onTap,
       ),
-      title: Text(
-        label,
-        style: TextStyle(
-          color: selected ? _accentOf(context) : Colors.white,
-          fontSize: 14,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-        ),
-      ),
-      subtitle: subtitle.isEmpty
-          ? null
-          : Text(
-              subtitle,
-              style: const TextStyle(color: Colors.white38, fontSize: 11),
-            ),
-      onTap: onTap,
     );
   }
 }

@@ -26,26 +26,49 @@ class AppTheme {
     );
   }
 
-  static ThemeData light(Color seed, FlexSchemeVariant variant) {
+  static ThemeData light(
+    Color seed,
+    FlexSchemeVariant variant, {
+    String? fontFamily,
+    FontWeight? fontWeight,
+  }) {
     final scheme = _scheme(seed, variant, Brightness.light);
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      appBarTheme: _appBarTheme(scheme),
+    return _withFont(
+      ThemeData(
+        useMaterial3: true,
+        colorScheme: scheme,
+        fontFamily: fontFamily,
+        appBarTheme: _appBarTheme(scheme),
+      ),
+      fontWeight,
     );
   }
 
-  static ThemeData dark(Color seed, FlexSchemeVariant variant) {
+  static ThemeData dark(
+    Color seed,
+    FlexSchemeVariant variant, {
+    String? fontFamily,
+    FontWeight? fontWeight,
+  }) {
     final scheme = _scheme(seed, variant, Brightness.dark);
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      appBarTheme: _appBarTheme(scheme),
+    return _withFont(
+      ThemeData(
+        useMaterial3: true,
+        colorScheme: scheme,
+        fontFamily: fontFamily,
+        appBarTheme: _appBarTheme(scheme),
+      ),
+      fontWeight,
     );
   }
 
   /// AMOLED 纯黑：把所有 surface 系列压到纯黑/近黑，背景纯黑
-  static ThemeData amoled(Color seed, FlexSchemeVariant variant) {
+  static ThemeData amoled(
+    Color seed,
+    FlexSchemeVariant variant, {
+    String? fontFamily,
+    FontWeight? fontWeight,
+  }) {
     final scheme = _scheme(seed, variant, Brightness.dark).copyWith(
       surface: Colors.black,
       surfaceContainerLowest: Colors.black,
@@ -54,11 +77,43 @@ class AppTheme {
       surfaceContainerHigh: const Color(0xFF1A1A1A),
       surfaceContainerHighest: const Color(0xFF232323),
     );
-    return ThemeData(
-      useMaterial3: true,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: Colors.black,
-      appBarTheme: _appBarTheme(scheme),
+    return _withFont(
+      ThemeData(
+        useMaterial3: true,
+        colorScheme: scheme,
+        fontFamily: fontFamily,
+        scaffoldBackgroundColor: Colors.black,
+        appBarTheme: _appBarTheme(scheme),
+      ),
+      fontWeight,
+    );
+  }
+
+  /// 应用统一字重（全量覆盖 textTheme 各样式，不保留内置字重层级；
+  /// 对齐 PiliPlus 做法）。[fontWeight] 为 null 时原样返回。
+  static ThemeData _withFont(ThemeData base, FontWeight? fontWeight) {
+    if (fontWeight == null) return base;
+    TextStyle w(TextStyle? s) =>
+        (s ?? const TextStyle()).copyWith(fontWeight: fontWeight);
+    final t = base.textTheme;
+    return base.copyWith(
+      textTheme: t.copyWith(
+        displayLarge: w(t.displayLarge),
+        displayMedium: w(t.displayMedium),
+        displaySmall: w(t.displaySmall),
+        headlineLarge: w(t.headlineLarge),
+        headlineMedium: w(t.headlineMedium),
+        headlineSmall: w(t.headlineSmall),
+        titleLarge: w(t.titleLarge),
+        titleMedium: w(t.titleMedium),
+        titleSmall: w(t.titleSmall),
+        bodyLarge: w(t.bodyLarge),
+        bodyMedium: w(t.bodyMedium),
+        bodySmall: w(t.bodySmall),
+        labelLarge: w(t.labelLarge),
+        labelMedium: w(t.labelMedium),
+        labelSmall: w(t.labelSmall),
+      ),
     );
   }
 }

@@ -57,8 +57,8 @@ class SettingsPage extends StatelessWidget {
               SettingsCard(
                 child: SettingsTile(
                   icon: Icons.palette_outlined,
-                  title: '外观',
-                  subtitle: const Text('调整应用外观'),
+                  title: '外观与字体',
+                  subtitle: const Text('调整应用外观与字体'),
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute(
@@ -69,8 +69,8 @@ class SettingsPage extends StatelessWidget {
                   },
                 ),
               ),
-              // ── 播放设置（工作.md 第 6 点：原「播放器」改名）──
-              const SettingsGroupTitle(title: '播放设置'),
+              // ── 播放（工作.md 第 6 点：原「播放器」改名）──
+              const SettingsGroupTitle(title: '播放'),
               SettingsCard(
                 child: SettingsTile(
                   icon: Icons.play_circle_outline,

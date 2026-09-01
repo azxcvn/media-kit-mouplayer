@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:moumou/models/danmaku_font_mode.dart';
 import 'package:moumou/services/danmaku_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -139,5 +140,34 @@ void main() {
     await s.setFontSize(20); // 同值不重复通知
     s.removeListener(listener);
     expect(notified, 1);
+  });
+
+  test('弹幕字体默认值：跟随系统 / 无自定义字体', () {
+    expect(s.fontMode, DanmakuFontMode.followSystem);
+    expect(s.customFontFamily, isNull);
+    expect(s.customFontFile, isNull);
+  });
+
+  test('弹幕字体模式 / 自定义字体持久化（模拟重启 load）', () async {
+    await s.setFontMode(DanmakuFontMode.custom);
+    await s.setCustomFont('DmFont', 'dmfont.otf');
+    await s.load();
+    expect(s.fontMode, DanmakuFontMode.custom);
+    expect(s.customFontFamily, 'DmFont');
+    expect(s.customFontFile, 'dmfont.otf');
+  });
+
+  test('恢复默认：弹幕字体回跟随系统且清自定义字体', () async {
+    await s.setFontMode(DanmakuFontMode.followApp);
+    await s.setCustomFont('DmFont', 'dmfont.otf');
+    await s.reset();
+    expect(s.fontMode, DanmakuFontMode.followSystem);
+    expect(s.customFontFamily, isNull);
+    expect(s.customFontFile, isNull);
+    // 持久化确认
+    await s.load();
+    expect(s.fontMode, DanmakuFontMode.followSystem);
+    expect(s.customFontFamily, isNull);
+    expect(s.customFontFile, isNull);
   });
 }

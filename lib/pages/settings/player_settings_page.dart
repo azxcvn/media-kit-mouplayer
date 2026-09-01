@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:moumou/models/player_action.dart';
 import 'package:moumou/services/decode_settings.dart';
 import 'package:moumou/services/player_controls_settings.dart';
+import 'package:moumou/utils/app_dialog.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
 /// 播放器设置子页：双击手势、快进/快退时长（固定档位 + 点数值原地自定义）、
@@ -46,7 +47,7 @@ class PlayerSettingsPage extends StatelessWidget {
     final settings = PlayerControlsSettings.instance;
     final decodeSettings = DecodeSettings.instance;
     return Scaffold(
-      appBar: AppBar(title: const Text('播放器设置')),
+      appBar: AppBar(title: const Text('播放设置')),
       body: ListenableBuilder(
         listenable: Listenable.merge([settings, decodeSettings]),
         builder: (context, _) {
@@ -293,18 +294,18 @@ class PlayerSettingsPage extends StatelessWidget {
                     SettingsSwitchTile(
                       icon: Icons.auto_awesome_outlined,
                       title: '启用 GPU-next',
-                      subtitle: const Text('使用 libplacebo 新渲染器（vo=gpu-next）'),
+                      subtitle: const Text('使用 libplacebo 新渲染器'),
                       value: decodeSettings.gpuNext,
-                      onChanged: (v) => decodeSettings.setGpuNext(v),
+                      onChanged: (v) => _onGpuNextChanged(context, v),
                     ),
                     const Divider(height: 1, indent: 16, endIndent: 16),
                     SettingsSwitchTile(
                       icon: Icons.memory_outlined,
                       title: '启用 Vulkan',
-                      subtitle: const Text('GPU-next 下改用 Vulkan 后端（gpu-api=vulkan）'),
+                      subtitle: const Text('改用 Vulkan 渲染后端'),
                       value: decodeSettings.useVulkan,
                       onChanged: decodeSettings.gpuNext
-                          ? (v) => decodeSettings.setVulkan(v)
+                          ? (v) => _onVulkanChanged(context, v)
                           : null,
                     ),
                     Padding(
@@ -325,6 +326,66 @@ class PlayerSettingsPage extends StatelessWidget {
         },
       ),
     );
+  }
+
+  /// 启用 GPU-next 前的二次确认：超分不可用 + 杜比视界提示。
+  /// 仅开启时弹窗（关闭直接生效）；取消则不写设置。
+  Future<void> _onGpuNextChanged(BuildContext context, bool v) async {
+    if (!v) {
+      DecodeSettings.instance.setGpuNext(false);
+      return;
+    }
+    final ok = await showAppDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('启用 GPU-next'),
+        content: const Text(
+          '启用后超分辨率功能将无法使用；\n可尝试配合软解播放杜比视界视频。\n\n是否继续？',
+          style: TextStyle(fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确定启用'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) DecodeSettings.instance.setGpuNext(true);
+  }
+
+  /// 启用 Vulkan 前的二次确认：告知可能的花屏/黑屏/崩溃与自动回退。
+  /// 仅开启时弹窗（关闭直接生效）；取消则不写设置。
+  Future<void> _onVulkanChanged(BuildContext context, bool v) async {
+    if (!v) {
+      DecodeSettings.instance.setVulkan(false);
+      return;
+    }
+    final ok = await showAppDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('启用 Vulkan'),
+        content: const Text(
+          'Vulkan 需设备与驱动支持，部分设备可能出现花屏、黑屏或崩溃；\n不支持时自动回退 OpenGL。\n\n是否继续？',
+          style: TextStyle(fontSize: 14, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('确定启用'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) DecodeSettings.instance.setVulkan(true);
   }
 }
 

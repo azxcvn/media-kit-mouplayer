@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/pages/settings/font_page.dart';
 import 'package:moumou/theme/theme_controller.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
@@ -105,6 +106,12 @@ class AppearancePage extends StatelessWidget {
                                 : Theme.of(
                                     context,
                                   ).colorScheme.onSurfaceVariant,
+                            // AnimatedDefaultTextStyle 不 merge 父级样式，需
+                            // 显式带上全局字体族名，否则主题色/调色板名称
+                            // 会丢失自定义字体（§4.12）
+                            fontFamily: Theme.of(
+                              context,
+                            ).textTheme.bodyMedium?.fontFamily,
                           ),
                           child: Text(
                             entry.value,
@@ -112,6 +119,23 @@ class AppearancePage extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+              // ── App 字体设置（工作.md 第 3 点：调色板风格下方）────
+              const SettingsGroupTitle(title: '字体'),
+              SettingsCard(
+                child: SettingsTile(
+                  icon: Icons.font_download_outlined,
+                  title: 'App字体设置',
+                  subtitle: const Text('自定义全局字体'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const FontSettingsPage(),
                       ),
                     );
                   },
@@ -255,6 +279,9 @@ class _SelectionTile extends StatelessWidget {
                 fontSize: 12,
                 color: selected ? scheme.primary : scheme.onSurfaceVariant,
                 fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                // AnimatedDefaultTextStyle 不 merge 父级样式，需显式带上全局
+                // 字体族名（§4.12）
+                fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
               ),
               child: Text(
                 label!,

@@ -48,6 +48,9 @@ Flutter 本地视频播放器（Android），核心能力：
   弹幕服务器管理（默认弹弹Play 不可删 + 自建服务器增删启停，搜索合并展示）；
   密钥存 gitignored 私有文件（§4.11）
 - 外观设置：23 种主题色 + 21 种调色板风格（flex_seed_scheme）
+- **全局自定义字体**：App 全局字体（设置→外观→App字体设置：预览 + 开关 + 系统选择器导入单字体 +
+  字号/字重滑杆，关闭跟随系统）；**弹幕自定义字体**（弹幕设置→弹幕字体：跟随系统/跟随 App/自定义三选一，
+  自定义复用字体目录批量导入 + 列表选择），两者走 Flutter 引擎 `loadFontFromList` 注册（§4.12）
 
 技术栈：Flutter 3.44+ / Dart 3.12+，依赖见 `pubspec.yaml`。
 
@@ -77,7 +80,8 @@ lib/
 │   ├── dandan_models.dart     # 弹弹Play API 数据模型（番剧/集/评论/匹配候选，fromJson 容错）
 │   ├── network_connection.dart # 网络存储账户模型 + 协议枚举（WebDAV/SMB/FTP）+ 校验纯函数
 │   ├── network_file.dart      # 远程目录/文件条目模型（供网络浏览 UI 展示）
-│   └── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
+│   ├── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
+│   └── danmaku_font_mode.dart # 弹幕字体三态枚举（跟随系统/跟随App/自定义）+ 解析纯函数
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
@@ -96,11 +100,12 @@ lib/
 │   ├── audio_service.dart     # 音频控制器（音轨列表/aid 单选/外部音轨导入·移除（临时）/声道/af 滤镜链应用；声道与处理为会话级，随播放器生命周期重置）
 │   ├── subtitle_settings.dart # 字幕设置（延迟/大小/位置/颜色/描边模式/内嵌样式覆盖/自定义字体/外挂字幕记忆/重置样式，ChangeNotifier + 持久化）
 │   ├── subtitle_service.dart  # 字幕控制器（单选模型：track-list/sid 同步/sub-add/sub-remove + 同名字幕自动加载 + 设置应用 + 切集重应用 + 外挂字幕跨会话恢复）
+│   ├── app_font_settings.dart # App 全局字体设置（开关/族名/字号/字重 + loadFontFromList 注册，ChangeNotifier + 持久化，§4.12）
 │   ├── equalizer_settings.dart # 音频均衡器设置（5 频段/低音增强/虚拟环绕/预设，ChangeNotifier + 持久化，AudioController 订阅重应用 af 链）
 │   ├── danmaku_service.dart    # 弹幕控制器（业务层：本地同名/手动导入/网络弹幕装载 + 1s tick 秒桶发射 + canvas 渲染层显隐/暂停/倍速同步 + 设置订阅应用 + 切集自动匹配，横竖屏共享）
 │   ├── danmaku_scheduler.dart  # 弹幕调度器（纯逻辑：秒桶 + 前向补发 + seek 跳变检测 + 代数失效）
 │   ├── danmaku_memory.dart     # 弹幕手动导入记忆（视频路径→弹幕文件路径，SharedPreferences JSON 持久化）
-│   ├── danmaku_settings.dart   # 弹幕设置（样式：字号/字重/速度/描边/不透明度/随机色 + 配置：区域/行高/三类显隐/海量/去重 + 偏移：时间轴偏移，ChangeNotifier + 持久化）
+│   ├── danmaku_settings.dart   # 弹幕设置（样式：字号/字重/速度/描边/不透明度/随机色 + 配置：区域/行高/三类显隐/海量/去重 + 偏移：时间轴偏移 + 字体：三态/自定义族名·文件名，ChangeNotifier + 持久化）
 │   ├── dandan_play_keys.dart   # 弹弹Play API 密钥（私有，gitignored，禁止上传 GitHub）
 │   ├── dandan_play_api.dart    # 弹弹Play 开放弹幕网络 API 客户端（签名验证模式：搜索/拉取弹幕/文件匹配）
 │   ├── danmaku_server_settings.dart # 弹幕服务器设置（默认+自建服务器增删启停 + 切集自动匹配开关及其与默认服务器的互斥裁决，ChangeNotifier + 持久化）
@@ -153,7 +158,7 @@ lib/
 │   │       ├── player_danmaku_buttons.dart# 弹幕开关/设置按钮组（Kazumi 图标：开=内联 SVG 主题色对勾，关/设置=资源 SVG）
 │   │       ├── player_danmaku_panel.dart  # 弹幕二级界面（本地弹幕=复用字幕选择器面板导入 / 网络弹幕 / 自动匹配 / 弹幕设置；DanmakuFileService）
 │   │       ├── player_danmaku_network_panel.dart # 网络弹幕搜索三级界面（40dp 胶囊搜索框 + 框下关键词历史胶囊 + 命中后折叠为关键词条 + 结果卡自持动画展开集列表，横竖屏共用）
-│   │       ├── player_danmaku_settings_panel.dart # 弹幕设置面板（样式：字号/字重/速度/描边/不透明度滑杆+随机渐变色；配置：区域/行高/三类显隐/海量/去重；偏移：时间轴偏移；横竖屏外壳共用）
+│   │       ├── player_danmaku_settings_panel.dart # 弹幕设置面板（样式：字号/字重/速度/描边/不透明度滑杆+随机渐变色；配置：区域/行高/三类显隐/海量/去重；偏移：时间轴偏移；字体：跟随系统/跟随App/自定义三选一+目录导入列表选择；横竖屏外壳共用）
 │   │       ├── player_bottom_bar.dart     # 底栏：进度条 + 下一集 + 时间 + 弹幕开关/设置 + 右下角按钮簇
 │   │       ├── player_seek_bar.dart       # 自绘进度条（替代 Slider，起点对齐 kPlayerLeftInset；章节圆点 + 跳过色段）
 │   │       ├── player_chapter_bar.dart    # 章节名行（可点击呼出列表）+ 跳过胶囊（5 秒自动消失/控制层可见时常驻）
@@ -189,6 +194,7 @@ lib/
 │   └── settings/
 │       ├── settings_page.dart #   设置主页（分组结构）
 │       ├── appearance_page.dart      # 外观设置子页
+│       ├── font_page.dart            # App字体设置页（预览 + 开关 + 导入字体 + 字号/字重滑杆）
 │       ├── player_settings_page.dart # 播放器设置子页（手势/视频方向/顶部信息/播放行为/阈值）
 │       ├── media_scan_settings_page.dart # 媒体扫描与过滤设置子页（.nomedia/隐藏文件夹/黑白名单）
 │       ├── danmaku_server_page.dart # 弹幕服务器设置子页（默认+自建服务器增删启停 + 切集自动匹配开关，互斥时变灰+原因文案+点击 toast）
@@ -251,7 +257,7 @@ models（模型）     → 无依赖（纯数据）
 ### 4.1 状态管理
 
 - **约定**：`ChangeNotifier` + `ListenableBuilder`（或 `Listenable.merge`），需要持久化的用 `shared_preferences`
-- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）、`SubtitleSettings`（单例，字幕延迟/大小/位置/对齐/颜色/字体/内嵌样式覆盖，默认关闭）、`EqualizerSettings`（单例，均衡器 5 频段/低音增强/虚拟环绕/预设，默认关闭，全局持久化）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–4 步进 0.5/指示器开关/首次提示标记，阶段1 第 4 点）**、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、**顶部信息多选（时间/电量/网速/数据类型四项，默认全选，阶段1 第 1 点；旧单选枚举一次性迁移）** 属 `PlayerControlsSettings`
+- 现有控制器：`ViewSettings`（排序/字段/视图模式）、`ThemeController`（外观）、`PlaybackProgressService`（单例，进度）、`SuperResolutionService`（单例，超分模式+质量+记忆开关）、`SubtitleSettings`（单例，字幕延迟/大小/位置/对齐/颜色/字体/内嵌样式覆盖，默认关闭）、`EqualizerSettings`（单例，均衡器 5 频段/低音增强/虚拟环绕/预设，默认关闭，全局持久化）、`AppFontSettings`（单例，App 全局字体开关/族名/字号/字重，默认关闭，§4.12）；控制按钮背景（底栏倍速/列表图标/顶栏控制图标，默认关闭）、倍速记忆（默认关闭）、画面比例（默认自动）、**长按倍速（倍率 1–4 步进 0.5/指示器开关/首次提示标记，阶段1 第 4 点）**、音量亮度手势灵敏度（默认 1.0）、保存音量到系统（默认开启）、双指缩小视频（默认开启）、进度条缩略图（默认开启，见 §4.9）、已观看进度阈值（5%–100% 步进 5%，默认 95%）、自动连播（默认开启）、播放完毕自动退出（默认开启）、循环播放模式（off/列表循环/单集循环，默认关闭）、视频方向（自动/锁定竖屏/锁定横屏，默认自动）、播放界面动画（默认开启）、**顶部信息多选（时间/电量/网速/数据类型四项，默认全选，阶段1 第 1 点；旧单选枚举一次性迁移）** 属 `PlayerControlsSettings`
 - 播放页音量/亮度属于**页面局部状态**（进入时从系统同步，退出时按设置写回/恢复，见 §4.8），禁止做成全局服务
 - 音频声道/音频处理（音量标准化/动态范围压缩）为**会话级状态**（随 `AudioController` 生命周期，每次进播放器重置为默认：安全自动/关/关），不持久化
 - 片头片尾跳过设置属 `IntroOutroSettings`（独立单例 ChangeNotifier）：启用开关（默认关闭）、片头/片尾跳过秒数（默认 0）、各自范围上限（10–600 秒，默认 180）；范围收窄时秒数联动收窄；一键重置只清秒数与范围、保留开关；跟踪器 `IntroOutroTracker` 为普通类（随播放页生命周期），就绪门控防 open 期间误触发
@@ -536,6 +542,41 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 
 ---
 
+### 4.12 全局与弹幕自定义字体 —— Flutter 引擎 `loadFontFromList` 注册
+
+**目标**：对齐 Kazumi / PiliPlus——App 全局字体与弹幕字体均走 Flutter 引擎字体
+注册（`dart:ui loadFontFromList(bytes, fontFamily:)`），与字幕字体（§4.10 libass）
+是两套机制；「跟随系统」＝`fontFamily: null`（Skia 回落系统默认字体，ColorOS 上即
+主题商店字体）。App/弹幕/字幕共享 `filesDir/fonts/` 同一字体池，一次导入三处可用。
+
+**分层**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 模型 | `models/danmaku_font_mode.dart` | 弹幕字体三态枚举 + `resolveDanmakuFontFamily` 解析纯函数 |
+| 服务 | `services/app_font_settings.dart` | App 全局字体（enabled/family/file/textScale/fontWeightIndex）+ 持久化 + `registerFontFile`（读字体字节注册，App/弹幕共用）+ `registerCurrentFont`（冷启动重注册） |
+| 服务 | `services/danmaku_settings.dart` | 弹幕字体三态 + 自定义族名/文件名 |
+| 服务 | `services/danmaku_service.dart` | `danmakuOptionFromSettings` 每次新建 DanmakuOption 并填 `fontFamily`（跟随系统=null）；`DanmakuController` 同时订阅 `AppFontSettings` |
+| 主题 | `theme/app_theme.dart` | 三个工厂加 `fontFamily`/`fontWeight` 参数；`fontWeight` 全量覆盖 textTheme |
+| 装配 | `main.dart` | `main()` 改 async：runApp 前 `ensureLoaded + registerCurrentFont` + 弹幕自定义字体注册；`ListenableBuilder` 合并监听 `AppFontSettings`；builder 里按 `effectiveTextScale` 包 `MediaQuery.textScaler` |
+| UI | `pages/settings/font_page.dart` + `appearance_page.dart` | 设置→外观→App字体设置：预览（数字/大小写/符号/中文）+ 开关 + 系统选择器导入单字体 + 字号/字重滑杆 |
+| UI | `player_danmaku_settings_panel.dart` | 弹幕字体段：三选一（跟随系统/跟随 App/自定义）+ 自定义时目录导入 + 列表选择 |
+
+**关键约束（勿违反）**：
+- **注册时机**：`loadFontFromList` 只对当前进程有效，冷启动必须重读文件重新注册，
+  且必须在**首次渲染该 family 前**完成（`main()` 改 async、`runApp` 前 await）。
+- **「跟随系统」＝ null**：App 的 `ThemeData.fontFamily` 与弹幕的
+  `DanmakuOption.fontFamily` 均为 null 时落到系统默认字体，无需枚举/注册系统字体。
+- **不能 `copyWith(fontFamily: null)` 清空**：canvas 0.3.3 的 copyWith 用
+  `fontFamily ?? this.fontFamily`，切回跟随系统必须**重建 DanmakuOption**
+  （本项目 `danmakuOptionFromSettings` 每次新建，天然满足）。
+- **两套机制勿混**：App/弹幕字体走 `loadFontFromList`；字幕字体走 §4.10
+  `sub-fonts-dir`（mpv_initialize 前注入）。两者共享目录、注册方式不同。
+- **有效值只由 enabled + family 共同决定**：`AppFontSettings.effectiveFamily` =
+  `enabled && family != null ? family : null`，字号/字重同此门控（关闭时回默认）。
+
+---
+
 ## 5. 新增功能指南（按功能类型）
 
 ### 5.1 新增一个页面
@@ -637,7 +678,9 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/danmaku_scheduler_test.dart` — 弹幕调度器（秒桶前向补发/首 tick 锚定/seek 检测/代数失效/微幅回抖）
   - `test/player_danmaku_panel_test.dart` — 弹幕二级界面（四入口齐全/网络·自动匹配回调注入/设置回调注入/无平台通道不崩溃）
   - `test/danmaku_memory_test.dart` — 弹幕手动导入记忆（set/get/remove/持久化恢复/损坏数据防御）
-  - `test/danmaku_settings_test.dart` — 弹幕设置服务（默认值/钳制/持久化恢复/越界收窄/恢复默认/通知）
+  - `test/danmaku_settings_test.dart` — 弹幕设置服务（默认值/钳制/持久化恢复/越界收窄/恢复默认/通知 + 字体三态/自定义字体持久化）
+  - `test/danmaku_font_mode_test.dart` — 弹幕字体三态解析纯函数（跟随系统/跟随 App/自定义）
+  - `test/app_font_settings_test.dart` — App 全局字体设置服务（默认值/开关·字体·缩放·字重持久化/钳制/effective 生效条件/通知）
   - `test/danmaku_random_color_test.dart` — 随机渐变色纯函数（HSV 转换/色相环绕/种子可复现/色轮均匀分布/高明度约束）
   - `test/danmaku_dedup_test.dart` — 弹幕去重纯函数（归一化判同/时间窗合并/链式推进/无序输入/原文保留）
   - `test/danmaku_episode_test.dart` — 弹幕集数提取/匹配纯函数（文件名各规则 + 集列表定位，切集自动匹配）
@@ -762,3 +805,6 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | Windows 拒绝枚举共享列表却允许直连具体共享 | 路径字段留空/`/` 才 `listShares` 列共享；被拒时就填 `/共享名` 跳过枚举直连 |
 | 网络浏览页按系统返回键直接退回首页而非上级目录 | `NetworkBrowserPage` 包 `PopScope(canPop:false)` 拦截系统返回，与左上角箭头一致逐级回退、到根才真正退出 |
 | 播放页网速忽高忽低 / 比系统状态栏低估（周期性差分 + 突发下载采样错位） | 代理层记录每笔 chunk 时间戳，网速 = 最近 1 秒滑动窗口字节 ÷ 实际跨度，1s 刷新、不做平滑；网速胶囊在线播放常驻（本地隐藏） |
+| 面板带背景色 `Container`（`_SettingsGroup`）内放 `ListTile` → 触发「ink 不可见」断言 | ListTile 外包 `Material(type: MaterialType.transparency)`（§4.12 弹幕字体段） |
+| `loadFontFromList` 只对当前进程有效，首帧前未注册回落默认字体 | `main()` 改 async，`runApp` 前 await 注册 App/弹幕自定义字体（§4.12） |
+| `AnimatedDefaultTextStyle` 用默认构造**不 merge** 父级 DefaultTextStyle，导致字体族名丢失（主题色/调色板/胶囊标签不跟随自定义字体） | 显式在 style 里带 `fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily`（§4.12） |

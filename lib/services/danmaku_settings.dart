@@ -9,6 +9,7 @@
 library;
 
 import 'package:flutter/foundation.dart';
+import 'package:moumou/models/danmaku_font_mode.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DanmakuSettings extends ChangeNotifier {
@@ -92,6 +93,15 @@ class DanmakuSettings extends ChangeNotifier {
   /// 校准弹幕相对视频画面的显示时间（对齐 Kazumi danmakuTimeOffset）。
   double _timeOffset = 0;
 
+  /// 弹幕字体模式（工作.md 第 4 点）：跟随系统 / 跟随 App / 自定义，默认跟随系统。
+  DanmakuFontMode _fontMode = DanmakuFontMode.followSystem;
+
+  /// 弹幕自定义字体族名（仅 [_fontMode] == custom 时生效；null = 未选）。
+  String? _customFontFamily;
+
+  /// 弹幕自定义字体文件名（filesDir/fonts/ 内，冷启动重读字节用）。
+  String? _customFontFile;
+
   bool get randomColor => _randomColor;
   double get fontSize => _fontSize;
   int get fontWeight => _fontWeight;
@@ -106,6 +116,9 @@ class DanmakuSettings extends ChangeNotifier {
   bool get massiveMode => _massiveMode;
   bool get deduplication => _deduplication;
   double get timeOffsetSeconds => _timeOffset;
+  DanmakuFontMode get fontMode => _fontMode;
+  String? get customFontFamily => _customFontFamily;
+  String? get customFontFile => _customFontFile;
 
   /// 启动时加载（main.dart 调用）
   Future<void> load() async {
@@ -131,7 +144,18 @@ class DanmakuSettings extends ChangeNotifier {
     _deduplication = prefs.getBool(_keyDedup) ?? false;
     _timeOffset = (prefs.getDouble(_keyTimeOffset) ?? 0)
         .clamp(minTimeOffsetSeconds, maxTimeOffsetSeconds);
+    _fontMode = _fontModeFromIndex(prefs.getInt(_keyFontMode));
+    _customFontFamily = prefs.getString(_keyCustomFontFamily);
+    _customFontFile = prefs.getString(_keyCustomFontFile);
     notifyListeners();
+  }
+
+  /// 从持久化 index 恢复字体模式（越界/损坏回落 followSystem）
+  static DanmakuFontMode _fontModeFromIndex(int? index) {
+    if (index != null && index >= 0 && index < DanmakuFontMode.values.length) {
+      return DanmakuFontMode.values[index];
+    }
+    return DanmakuFontMode.followSystem;
   }
 
   // ── 样式 setter（改值 → notifyListeners → 异步写盘）──
@@ -274,6 +298,30 @@ class DanmakuSettings extends ChangeNotifier {
     await prefs.setDouble(_keyTimeOffset, c);
   }
 
+  // ── 弹幕字体（工作.md 第 4 点）──
+
+  Future<void> setFontMode(DanmakuFontMode v) async {
+    await ensureLoaded();
+    if (_fontMode == v) return;
+    _fontMode = v;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_keyFontMode, v.index);
+  }
+
+  /// 设置弹幕自定义字体（族名 + 文件名）。注册进引擎由调用方负责
+  /// （见 AppFontSettings.registerFontFile；main.dart 冷启动时统一再注册）。
+  Future<void> setCustomFont(String family, String file) async {
+    await ensureLoaded();
+    if (_customFontFamily == family && _customFontFile == file) return;
+    _customFontFamily = family;
+    _customFontFile = file;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyCustomFontFamily, family);
+    await prefs.setString(_keyCustomFontFile, file);
+  }
+
   // ── 一键恢复默认（保留在面板底部，设置值全部回默认）──
 
   /// 恢复默认设置：样式与配置全部回默认值
@@ -294,6 +342,9 @@ class DanmakuSettings extends ChangeNotifier {
     _massiveMode = false;
     _deduplication = false;
     _timeOffset = 0;
+    _fontMode = DanmakuFontMode.followSystem;
+    _customFontFamily = null;
+    _customFontFile = null;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_keyFontSize, 16);
@@ -310,6 +361,9 @@ class DanmakuSettings extends ChangeNotifier {
     await prefs.setBool(_keyMassiveMode, false);
     await prefs.setBool(_keyDedup, false);
     await prefs.setDouble(_keyTimeOffset, 0);
+    await prefs.setInt(_keyFontMode, DanmakuFontMode.followSystem.index);
+    await prefs.remove(_keyCustomFontFamily);
+    await prefs.remove(_keyCustomFontFile);
   }
 
   bool get _isDefault =>
@@ -326,7 +380,10 @@ class DanmakuSettings extends ChangeNotifier {
       _showScroll &&
       !_massiveMode &&
       !_deduplication &&
-      _timeOffset == 0;
+      _timeOffset == 0 &&
+      _fontMode == DanmakuFontMode.followSystem &&
+      _customFontFamily == null &&
+      _customFontFile == null;
 
   // ── SharedPreferences 键 ──
 
@@ -344,6 +401,9 @@ class DanmakuSettings extends ChangeNotifier {
   static const _keyMassiveMode = 'danmaku_massive_mode';
   static const _keyDedup = 'danmaku_dedup';
   static const _keyTimeOffset = 'danmaku_time_offset';
+  static const _keyFontMode = 'danmaku_font_mode';
+  static const _keyCustomFontFamily = 'danmaku_font_family';
+  static const _keyCustomFontFile = 'danmaku_font_file';
 
   /// 测试用：恢复默认值并清加载标记（单例在测试间共享，避免状态泄漏）
   @visibleForTesting
@@ -363,6 +423,9 @@ class DanmakuSettings extends ChangeNotifier {
     _massiveMode = false;
     _deduplication = false;
     _timeOffset = 0;
+    _fontMode = DanmakuFontMode.followSystem;
+    _customFontFamily = null;
+    _customFontFile = null;
     notifyListeners();
   }
 }

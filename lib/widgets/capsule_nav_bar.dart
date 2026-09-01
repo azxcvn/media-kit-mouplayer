@@ -161,6 +161,9 @@ class _CapsuleItem extends StatelessWidget {
               color: color,
               fontSize: 10.5,
               fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              // AnimatedDefaultTextStyle 不 merge 父级样式，需显式带上全局
+              // 字体族名，否则胶囊导航标签丢失自定义字体（§4.12）
+              fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
             ),
             child: Text(label),
           ),
