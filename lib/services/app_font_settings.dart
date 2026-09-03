@@ -110,6 +110,13 @@ class AppFontSettings extends ChangeNotifier {
   Future<void> setEnabled(bool v) async {
     await ensureLoaded();
     if (_enabled == v) return;
+    // 启用时先把已选字体（重新）注册进引擎，再切换状态并通知：
+    // 冷启动后（尤其上次处于关闭状态时重启）registerCurrentFont 会跳过注册，
+    // 引擎字体集合里没有该 family；若只改开关不重新注册，重启后首次启用时
+    // 字体不生效。先注册后通知也避免「状态已生效但引擎未注册」的首帧回落。
+    if (v && _family != null && _file != null) {
+      await registerFontFile(_family!, _file!);
+    }
     _enabled = v;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -120,7 +127,13 @@ class AppFontSettings extends ChangeNotifier {
   /// 不在此处改 enabled（开关由用户显式控制）。
   Future<void> setFont(String family, String file) async {
     await ensureLoaded();
-    if (_family == family && _file == file) return;
+    if (_family == family && _file == file) {
+      // 族名/文件未变也重新注册：冷启动后引擎字体集合可能为空（上次关闭状态
+      // 重启时 registerCurrentFont 跳过注册），此时重选同一字体若直接早退，
+      // 字体仍未注册、不生效（反馈：重选同一字体无效，须换字体才生效）。
+      await registerFontFile(family, file);
+      return;
+    }
     _family = family;
     _file = file;
     notifyListeners();
