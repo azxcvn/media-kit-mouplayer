@@ -6,6 +6,8 @@ import 'package:moumou/pages/home/folder_detail_page.dart';
 import 'package:moumou/pages/home/tree_folder_page.dart';
 import 'package:moumou/pages/home/views/folder_list_view.dart';
 import 'package:moumou/pages/home/views/tree_list_view.dart';
+import 'package:moumou/pages/bilibili/bili_index_page.dart';
+import 'package:moumou/services/bilibili/bili_account.dart';
 import 'package:moumou/pages/media_info/media_info_page.dart';
 import 'package:moumou/pages/network/network_storage_page.dart';
 import 'package:moumou/pages/player/player_page.dart';
@@ -243,7 +245,7 @@ class _HomePageState extends State<HomePage>
   }
 
   /// 右下角速拨按钮：最近播放 / 打开链接 / 哔哩番剧 / 网络存储。
-  /// 仅「网络存储」已接入，其余三项预留入口后续实现。
+  /// 「哔哩番剧」进入番剧索引页（阶段二）；「最近播放」「打开链接」预留。
   Widget _buildSpeedDial() {
     return SpeedDialFab(
       heroTag: 'home_speed_dial',
@@ -261,7 +263,7 @@ class _HomePageState extends State<HomePage>
         SpeedDialAction(
           icon: Icons.live_tv_outlined,
           label: '哔哩番剧',
-          onTap: () => _comingSoon('哔哩番剧'),
+          onTap: _openBiliBangumi,
         ),
         SpeedDialAction(
           icon: Icons.cloud_outlined,
@@ -283,6 +285,19 @@ class _HomePageState extends State<HomePage>
   Future<void> _openNetworkStorage() async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const NetworkStoragePage()),
+    );
+  }
+
+  void _openBiliBangumi() {
+    // 未登录哔哩哔哩账号时仅提示，不进入番剧页（番剧索引/详情接口需要登录态）。
+    if (!BiliAccount.instance.isLogin) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('需要登录哔哩哔哩账号')));
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BiliIndexPage()),
     );
   }
 

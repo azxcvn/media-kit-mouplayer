@@ -99,6 +99,19 @@ class BiliAccount extends ChangeNotifier {
     return _applyCredential(cred);
   }
 
+  /// 确保 WBI 密钥可用：已缓存直接返回，否则调 nav 取回（游客态 nav 也返回
+  /// wbi_img）。失败返回空串（调用方据空串放弃签名请求）。
+  Future<String> ensureMixinKey() async {
+    if (_mixinKey.isNotEmpty) return _mixinKey;
+    try {
+      final nav = await auth.nav();
+      if (nav.mixinKey.isNotEmpty) _mixinKey = nav.mixinKey;
+    } on BiliApiException {
+      // 静默：无密钥时调用方自行降级
+    }
+    return _mixinKey;
+  }
+
   /// 刷新登录态（nav 自检）；网络失败不抛、保持现状。
   Future<void> refreshUser() async {
     try {

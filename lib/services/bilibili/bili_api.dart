@@ -15,6 +15,29 @@ abstract final class BiliApi {
   /// 登录态自检 + WBI 密钥来源（`data.wbi_img.img_url/sub_url`）。
   static const String nav = '${BiliConstants.apiBaseUrl}/x/web-interface/nav';
 
+  /// 番剧索引筛选条件（`data.filter[]` / `data.order[]`，season_type + type）。
+  static const String pgcIndexCondition =
+      '${BiliConstants.apiBaseUrl}/pgc/season/index/condition';
+
+  /// 番剧索引结果（分页列表，`data.list[]` + `data.has_next`）。
+  static const String pgcIndexResult =
+      '${BiliConstants.apiBaseUrl}/pgc/season/index/result';
+
+  /// 番剧季详情（`result`：标题/封面/简介/episodes[]/seasons[] 多季切换）。
+  static const String pgcSeasonDetail =
+      '${BiliConstants.apiBaseUrl}/pgc/view/web/season';
+
+  /// 番剧单集详情（ep_id 直达单集元数据）。
+  static const String pgcEpisodeInfo =
+      '${BiliConstants.apiBaseUrl}/pgc/season/episode/web/info';
+
+  /// 新番时间表（`result[]`：按日期分组，含 episodes）。
+  static const String pgcTimeline = '${BiliConstants.apiBaseUrl}/pgc/web/timeline';
+
+  /// 分类搜索（`search_type=media_bangumi` 搜番剧，WBI 签名）。
+  static const String searchByType =
+      '${BiliConstants.apiBaseUrl}/x/web-interface/wbi/search/type';
+
   // ── 登录域（passport.bilibili.com）────────────
 
   /// 生成 TV 扫码二维码（android_hd 通道，appSign；返回 `data.auth_code` + `data.url`）。

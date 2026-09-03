@@ -84,7 +84,8 @@ lib/
 │   ├── network_file.dart      # 远程目录/文件条目模型（供网络浏览 UI 展示）
 │   ├── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
 │   ├── danmaku_font_mode.dart # 弹幕字体三态枚举（跟随系统/跟随App/自定义）+ 解析纯函数
-│   └── bilibili_user.dart      # 哔哩哔哩用户信息模型（nav 接口，mid/昵称/头像/等级/经验/大会员状态/硬币）
+│   ├── bilibili_user.dart      # 哔哩哔哩用户信息模型（nav 接口，mid/昵称/头像/等级/经验/大会员状态/硬币）
+│   └── bili_bangumi.dart       # 哔哩番剧（PGC）模型：索引筛选/条目、搜索、季详情/选集/多季、时间表（fromJson 容错）
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
@@ -130,7 +131,8 @@ lib/
 │   │   ├── bili_credential_store.dart # 凭证加密存储（SESSDATA/bili_jct/DedeUserID + Cookie 解析纯函数）
 │   │   ├── bili_http.dart         #   统一请求：Cookie/UA/Referer/buvid3 注入 + 错误语义化
 │   │   ├── bili_auth_service.dart #   扫码生成/轮询/Cookie导入/nav自检/buvid预取/退出登录
-│   │   └── bili_account.dart      #   登录态/用户信息/WBI密钥/buvid（ChangeNotifier 单例）
+│   │   ├── bili_account.dart      #   登录态/用户信息/WBI密钥/buvid（ChangeNotifier 单例）
+│   │   └── bili_bangumi_service.dart # 番剧索引条件/分页/搜索(WBI)/季详情/时间表（§4.14）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -146,11 +148,18 @@ lib/
 │   ├── capsule_nav_bar.dart   #   悬浮胶囊导航
 │   ├── main_scaffold.dart     #   主壳（PageView + 悬浮胶囊）
 │   ├── speed_dial_fab.dart    #   首页右下角悬浮快速拨号（最近播放/打开链接/哔哩番剧/网络存储）
+│   ├── bili_cover_card.dart   #   番剧封面卡片（竖版封面 + 右上角标 + 左下角灰标 + 标题/副标题，索引/推荐/时间表共用）
+│   ├── bili_episode_tile.dart #   番剧单集磁贴（集号 + 集名 + 胶囊角标，内联选集/全屏选集页共用）
 │   └── marquee_text.dart      #   无缝循环跑马灯
 ├── pages/                     # 页面（每页一个目录）
 │   ├── bilibili/
 │   │   ├── bili_login_page.dart # 哔哩哔哩登录页（TV 扫码登录 + Cookie 导入，§4.13）
-│   │   └── bili_user_page.dart  # 哔哩哔哩账号信息页（头像/等级/经验/硬币/会员 + 退出登录）
+│   │   ├── bili_user_page.dart  # 哔哩哔哩账号信息页（头像/等级/经验/硬币/会员 + 退出登录）
+│   │   ├── bili_index_page.dart # 番剧首页（右上角搜索/链接解析 + 追番时间表 + 推荐网格，§4.14）
+│   │   ├── bili_bangumi_index_page.dart # 番剧索引页（多行筛选胶囊 + 封面网格 + 分页，§4.14）
+│   │   ├── bili_season_page.dart # 番剧详情页（封面+信息+简介+多季切换+内联选集+查看全部，§4.14）
+│   │   ├── bili_episode_picker_page.dart # 全屏选集页（30集分段 + 2列网格 + 正倒序，§4.14）
+│   │   └── bili_search_page.dart # 番剧搜索页（media_bangumi 搜索 + 分页，§4.14）
 │   ├── home/
 │   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发 + 搜索入口）
 │   │   ├── views/             #   首页专属视图组件
@@ -246,6 +255,7 @@ lib/
     ├── network_path.dart      #   网络路径规范化/校验/子路径拼接
     ├── bili_wbi.dart          #   WBI 签名纯函数（getMixinKey/encWbi，混淆表 64 项）
     ├── bili_app_sign.dart     #   TV 端 appSign 纯函数（appkey/appsec MD5 签名）
+    ├── bili_bangumi_url.dart  #   番剧链接解析纯函数（提取 ss/ep/BV 三种令牌）
     └── network_mime_types.dart # 文件名→MIME 类型映射
 ```
 
@@ -634,6 +644,57 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 
 ---
 
+### 4.14 哔哩番剧索引 / 搜索 / 详情（哔哩生态阶段二）
+
+> 调研方案见 `杂项文件/bili-ecosystem-research/`；接入进度见 `docs/哔哩哔哩生态接入状况.md`。
+> 阶段二只做「索引 / 搜索 / 详情 / 时间表」，**播放属阶段三**（选集点击提示「即将上线」）。
+
+**分层**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 模型 | `models/bili_bangumi.dart` | 索引筛选（filter/value/order）、索引条目/结果、搜索条目/结果、季详情/选集/多季、时间表；`fromJson` 容错（数字字段兼容字符串） |
+| 纯函数 | `utils/bili_bangumi_url.dart` | 链接解析：从粘贴文本提取 `ss(\d+)` / `ep(\d+)` / `BV[0-9A-Za-z]{10}` 令牌 |
+| 组件 | `widgets/bili_cover_card.dart` | 番剧封面卡片（竖版封面 + 右上角标 + 左下角灰标 + 标题/副标题），索引/推荐/时间表共用 |
+| 组件 | `widgets/bili_episode_tile.dart` | 番剧单集磁贴（集号 + 集名 + 胶囊角标），内联选集/全屏选集页共用 |
+| 服务 | `services/bilibili/bili_bangumi_service.dart` | condition（type=0）→ 索引 result（type=0）/ 推荐（type=1, order=3）→ season 详情；搜索（WBI）；时间表（番剧+国创合并） |
+| UI | `pages/bilibili/bili_index_page.dart` | 番剧首页（PiliPlus `PgcPage` 对齐）：右上角搜索/链接解析 + 追番时间表 + 推荐网格 |
+| UI | `pages/bilibili/bili_bangumi_index_page.dart` | 番剧索引页（PiliPlus `PgcIndexPage` 对齐）：多行筛选胶囊 + 封面网格 + 分页 |
+| UI | `pages/bilibili/bili_season_page.dart` | 详情页：封面（评分角标）+ 信息面板 + 简介 + 多季切换 + 内联选集 + 查看全部 |
+| UI | `pages/bilibili/bili_episode_picker_page.dart` | 全屏选集页：30 集分段 + 2 列网格 + 正序/倒序 |
+| UI | `pages/bilibili/bili_search_page.dart` | 搜索页：顶部搜索框 + 结果分页，点击进详情 |
+| 入口 | `pages/home/home_page.dart` | 速拨「哔哩番剧」→ `BiliIndexPage`（未登录 `BiliAccount.isLogin` 先 toast 提示需登录） |
+
+**关键决策**：
+- **页面结构对齐 PiliPlus**：番剧首页 = `追番时间表`（日期 Tab + 横向选集封面卡，番剧 types=1
+  + 国创 types=4 两条时间线按日期合并）+ `推荐`（`order=3` 最常追番，封面网格，标题右侧
+  「索引」进 `BiliBangumiIndexPage`）；筛选（排序 + 各维度胶囊）放在独立的索引页，多行
+  横向滚动、>5 行折叠为「展开/收起」，不用弹窗。
+- **索引两接口 type 区分**：condition 与索引 result 用 `type=0`（+ `season_type` + 各筛选字段，
+  排序值来自 condition 的 `order[]` 动态下发）；推荐网格用 `type=1` + 固定 `order=3` +
+  全 `-1` 筛选 + `pagesize=20`（对齐 PiliPlus `pgc.dart` 的两条路径）。
+- **封面卡片与网格**：竖版封面（`Expanded` + 网格 `childAspectRatio≈0.58` 得近似 3:4）+
+  右上角标（`badge` 主题色）+ 左下角灰标（`order`/放送时间）+ 标题/副标题，索引/推荐/
+  时间表三处复用 `BiliCoverCard`；**推荐/索引网格固定 3 列**（`FixedCrossAxisCount(3)`，
+  与时间表卡片同尺寸）；追番时间表日期 Tab 与索引筛选胶囊选中态均为**胶囊式**（`borderRadius
+  20` / Tab `indicator` 圆角背景）。
+- **详情页信息面板**（对齐 `PgcIntroPage` 行结构）：封面 115×153 左下角「评分」角标；右侧
+  逐行排：标题 → 播放·弹幕 → 连载状态·话数（`new_ep.desc`，缺失按选集数兜底「共 N 集」）→
+  地区·发行时间 → 点赞·投币·收藏（读 `stat.likes`/`coins`/`favorite`）；不再重复展示季名/演员表。
+  **简介独立成可展开/收起区**（`TextPainter.didExceedMaxLines` 判定 >3 行才显示「展开」）。
+  选集统一用「内联前 12 集（2 列网格）+ 查看全部」：`BiliEpisodeTile` 显示集号 + 集名
+  （`long_title` 去重前缀）+ 胶囊角标（会员→VIP 粉、限免→绿、预告→灰），不放封面图；
+  「查看全部」进 `BiliEpisodePickerPage`（30 集一段分段 + 2 列网格 + 正序/倒序）。
+- **搜索走 WBI 签名**：`search_type=media_bangumi`；mixinKey 复用 `BiliAccount.ensureMixinKey()`
+  （游客态 nav 也返回 wbi_img）。签名查询串与 `biliEncWbi` 同一套编码，拼接后直接给 URL。
+- **链接解析直达详情**：`ep_id`/`season_id` 都可喂 `/pgc/view/web/season`，`BiliSeasonPage`
+  同时接受 `seasonId`/`epId`；BV 号（UGC）提示「播放属阶段三」。
+- **数字字段防崩**：B 站部分端点数字字段以字符串下发，`fromJson` 一律走 `_asInt`/`_asDouble`
+  （兼容 num/String），不用裸 `as num?`（历史「type String is not a subtype of type num」崩溃）。
+- **选集点击**：统一 toast「播放功能即将上线（阶段三）」（播放属阶段三）。
+
+---
+
 ## 5. 新增功能指南（按功能类型）
 
 ### 5.1 新增一个页面
@@ -754,6 +815,8 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/player_danmaku_settings_panel_test.dart` — 弹幕设置面板（两段式布局/开关滑杆实时写设置/恢复默认/读数联动）
   - `test/player_panel_theme_test.dart` — 播放器暗色面板强调色跟随主题（换主题色滑杆轨道/拇指随之改变且不等于旧写死蓝 0xFF4FC3F7；保留无气泡外观；浅色主题下派生色更亮；同 seed 复用缓存实例）
   - `test/subtitle_file_picker_panel_test.dart` — 自建选择器面板（记忆文件夹被删向上回退/空目录正常落地/导航失败维持原状/选择回调+文件夹记忆）
+  - `test/bili_bangumi_test.dart` — 番剧模型 fromJson（索引/条件/搜索/季详情/选集/时间表 + 数字字段字符串兼容）+ 链接解析纯函数（ss/ep/BV）
+  - `test/bili_bangumi_service_test.dart` — 番剧服务（MockClient：条件/索引分页/推荐/搜索 WBI 签名/季详情 season_id·ep_id/时间表合并 + 业务错误语义化）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
