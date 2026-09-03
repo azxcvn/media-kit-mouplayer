@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:moumou/services/bilibili/bili_constants.dart';
@@ -29,10 +30,14 @@ class BiliHttp {
   /// 设备指纹 buvid3（预取自 `/x/frontend/finger/spi`）。
   String? buvid3;
 
-  Map<String, String> _headers({bool withCookie = true, bool withReferer = true}) {
+  Map<String, String> _headers({
+    bool withCookie = true,
+    bool withReferer = true,
+    bool jsonAccept = true,
+  }) {
     return {
       'User-Agent': BiliConstants.webUserAgent,
-      'Accept': 'application/json',
+      'Accept': jsonAccept ? 'application/json' : '*/*',
       if (withReferer) 'Referer': BiliConstants.referer,
       if (withCookie && cookie != null && cookie!.isNotEmpty) 'Cookie': cookie!,
       if (buvid3 != null && buvid3!.isNotEmpty) 'buvid3': buvid3!,
@@ -59,6 +64,38 @@ class BiliHttp {
       throw BiliApiException('网络请求失败: $e');
     }
     return _decode(response);
+  }
+
+  /// GET 请求，返回原始响应字节（弹幕等二进制响应用，不做 JSON 解码）。
+  Future<Uint8List> getBytes(
+    String url, {
+    Map<String, String>? query,
+    bool withCookie = true,
+    bool withReferer = true,
+  }) async {
+    var uri = Uri.parse(url);
+    if (query != null && query.isNotEmpty) {
+      uri = uri.replace(queryParameters: query);
+    }
+    final http.Response response;
+    try {
+      response = await _client
+          .get(
+            uri,
+            headers: _headers(
+              withCookie: withCookie,
+              withReferer: withReferer,
+              jsonAccept: false,
+            ),
+          )
+          .timeout(const Duration(seconds: 30));
+    } catch (e) {
+      throw BiliApiException('网络请求失败: $e');
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw BiliApiException('请求失败（HTTP ${response.statusCode}）');
+    }
+    return response.bodyBytes;
   }
 
   /// POST（表单编码）请求，返回 UTF-8 解码后的 JSON Map。

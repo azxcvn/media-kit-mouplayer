@@ -30,13 +30,13 @@ void main() {
     expect(user.vipLabel, '年度大会员');
   });
 
-  test('vipLabel 按 vipType：普通会员 / 大会员 / 年度大会员', () {
+  test('vipLabel 双字段判定：两者同时为真才判大会员', () {
     expect(
       BiliUser.fromJson({'vipStatus': 1, 'vipType': 1}).vipLabel,
       '大会员',
     );
     expect(
-      BiliUser.fromJson({'vipStatus': 2, 'vipType': 2}).vipLabel,
+      BiliUser.fromJson({'vipStatus': 1, 'vipType': 2}).vipLabel,
       '年度大会员',
     );
     expect(
@@ -45,16 +45,22 @@ void main() {
     );
   });
 
-  test('vipType=0 时即使 vipStatus 误报也判为普通会员', () {
-    // 关键修复：vipStatus 对非大会员用户可能返回 1，vipType=0 才是真相
+  test('vipType 误报（TV 通道 vipType=1 但 vipStatus=0）判为普通会员', () {
+    expect(
+      BiliUser.fromJson({'vipStatus': 0, 'vipType': 1}).vipLabel,
+      '普通会员',
+    );
+  });
+
+  test('vipStatus 误报（vipStatus=1 但 vipType=0）判为普通会员', () {
     expect(
       BiliUser.fromJson({'vipStatus': 1, 'vipType': 0}).vipLabel,
       '普通会员',
     );
   });
 
-  test('vipType=2 即使 vipStatus 未明确也判为年度大会员', () {
-    expect(BiliUser.fromJson({'vipType': 2}).vipLabel, '年度大会员');
+  test('vipType=2 但 vipStatus 缺省(0) 也判为普通会员', () {
+    expect(BiliUser.fromJson({'vipType': 2}).vipLabel, '普通会员');
   });
 
   test('满级(6)时 nextExp 缺省回退 currentExp', () {

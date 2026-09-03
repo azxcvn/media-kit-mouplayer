@@ -212,6 +212,7 @@ Future<bool> openAndRestore(
   String path, {
   Duration? saved,
   Future<void> Function()? prepare,
+  Future<void> Function()? beforePlay,
   Duration confirmTimeout = const Duration(seconds: 4),
 }) async {
   final restore = saved != null && saved > Duration.zero;
@@ -220,6 +221,8 @@ Future<bool> openAndRestore(
   await _waitDuration(player);
   // 倍速 / 超分等准备（播放前完成）
   if (prepare != null) await prepare();
+  // 播放前钩子（B 站双流：外挂音轨在 play 前挂载，避免开头无声音）
+  if (beforePlay != null) await beforePlay();
   if (!restore) {
     await player.play();
     return false;

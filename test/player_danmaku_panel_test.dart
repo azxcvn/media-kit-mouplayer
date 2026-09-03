@@ -1,6 +1,7 @@
 import 'package:canvas_danmaku/canvas_danmaku.dart' as canvas;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:moumou/models/danmaku_entry.dart';
 import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/pages/player/views/player_danmaku_panel.dart';
 import 'package:moumou/services/danmaku_network_service.dart';
@@ -129,6 +130,12 @@ class _FakeDanmakuController extends ChangeNotifier
     String? serverUrl,
   }) async =>
       false;
+
+  @override
+  void loadBiliDanmaku(List<DanmakuEntry> entries) {}
+
+  @override
+  void appendBiliDanmaku(List<DanmakuEntry> entries) {}
 
   @override
   Future<List<DanmakuMatchItem>> matchCurrentVideo() async => const [];

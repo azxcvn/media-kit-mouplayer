@@ -85,7 +85,9 @@ lib/
 │   ├── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
 │   ├── danmaku_font_mode.dart # 弹幕字体三态枚举（跟随系统/跟随App/自定义）+ 解析纯函数
 │   ├── bilibili_user.dart      # 哔哩哔哩用户信息模型（nav 接口，mid/昵称/头像/等级/经验/大会员状态/硬币）
-│   └── bili_bangumi.dart       # 哔哩番剧（PGC）模型：索引筛选/条目、搜索、季详情/选集/多季、时间表（fromJson 容错）
+│   ├── bili_bangumi.dart       # 哔哩番剧（PGC）模型：索引筛选/条目、搜索、季详情/选集/多季、时间表（fromJson 容错）
+│   ├── bili_dash.dart          # playurl DASH 模型：流条目/清晰度档/OP-ED clip（baseUrl/baseUrls 双格式兼容，§4.15）
+│   └── bili_media.dart         # 在线播放值对象：DASH 流 + 弹幕/章节元数据 + 画质切换回调（§4.15）
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
@@ -132,7 +134,12 @@ lib/
 │   │   ├── bili_http.dart         #   统一请求：Cookie/UA/Referer/buvid3 注入 + 错误语义化
 │   │   ├── bili_auth_service.dart #   扫码生成/轮询/Cookie导入/nav自检/buvid预取/退出登录
 │   │   ├── bili_account.dart      #   登录态/用户信息/WBI密钥/buvid（ChangeNotifier 单例）
-│   │   └── bili_bangumi_service.dart # 番剧索引条件/分页/搜索(WBI)/季详情/时间表（§4.14）
+│   │   ├── bili_bangumi_service.dart # 番剧索引条件/分页/搜索(WBI)/季详情/时间表（§4.14）
+│   │   ├── bili_video_service.dart   # PGC/UGC playurl（DASH选流+清晰度+WBI签名，§4.15）
+│   │   ├── bili_danmaku_service.dart # B站原声弹幕（seg.so protobuf 解码 + XML 缓存，§4.15）
+│   │   ├── bili_stream_proxy.dart    # 本地 HTTP 代理（绕过 libmpv mbedTLS，§4.15）
+│   │   └── pb/
+│   │       └── pb_reader.dart        # 手写 protobuf wire 解码器（varint+length-delimited，§4.15）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -156,9 +163,10 @@ lib/
 │   │   ├── bili_login_page.dart # 哔哩哔哩登录页（TV 扫码登录 + Cookie 导入，§4.13）
 │   │   ├── bili_user_page.dart  # 哔哩哔哩账号信息页（头像/等级/经验/硬币/会员 + 退出登录）
 │   │   ├── bili_index_page.dart # 番剧首页（右上角搜索/链接解析 + 追番时间表 + 推荐网格，§4.14）
-│   │   ├── bili_bangumi_index_page.dart # 番剧索引页（多行筛选胶囊 + 封面网格 + 分页，§4.14）
+│   │   ├── bili_bangumi_index_page.dart # 番剧索引页（多行筛选胶囊 + 封面网格 + 分页 + 折叠/展开动画，§4.14）
 │   │   ├── bili_season_page.dart # 番剧详情页（封面+信息+简介+多季切换+内联选集+查看全部，§4.14）
 │   │   ├── bili_episode_picker_page.dart # 全屏选集页（30集分段 + 2列网格 + 正倒序，§4.14）
+│   │   ├── bili_play_launcher.dart # 播放启动器（playurl → BiliMedia → PlayerPage，§4.15）
 │   │   └── bili_search_page.dart # 番剧搜索页（media_bangumi 搜索 + 分页，§4.14）
 │   ├── home/
 │   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发 + 搜索入口）
@@ -623,10 +631,18 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 原生 | `MainActivity.kt` / `AndroidManifest.xml` | `openBilibiliScan`（bilibili:// 深链直接 startActivity）+ `<queries>` 声明 |
 
 **关键决策**：
-- **扫码登录对齐 PiliPlus 的 TV 通道**（`android_hd` + appSign，`auth_code`/`poll` 两接口）：
+- **扫码登录对齐 PiliPlus 的 TV 通道**（`mobi_app=android_hd` + appSign，`auth_code`/`poll` 两接口）：
   凭证直接 JSON 返回（`token_info.access_token/refresh_token` + `cookie_info.cookies` 的
   SESSDATA/bili_jct/DedeUserID），**不依赖 Set-Cookie**（Web 扫码的 data.url 通常为空、
   凭证只在 Set-Cookie 头，易踩坑）。access_token 供阶段三 tv playurl 取更高画质。
+- **TV 扫码请求头对齐 PiliPlus `getHDcode`/`codePoll` 实际头**（`AnonymousAccount.headers` =
+  `Constants.baseHeaders`）：`app-key: android64` + `x-bili-aurora-zone: sh001` + Referer，
+  **不是** `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid`（那是 PiliPlus
+  短信/密码登录的 `LoginHttp.headers`，扫码不适用）；发「真 TV 端」头会被风控按真机 TV 链路校验。
+- **已知未解决：国际版扫码登录**：国际版客户端（`com.bilibili.app.in`，`android_i`，走 biliintl
+  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。已尝试对齐 PiliPlus
+  头仍未解决；彻底解法 = 改走 Web 扫码（`/x/passport-login/web/qrcode/*`，老项目小喵 player 方案），
+  代价仅 Web 画质（拿不到 TV access_token）。
 - **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + access_token/refresh_token 走
   `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
   永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
@@ -647,7 +663,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 ### 4.14 哔哩番剧索引 / 搜索 / 详情（哔哩生态阶段二）
 
 > 调研方案见 `杂项文件/bili-ecosystem-research/`；接入进度见 `docs/哔哩哔哩生态接入状况.md`。
-> 阶段二只做「索引 / 搜索 / 详情 / 时间表」，**播放属阶段三**（选集点击提示「即将上线」）。
+> 阶段二只做「索引 / 搜索 / 详情 / 时间表」；播放、弹幕、OP/ED 章节与清晰度属阶段三（§4.15）。
 
 **分层**（自下而上）：
 
@@ -659,7 +675,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 组件 | `widgets/bili_episode_tile.dart` | 番剧单集磁贴（集号 + 集名 + 胶囊角标），内联选集/全屏选集页共用 |
 | 服务 | `services/bilibili/bili_bangumi_service.dart` | condition（type=0）→ 索引 result（type=0）/ 推荐（type=1, order=3）→ season 详情；搜索（WBI）；时间表（番剧+国创合并） |
 | UI | `pages/bilibili/bili_index_page.dart` | 番剧首页（PiliPlus `PgcPage` 对齐）：右上角搜索/链接解析 + 追番时间表 + 推荐网格 |
-| UI | `pages/bilibili/bili_bangumi_index_page.dart` | 番剧索引页（PiliPlus `PgcIndexPage` 对齐）：多行筛选胶囊 + 封面网格 + 分页 |
+| UI | `pages/bilibili/bili_bangumi_index_page.dart` | 番剧索引页（PiliPlus `PgcIndexPage` 对齐）：多行筛选胶囊 + 封面网格 + 分页 + 折叠/展开动画 |
 | UI | `pages/bilibili/bili_season_page.dart` | 详情页：封面（评分角标）+ 信息面板 + 简介 + 多季切换 + 内联选集 + 查看全部 |
 | UI | `pages/bilibili/bili_episode_picker_page.dart` | 全屏选集页：30 集分段 + 2 列网格 + 正序/倒序 |
 | UI | `pages/bilibili/bili_search_page.dart` | 搜索页：顶部搜索框 + 结果分页，点击进详情 |
@@ -669,7 +685,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 - **页面结构对齐 PiliPlus**：番剧首页 = `追番时间表`（日期 Tab + 横向选集封面卡，番剧 types=1
   + 国创 types=4 两条时间线按日期合并）+ `推荐`（`order=3` 最常追番，封面网格，标题右侧
   「索引」进 `BiliBangumiIndexPage`）；筛选（排序 + 各维度胶囊）放在独立的索引页，多行
-  横向滚动、>5 行折叠为「展开/收起」，不用弹窗。
+  横向滚动、>5 行折叠为「展开/收起」（`SizeTransition` 高度动画，`AnimationController` 250ms easeInOut，展开/收起两侧都平滑过渡），不用弹窗。
 - **索引两接口 type 区分**：condition 与索引 result 用 `type=0`（+ `season_type` + 各筛选字段，
   排序值来自 condition 的 `order[]` 动态下发）；推荐网格用 `type=1` + 固定 `order=3` +
   全 `-1` 筛选 + `pagesize=20`（对齐 PiliPlus `pgc.dart` 的两条路径）。
@@ -688,10 +704,59 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 - **搜索走 WBI 签名**：`search_type=media_bangumi`；mixinKey 复用 `BiliAccount.ensureMixinKey()`
   （游客态 nav 也返回 wbi_img）。签名查询串与 `biliEncWbi` 同一套编码，拼接后直接给 URL。
 - **链接解析直达详情**：`ep_id`/`season_id` 都可喂 `/pgc/view/web/season`，`BiliSeasonPage`
-  同时接受 `seasonId`/`epId`；BV 号（UGC）提示「播放属阶段三」。
+  同时接受 `seasonId`/`epId`；BV 号（UGC）走阶段三 UGC 播放（§4.15）。
 - **数字字段防崩**：B 站部分端点数字字段以字符串下发，`fromJson` 一律走 `_asInt`/`_asDouble`
   （兼容 num/String），不用裸 `as num?`（历史「type String is not a subtype of type num」崩溃）。
-- **选集点击**：统一 toast「播放功能即将上线（阶段三）」（播放属阶段三）。
+- **选集点击**：解析 playurl 进入播放页（阶段三在线播放，§4.15）。
+
+---
+
+### 4.15 哔哩在线播放 / 弹幕 / 章节（哔哩生态阶段三）
+
+> 阶段三打通「番剧在线播放」：DASH 双流 + 清晰度切换 + B 站原声弹幕（实时 + 缓存）
+> + OP/ED 章节跳段，并预防 libmpv 内置 mbedTLS 与 B 站 CDN 的 TLS 兼容问题。
+
+**分层**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 模型 | `models/bili_dash.dart` | playurl DASH 结果：`BiliDashStream`（video/audio 流，兼容 `baseUrl`/`base_url`/`baseUrls[]` 双格式）、`BiliQualityOption`（accept_quality + 描述）、`BiliClipInfo`（OP/ED clip）、`BiliUgcVideo`（bvid→cid） |
+| 模型 | `models/bili_media.dart` | 在线播放值对象：当前画质 DASH 流 + cid/aid（弹幕）+ clips（章节）+ `switchQuality(qn)` 回调 |
+| 解码 | `services/bilibili/pb/pb_reader.dart` | 手写 protobuf wire 解码（varint + length-delimited，跳过未知字段），弹幕两条消息专用 |
+| 服务 | `services/bilibili/bili_video_service.dart` | PGC `/pgc/player/web/v2/playurl`（`result.video_info`）+ UGC `/x/player/wbi/playurl`（`data`）；`fnval=4048/fourk=1` + WBI；bvid→cid |
+| 服务 | `services/bilibili/bili_danmaku_service.dart` | 分段弹幕：`/x/v2/dm/web/view`（`dmSge.total` 分段数）→ `/x/v2/dm/web/seg.so`（`elems`）→ `DanmakuEntry`；失败降级 `comment.bilibili.com/{cid}.xml`；XML 缓存 |
+| 服务 | `services/bilibili/bili_stream_proxy.dart` | 本地 HTTP 流代理：Dart `HttpClient`（BoringSSL）拉 B 站 CDN，mpv 从 127.0.0.1 明文播放，绕开 mbedTLS；转发 Range |
+| UI | `pages/player/player_page.dart` | `PlayerPage` 新增 `biliMedia`：双流（video + `audio-add`）、更多面板「清晰度」入口、B 站弹幕装载、OP/ED 章节喂入 |
+| UI | `pages/player/views/player_quality_panel.dart` | 清晰度面板：列出 `accept_quality` 档、当前档高亮、点击切换（乐观更新 + 失败回退） |
+| 入口 | `pages/bilibili/bili_play_launcher.dart` | 播放启动器：解析 playurl → 构造 `BiliMedia` → push `PlayerPage`（番剧/选集/BV 三处复用） |
+
+**关键决策**：
+- **双流播放（免合并秒开）**：DASH video 流作主媒体，audio 流经 mpv `audio-add` 外挂；
+  复用 `openAndRestore` 新增的 `beforePlay` 钩子在 `play()` 前挂音轨，避免开头无声音。
+- **mbedTLS 绕过（小喵 player 同源问题）**：本项目自编 `libmpv.so` 静态链接 mbedTLS，
+  与部分 B 站 CDN 的 TLS 握手不兼容（小喵 commit 49537c3d 用 OkHttp 本地代理绕过）。
+  纯 Dart 复刻为 `BiliStreamProxy`：`HttpClient`（BoringSSL）出站拉流 + `HttpServer`
+  监听 127.0.0.1 明文喂 mpv；转发 `Range`/`content-range`/`accept-ranges` 支持拖动；
+  播放结束 `dispose` 时 `stop()` 释放端口。**根治方案**见下方「内核重编」。
+- **清晰度**：默认请求最高档（`qn=127`，服务端按账户权限回落），可选档来自
+  `accept_quality` + `accept_description`；切换档位重新请求 playurl（换 URL 重开 +
+  `seek` 保持进度），不做 DASH 动态自适应。
+- **弹幕**：REST 分段 protobuf（无需 gRPC/WBI），`progress`(毫秒)→秒、`color`(十进制)→RGB、
+  mode 4/5 映射底部/顶部其余滚动；跨分段按 id 去重、按时间升序；落盘 `filesDir/danmaku/
+  bilibili/{cid}.xml`（标准 B 站 XML，复用 `parseDanmakuXml`，下载场景可进同名弹幕链路）。
+  并发 ≤3 分批，失败降级旧 XML。
+- **OP/ED 章节**：来自 playurl 响应的 `clip_info_list`（`{start,end,clipType}`，秒，
+  `CLIP_TYPE_OP`/`CLIP_TYPE_ED`），映射 `ChapterInfo`（OP/ED）+ `SkipSegment`
+  （intro/outro）喂入 `ChapterTracker.setExternalChapters`（精确起止，不走关键词派生）。
+
+**内核重编（OpenSSL 根治 mbedTLS，可选，需在构建机执行）**：
+> 本地代理是运行时绕过；若想根治，在 `libmpv-android-video-build`（mk-thumbnail 分支）
+> 把 libmpv/FFmpeg 的 TLS 后端从 mbedTLS 换成 OpenSSL 重编 `.so`，替换
+> `third_party/media_kit_libs_android_video/android/jars/*.jar` 内的 `libmpv.so`。
+> 重编后无需再走 `BiliStreamProxy`（`_registerBiliProxy` 代理失败已自动回退直连）。
+> 具体改动点：构建脚本里 mpv 的 `--enable-mbedtls` → `--enable-openssl`（或 FFmpeg
+> `--enable-openssl`），并确保 OpenSSL 交叉编译产物被链接；改完用
+> `strings libmpv.so | grep -i mbedtls` 验证 mbedTLS 符号消失。
 
 ---
 
@@ -817,6 +882,11 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/subtitle_file_picker_panel_test.dart` — 自建选择器面板（记忆文件夹被删向上回退/空目录正常落地/导航失败维持原状/选择回调+文件夹记忆）
   - `test/bili_bangumi_test.dart` — 番剧模型 fromJson（索引/条件/搜索/季详情/选集/时间表 + 数字字段字符串兼容）+ 链接解析纯函数（ss/ep/BV）
   - `test/bili_bangumi_service_test.dart` — 番剧服务（MockClient：条件/索引分页/推荐/搜索 WBI 签名/季详情 season_id·ep_id/时间表合并 + 业务错误语义化）
+  - `test/bili_dash_test.dart` — playurl DASH 模型（DASH 解析/baseUrl·baseUrls 双格式/清晰度档/clips/dolby·flac 合并/数字字符串兼容/默认选流优先 30280）
+  - `test/bili_pb_test.dart` — protobuf wire 解码器（varint/length-delimited/未知字段跳过）+ 弹幕消息字段号解析（DmWebViewReply.dmSge.total / DanmakuElem）
+  - `test/bili_danmaku_service_test.dart` — B 站弹幕服务（MockClient：分段 protobuf 抓取解码/跨分段去重/state==1 关闭/降级旧 XML deflate/XML 缓存回读往返）
+  - `test/bili_video_service_test.dart` — 视频服务（MockClient：PGC result.video_info/UGC data/resolveUgcVideo/WBI 签名/错误码友好提示/密钥缺失）
+  - `test/bili_stream_proxy_test.dart` — 本地流代理（转发字节/Range 与响应头透传/未注册 404/start·stop 生命周期）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---

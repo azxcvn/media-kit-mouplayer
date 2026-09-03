@@ -38,6 +38,18 @@ abstract final class BiliApi {
   static const String searchByType =
       '${BiliConstants.apiBaseUrl}/x/web-interface/wbi/search/type';
 
+  /// PGC 播放地址（v2，DASH 在 `result.video_info` 下；Cookie + WBI）。
+  static const String pgcPlayUrl =
+      '${BiliConstants.apiBaseUrl}/pgc/player/web/v2/playurl';
+
+  /// UGC 播放地址（WBI 签名，DASH 在 `data` 下）。
+  static const String ugcPlayUrl =
+      '${BiliConstants.apiBaseUrl}/x/player/wbi/playurl';
+
+  /// UGC 视频详情（bvid → cid/标题/分P，`data.pages[]`）。
+  static const String ugcView =
+      '${BiliConstants.apiBaseUrl}/x/web-interface/view';
+
   // ── 登录域（passport.bilibili.com）────────────
 
   /// 生成 TV 扫码二维码（android_hd 通道，appSign；返回 `data.auth_code` + `data.url`）。

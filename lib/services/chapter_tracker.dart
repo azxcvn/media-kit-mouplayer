@@ -128,6 +128,21 @@ class ChapterTracker extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 直接设置外部章节与跳过片段（B 站 playurl 的 `clip_info_list` 等已有
+  /// 精确起止时间的来源，不走章节标题关键词派生）。
+  void setExternalChapters(
+    List<ChapterInfo> chapters,
+    List<SkipSegment> segments,
+  ) {
+    _chipTimer?.cancel();
+    _autoChipVisible = false;
+    _chapters = List.of(chapters);
+    _skipSegments = List.of(segments);
+    _currentChapterIndex = null;
+    _activeSegment = null;
+    notifyListeners();
+  }
+
   /// 播放位置流驱动：更新当前章节与所在跳过片段。
   ///
   /// 进入片段（从无到有）时启动自动弹出窗口；离开片段时立即关闭窗口。

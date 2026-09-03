@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/bili_bangumi.dart';
 import 'package:moumou/pages/bilibili/bili_bangumi_index_page.dart';
+import 'package:moumou/pages/bilibili/bili_play_launcher.dart';
 import 'package:moumou/pages/bilibili/bili_search_page.dart';
 import 'package:moumou/pages/bilibili/bili_season_page.dart';
 import 'package:moumou/services/bilibili/bili_bangumi_service.dart';
@@ -110,7 +111,7 @@ class _BiliIndexPageState extends State<BiliIndexPage> {
     );
     if (ref == null || !mounted || !ref.isValid) return;
     if (ref.isUgc) {
-      _toast('BV 视频在线播放属阶段三，即将上线');
+      await playBiliBvid(context, ref.bvid);
       return;
     }
     Navigator.of(context).push(
@@ -121,12 +122,6 @@ class _BiliIndexPageState extends State<BiliIndexPage> {
         ),
       ),
     );
-  }
-
-  void _toast(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

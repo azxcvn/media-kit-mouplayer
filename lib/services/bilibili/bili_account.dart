@@ -38,6 +38,14 @@ class BiliAccount extends ChangeNotifier {
   String get buvid3 => _buvid3;
   String get mixinKey => _mixinKey;
 
+  /// 共享请求实例（Cookie/buvid3 已注入）。视频/弹幕等需登录态的服务
+  /// 未显式注入 [BiliHttp] 时默认复用此实例，避免「新建空实例不带登录
+  /// Cookie → playurl 落回 480P、弹幕被降级」的问题。
+  BiliHttp get http => _http;
+
+  /// 当前登录 Cookie 串（未登录为空串），供测试/日志读取。
+  String get cookieString => _credential?.cookieString ?? '';
+
   /// 当前登录凭证（测试/HTTP 层需要时读取）。
   @visibleForTesting
   BiliCredential? get credential => _credential;

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:moumou/models/bili_bangumi.dart';
 import 'package:moumou/pages/bilibili/bili_episode_picker_page.dart';
+import 'package:moumou/pages/bilibili/bili_play_launcher.dart';
 import 'package:moumou/services/bilibili/bili_bangumi_service.dart';
 import 'package:moumou/services/bilibili/bili_http.dart';
 import 'package:moumou/widgets/bili_episode_tile.dart';
@@ -60,11 +61,8 @@ class _BiliSeasonPageState extends State<BiliSeasonPage> {
     }
   }
 
-  void _toastComingSoon() {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('播放功能即将上线（阶段三）')));
-  }
+  /// 选集点击：解析 playurl 并进入播放页（阶段三在线播放）。
+  void _playEpisode(BiliEpisode ep) => playBiliEpisode(context, ep);
 
   @override
   Widget build(BuildContext context) {
@@ -149,7 +147,7 @@ class _BiliSeasonPageState extends State<BiliSeasonPage> {
       itemCount: eps.length,
       itemBuilder: (context, i) => BiliEpisodeTile(
         episode: eps[i],
-        onTap: _toastComingSoon,
+        onTap: () => _playEpisode(eps[i]),
       ),
     );
   }

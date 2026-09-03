@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:moumou/models/bili_bangumi.dart';
+import 'package:moumou/pages/bilibili/bili_play_launcher.dart';
 import 'package:moumou/widgets/bili_episode_tile.dart';
 
 /// 全屏选集页：按 30 集一段分段（「1-30」「31-60」…）+ 2 列网格（集号 + 集名 +
@@ -41,11 +42,7 @@ class _BiliEpisodePickerPageState extends State<BiliEpisodePickerPage> {
     });
   }
 
-  void _toastComingSoon() {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(const SnackBar(content: Text('播放功能即将上线（阶段三）')));
-  }
+  void _playEpisode(BiliEpisode ep) => playBiliEpisode(context, ep);
 
   @override
   Widget build(BuildContext context) {
@@ -119,7 +116,7 @@ class _BiliEpisodePickerPageState extends State<BiliEpisodePickerPage> {
       itemCount: _currentPage.length,
       itemBuilder: (context, i) => BiliEpisodeTile(
         episode: _currentPage[i],
-        onTap: _toastComingSoon,
+        onTap: () => _playEpisode(_currentPage[i]),
       ),
     );
   }

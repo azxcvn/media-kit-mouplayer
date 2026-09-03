@@ -475,6 +475,31 @@ class DanmakuController extends ChangeNotifier {
     return true;
   }
 
+  /// 装载 B 站原声弹幕（在线播放）：清屏重灌 + 自动开启弹幕显示。
+  /// 获取/解码在调用方（`BiliDanmakuService`）完成，这里只负责喂给调度器。
+  void loadBiliDanmaku(List<DanmakuEntry> entries) {
+    if (_disposed) return;
+    ++_loadSession;
+    _scheduler.reset();
+    _clearLayers();
+    _hasDanmaku = false;
+    if (entries.isEmpty) return;
+    _feedEntries(entries);
+    _hasDanmaku = true;
+    if (!_danmakuOn) {
+      _danmakuOn = true;
+      notifyListeners();
+    }
+  }
+
+  /// 追加 B 站弹幕批次（分段流式 feed，先到先显）：不清屏、不重建随机色轮，
+  /// 只把新条目追加进调度器（[loadBiliDanmaku] 之后按批调用）。
+  void appendBiliDanmaku(List<DanmakuEntry> entries) {
+    if (_disposed || entries.isEmpty) return;
+    _rawEntries = [..._rawEntries, ...entries];
+    _scheduler.feed(_effectiveEntries(entries));
+  }
+
   /// 对当前视频发起自动匹配（「自动匹配」按钮）：计算文件哈希 + 向所有
   /// 启用服务器匹配，返回候选列表（空 = 无匹配 / 失败）。
   Future<List<DanmakuMatchItem>> matchCurrentVideo() async {

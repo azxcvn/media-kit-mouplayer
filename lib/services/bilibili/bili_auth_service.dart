@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'package:moumou/models/bilibili_user.dart';
 import 'package:moumou/services/bilibili/bili_api.dart';
 import 'package:moumou/services/bilibili/bili_constants.dart';
@@ -57,12 +59,20 @@ class BiliAuthService {
 
   final BiliHttp http;
 
-  /// TV 通道登录请求头（android_hd，对齐 PiliPlus `LoginHttp.headers` 核心字段）。
+  /// TV 通道登录请求头（对齐 PiliPlus `getHDcode`/`codePoll` 实际发出的头）。
+  ///
+  /// PiliPlus 的 TV 扫码请求走 `AnonymousAccount.headers`（=`Constants.baseHeaders`），
+  /// 即 `app-key: android64` + `x-bili-aurora-zone: sh001`，**不是** `android_hd`。
+  /// 若改发 `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid` 等
+  /// 「真 TV 端」头，会被风控按真机 TV 链路校验，国际版哔哩哔哩客户端扫码后无法
+  /// 完成确认，轮询一直停在「未确认」导致登录失败。
+  ///
+  /// 其余通用头（Web UA / Referer / buvid3 / Content-Type）由 [BiliHttp.postFormRaw]
+  /// 统一注入，无需在此重复。
   Map<String, String> _tvHeaders() => {
-        'User-Agent': BiliConstants.tvUserAgent,
         'env': 'prod',
-        'app-key': 'android_hd',
-        'x-bili-trace-id': BiliConstants.tvTraceId,
+        'app-key': 'android64',
+        'x-bili-aurora-zone': 'sh001',
       };
 
   /// 生成 TV 扫码二维码：POST `/x/passport-tv-login/qrcode/auth_code`。
@@ -100,6 +110,11 @@ class BiliAuthService {
     );
     final code = (resp['code'] as num?)?.toInt() ?? -1;
     final message = resp['message'] as String? ?? '';
+    if (code != 0) {
+      debugPrint(
+        '[BILI-AUTH] poll 失败: code=$code message=$message data=${resp['data']}',
+      );
+    }
     BiliTvLoginData? loginData;
     if (code == 0) {
       final data = resp['data'];
@@ -143,6 +158,12 @@ class BiliAuthService {
     final data = await http.getJson(BiliApi.nav);
     final body = _data(data);
     final user = BiliUser.fromJson(body);
+    final vipLabel = body['vip_label'];
+    debugPrint(
+      '[BILI-AUTH] nav: isLogin=${body['isLogin']} vipStatus=${body['vipStatus']} '
+      'vipType=${body['vipType']} vipLabelText='
+      '${(vipLabel is Map && vipLabel['text'] is String) ? vipLabel['text'] : ''}',
+    );
     String mixinKey = '';
     final wbiImg = body['wbi_img'];
     if (wbiImg is Map) {

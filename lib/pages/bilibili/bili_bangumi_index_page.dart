@@ -14,7 +14,8 @@ class BiliBangumiIndexPage extends StatefulWidget {
   State<BiliBangumiIndexPage> createState() => _BiliBangumiIndexPageState();
 }
 
-class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
+class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage>
+    with SingleTickerProviderStateMixin {
   final BiliBangumiService _service = BiliBangumiService();
   final ScrollController _scroll = ScrollController();
 
@@ -23,6 +24,9 @@ class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
   bool _conditionLoading = true;
   String? _conditionError;
   bool _expanded = false;
+
+  late final AnimationController _expandController;
+  late final Animation<double> _expandAnimation;
 
   final List<BiliIndexItem> _items = [];
   int _page = 1;
@@ -33,12 +37,19 @@ class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
   @override
   void initState() {
     super.initState();
+    _expandController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    _expandAnimation =
+        CurvedAnimation(parent: _expandController, curve: Curves.easeInOut);
     _scroll.addListener(_onScroll);
     _loadCondition();
   }
 
   @override
   void dispose() {
+    _expandController.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -137,6 +148,15 @@ class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
     _reload();
   }
 
+  void _toggleExpand() {
+    setState(() => _expanded = !_expanded);
+    if (_expanded) {
+      _expandController.forward();
+    } else {
+      _expandController.reverse();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -170,7 +190,7 @@ class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
     }
     final condition = _condition!;
     final rows = _buildFilterRows(condition);
-    final visibleCount = _expanded ? rows.length : (rows.length ~/ 2).clamp(1, rows.length);
+    final collapsedCount = (rows.length ~/ 2).clamp(1, rows.length);
     return CustomScrollView(
       controller: _scroll,
       slivers: [
@@ -179,11 +199,19 @@ class _BiliBangumiIndexPageState extends State<BiliBangumiIndexPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                ...rows.take(visibleCount),
+                ...rows.take(collapsedCount),
+                SizeTransition(
+                  sizeFactor: _expandAnimation,
+                  alignment: Alignment.topCenter,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: rows.skip(collapsedCount).toList(),
+                  ),
+                ),
                 if (rows.length > 5)
                   Center(
                     child: TextButton.icon(
-                      onPressed: () => setState(() => _expanded = !_expanded),
+                      onPressed: _toggleExpand,
                       icon: Icon(
                         _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                         size: 18,

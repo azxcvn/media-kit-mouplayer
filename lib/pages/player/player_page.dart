@@ -6,6 +6,9 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:moumou/models/player_action.dart';
 import 'package:moumou/models/playlist_sort.dart';
+import 'package:moumou/models/bili_media.dart';
+import 'package:moumou/models/chapter_info.dart';
+import 'package:moumou/models/danmaku_entry.dart';
 import 'package:moumou/models/dandan_models.dart';
 import 'package:moumou/models/video_file.dart';
 import 'package:moumou/pages/player/audio_player_page.dart';
@@ -27,6 +30,7 @@ import 'package:moumou/pages/player/views/player_gesture_layer.dart';
 import 'package:moumou/pages/player/views/player_intro_outro_panel.dart';
 import 'package:moumou/pages/player/views/player_loop_panel.dart';
 import 'package:moumou/pages/player/views/player_playlist_panel.dart';
+import 'package:moumou/pages/player/views/player_quality_panel.dart';
 import 'package:moumou/pages/player/views/player_resume_indicator.dart';
 import 'package:moumou/pages/player/views/player_right_actions.dart';
 import 'package:moumou/pages/player/views/player_speed_indicator.dart';
@@ -42,6 +46,9 @@ import 'package:moumou/services/chapter_tracker.dart';
 import 'package:moumou/services/danmaku_service.dart';
 import 'package:moumou/services/danmaku_network_service.dart';
 import 'package:moumou/services/decode_settings.dart';
+import 'package:moumou/services/bilibili/bili_danmaku_service.dart';
+import 'package:moumou/services/bilibili/bili_constants.dart';
+import 'package:moumou/services/bilibili/bili_stream_proxy.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/fast_thumbnails.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
@@ -75,11 +82,16 @@ class PlayerPage extends StatefulWidget {
   final String title;
   final List<VideoFile>? playlist;
 
+  /// B 站在线播放媒体（null = 本地/网络文件播放）。非空时走双流 + 代理 +
+  /// B 站弹幕 + OP/ED 章节 + 清晰度切换流程。
+  final BiliMedia? biliMedia;
+
   const PlayerPage({
     super.key,
     required this.path,
     required this.title,
     this.playlist,
+    this.biliMedia,
   });
 
   @override
@@ -95,6 +107,9 @@ class _PlayerPageState extends State<PlayerPage>
   late String _path;
   late String _title;
   bool _controlsVisible = true;
+
+  /// B 站在线播放媒体（null = 本地/网络文件播放）。画质切换时更新为新实例。
+  BiliMedia? _biliMedia;
   Timer? _hideTimer;
   bool _playing = false;
   bool _buffering = false;
@@ -364,6 +379,7 @@ class _PlayerPageState extends State<PlayerPage>
     WidgetsBinding.instance.addObserver(this);
     _path = widget.path;
     _title = widget.title;
+    _biliMedia = widget.biliMedia;
     // 开启 libass：走 mpv 原生字幕渲染（sub-visibility=yes），而非 Flutter
     // SubtitleView。这也是内嵌字幕原生样式 / 各种 sub-* 样式属性生效的前提。
     // 自定义字体必须在 mpv_initialize 前通过 libassAndroidFontsDir/Name 注入
@@ -561,6 +577,12 @@ class _PlayerPageState extends State<PlayerPage>
     // 读取保存进度（ensureLoaded 防重启后读空缓存，见 §7 竞态修复）
     await PlaybackProgressService.instance.ensureLoaded();
     if (_disposed || !mounted) return;
+    // B 站在线播放：走双流 + 代理 + 弹幕 + 章节流程，不复用本地进度恢复
+    if (_biliMedia != null) {
+      await _openBiliMedia();
+      await _applyVideoOrientation();
+      return;
+    }
     final start = _resumeStartFor(_path);
     // 片头片尾：新媒体重置跟踪状态（open 期间位置事件不评估）
     _introOutroTracker.reset();
@@ -610,6 +632,163 @@ class _PlayerPageState extends State<PlayerPage>
     unawaited(_danmakuController.loadForVideo(_path));
     await _applyVideoOrientation();
   }
+
+  // ── B 站在线播放（阶段三）──────────────────────────────
+
+  /// 当前画质音频流的本地代理 URL（外挂音轨用）；null = 无音轨。
+  String? _biliAudioUrl;
+
+  /// 打开 B 站媒体：本地代理注册 → 双流（video + 外挂 audio）→ 弹幕 → 章节。
+  /// [restoreTo] 非空时走 [openAndRestore] 的确定性恢复流程（等起播 → seek →
+  /// 确认 → 重试），切 4K/HDR 等高码率流也能可靠恢复到原进度。
+  Future<void> _openBiliMedia({Duration? restoreTo}) async {
+    final m = _biliMedia!;
+    final videoPath = await _registerBiliProxy(m);
+    await openAndRestore(
+      _player,
+      videoPath,
+      saved: restoreTo,
+      prepare: () async {
+        await _player.setRate(_speed);
+        try {
+          await SuperResolutionService.instance.apply(_player);
+        } catch (_) {}
+      },
+      beforePlay: () async {
+        final audioPath = _biliAudioUrl;
+        if (audioPath != null && audioPath.isNotEmpty) {
+          final native = _player.platform as NativePlayer;
+          await native.command(['audio-add', audioPath, 'select']);
+        }
+      },
+    );
+    if (_disposed || !mounted) return;
+    _introOutroTracker.reset();
+    unawaited(_loadBiliDanmaku());
+    _loadBiliChapters();
+  }
+
+  /// 注册 B 站流代理，返回视频本地 URL；音频本地 URL 存到 [_biliAudioUrl]。
+  /// 代理启动失败回退直连（此时 mpv 直接走 mbedTLS，可能失败）。
+  Future<String> _registerBiliProxy(BiliMedia m) async {
+    final headers = {
+      'Referer': BiliConstants.referer,
+      'User-Agent': BiliConstants.webUserAgent,
+    };
+    final reg = await BiliStreamProxy.instance.registerStreams(
+      videoUrl: m.videoUrl,
+      audioUrl: m.audioUrl,
+      headers: headers,
+    );
+    if (reg == null) {
+      _biliAudioUrl = m.audioUrl;
+      return m.videoUrl;
+    }
+    _biliAudioUrl = reg.audioUrl;
+    return reg.videoUrl;
+  }
+
+  /// 拉取 B 站原声弹幕（分段流式，先到先显）+ 落盘缓存。
+  Future<void> _loadBiliDanmaku() async {
+    final m = _biliMedia;
+    if (m == null) return;
+    final service = BiliDanmakuService();
+    final all = <DanmakuEntry>[];
+    await service.fetchDanmakuStreamed(
+      cid: m.cid,
+      aid: m.aid,
+      onBatch: (batch) {
+        if (_disposed || !mounted || _biliMedia != m) return;
+        final isFirst = all.isEmpty;
+        all.addAll(batch);
+        if (isFirst) {
+          _danmakuController.loadBiliDanmaku(batch);
+        } else {
+          _danmakuController.appendBiliDanmaku(batch);
+        }
+      },
+    );
+    if (_disposed || !mounted || _biliMedia != m) return;
+    if (all.isNotEmpty) {
+      // 静默缓存，不弹「已加载 N 条弹幕」提示（正常加载即可）
+      unawaited(service.cacheDanmaku(m.cid, all));
+    }
+  }
+
+  /// 把 playurl 的 OP/ED 跳段（`clip_info_list`）映射成章节 + 跳过片段，
+  /// 喂给 [ChapterTracker]（精确起止，不走关键词派生）。
+  void _loadBiliChapters() {
+    final m = _biliMedia;
+    if (m == null) {
+      _chapterTracker.setExternalChapters(const [], const []);
+      return;
+    }
+    debugPrint(
+      '[BILI-PLAY] chapters: clips=${m.clips.length} '
+      '[${m.clips.map((c) => '${c.clipType}@${c.startSeconds}-${c.endSeconds}').join(', ')}]',
+    );
+    final chapters = <ChapterInfo>[];
+    final segments = <SkipSegment>[];
+    for (final clip in m.clips) {
+      if (clip.startSeconds >= clip.endSeconds) continue;
+      if (clip.isOp) {
+        chapters.add(ChapterInfo(title: 'OP', startSeconds: clip.startSeconds));
+        segments.add(SkipSegment(
+          type: ChapterSkipType.intro,
+          startSeconds: clip.startSeconds,
+          endSeconds: clip.endSeconds,
+        ));
+      } else if (clip.isEd) {
+        chapters.add(ChapterInfo(title: 'ED', startSeconds: clip.startSeconds));
+        segments.add(SkipSegment(
+          type: ChapterSkipType.outro,
+          startSeconds: clip.startSeconds,
+          endSeconds: clip.endSeconds,
+        ));
+      }
+    }
+    _chapterTracker.setExternalChapters(chapters, segments);
+  }
+
+  /// 切换清晰度：重新解析 playurl → 重开流（保持进度）→ 更新章节。
+  /// 返回是否切换成功。
+  Future<bool> _switchQuality(int qn) async {
+    final m = _biliMedia;
+    if (m == null || m.currentQn == qn) return false;
+    final position = _position;
+    try {
+      final next = await m.switchQuality(qn);
+      if (_disposed || !mounted) return false;
+      setState(() => _biliMedia = next);
+      await _openBiliMedia(
+        restoreTo: position > Duration.zero ? position : null,
+      );
+      return true;
+    } catch (e) {
+      if (mounted) _toast('切换画质失败：$e');
+      return false;
+    }
+  }
+
+  /// 当前清晰度描述（更多面板副标题）。
+  String _currentQualityDescription(BiliMedia m) {
+    for (final q in m.qualities) {
+      if (q.qn == m.currentQn) return q.description;
+    }
+    return '${m.currentQn}P';
+  }
+
+  /// 清晰度面板页。
+  PlayerPanelPage _qualityPanelPage() => PlayerPanelPage(
+        title: '清晰度',
+        body: _biliMedia == null
+            ? const SizedBox.shrink()
+            : PlayerQualityPanel(
+                qualities: _biliMedia!.qualities,
+                currentQn: _biliMedia!.currentQn,
+                onSelect: _switchQuality,
+              ),
+      );
 
   /// 视频方向（工作.md 第 5 点）：
   /// - 锁定横屏：保持横屏（不动作）；
@@ -1518,6 +1697,17 @@ class _PlayerPageState extends State<PlayerPage>
             key: const PageStorageKey('more_panel'),
             padding: const EdgeInsets.symmetric(vertical: 4),
             children: [
+              // B 站在线播放专属：清晰度入口（本地文件播放不出现）
+              if (_biliMedia != null) ...[
+                _PanelActionTile(
+                  icon: Icons.hd_outlined,
+                  label: '清晰度',
+                  subtitle: _currentQualityDescription(_biliMedia!),
+                  onTap: () => PlayerPanelNavigator.of(panelContext)
+                      .push(_qualityPanelPage()),
+                ),
+                const Divider(height: 1, color: Colors.white12),
+              ],
               if (notPlaced.isNotEmpty) ...[
                 const _PanelSectionLabel('未放置的功能'),
                 // 面板类动作面板内 push（返回按钮可回「更多」）；
@@ -2484,6 +2674,8 @@ class _PlayerPageState extends State<PlayerPage>
     // 兜底销毁播放器（正常退出已先 pause 冻结出帧，这里销毁释放纹理；
     // 幂等，不会重复销毁）
     unawaited(_disposePlayer());
+    // 停止 B 站流代理（mbedTLS 绕过的本地 HTTP 服务，退出即释放端口）
+    BiliStreamProxy.instance.stop();
     super.dispose();
   }
 
