@@ -284,6 +284,16 @@ class DeviceServices {
     }
   }
 
+  /// 打开哔哩哔哩客户端自动扫码（`bilibili://browser` 深链直接拉起，未安装返回 false）。
+  static Future<bool> openBilibiliScan(String url) async {
+    try {
+      return await _channel.invokeMethod<bool>('openBilibiliScan', {'url': url}) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 把字体 content:// uri 拷贝到应用私有 fonts/ 目录（libass 需真实路径），
   /// 返回真实绝对路径，失败返回 null。
   static Future<String?> copyFontFromUri(String uri, String name) async {

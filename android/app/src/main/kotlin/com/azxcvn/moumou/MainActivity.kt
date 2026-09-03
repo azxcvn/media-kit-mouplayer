@@ -255,6 +255,11 @@ class MainActivity : FlutterActivity() {
                     "getFontFamilyName" -> {
                         result.success(getFontFamilyName(call.argument<String>("path") ?: ""))
                     }
+                    // 打开哔哩哔哩客户端自动扫码（bilibili://browser 深链直接拉起）
+                    "openBilibiliScan" -> {
+                        val url = call.argument<String>("url") ?: ""
+                        result.success(openBilibiliScan(url))
+                    }
                     "openDocumentPicker" -> {
                         if (pendingDocumentPickerResult != null) {
                             result.error("BUSY", "picker already open", null)
@@ -704,6 +709,26 @@ class MainActivity : FlutterActivity() {
                 Intent.FLAG_GRANT_PREFIX_URI_PERMISSION,
         )
         return intent
+    }
+
+    /**
+     * 打开哔哩哔哩客户端自动扫码（工作.md 阶段一）：
+     * 把扫码登录 url 包进 `bilibili://browser` 深链，直接 startActivity 拉起
+     * （未安装/无 App 处理时抛 ActivityNotFoundException → 返回 false）。
+     * 不用 queryIntentActivities 预检测：Android 11+ 包可见性下易误判为空。
+     */
+    private fun openBilibiliScan(url: String): Boolean {
+        return try {
+            val deepLink =
+                "bilibili://browser?url=${java.net.URLEncoder.encode(url, "UTF-8")}"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(deepLink))
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+            true
+        } catch (e: Exception) {
+            Log.w("MainActivity", "openBilibiliScan failed: ${e.message}")
+            false
+        }
     }
 
     /** 系统文件选择器结果回传（content:// uri 字符串或 null） */

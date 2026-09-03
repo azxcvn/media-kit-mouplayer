@@ -80,5 +80,11 @@
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
         </intent>
+        <!-- 哔哩哔哩登录：声明可拉起 bilibili:// 深链（Android 11+ 包可见性，
+             便于后续 canLaunchUrl 等检测；实际拉起用直接 startActivity） -->
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="bilibili"/>
+        </intent>
     </queries>
 </manifest>

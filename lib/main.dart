@@ -6,6 +6,7 @@ import 'package:moumou/models/danmaku_font_mode.dart';
 import 'package:moumou/pages/home/home_page.dart';
 import 'package:moumou/pages/settings/settings_page.dart';
 import 'package:moumou/services/app_font_settings.dart';
+import 'package:moumou/services/bilibili/bili_account.dart';
 import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/danmaku_server_settings.dart';
 import 'package:moumou/services/danmaku_settings.dart';
@@ -122,6 +123,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // App 全局字体设置（工作.md 第 3 点）：同 ensureLoaded 模式；main() 已在
     // runApp 前 await 注册，这里补 ensureLoaded 防测试/热重载路径竞态
     AppFontSettings.instance.ensureLoaded();
+    // 哔哩哔哩账号（工作.md 阶段一）：启动读凭证 + nav 自检（含 buvid 预取），
+    // 异步执行不阻塞首帧；「我的」页监听其 ChangeNotifier 实时刷新登录态
+    BiliAccount.instance.ensureLoaded();
   }
 
   @override

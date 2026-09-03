@@ -51,6 +51,8 @@ Flutter 本地视频播放器（Android），核心能力：
 - **全局自定义字体**：App 全局字体（设置→外观→App字体设置：预览 + 开关 + 系统选择器导入单字体 +
   字号/字重滑杆，关闭跟随系统）；**弹幕自定义字体**（弹幕设置→弹幕字体：跟随系统/跟随 App/自定义三选一，
   自定义复用字体目录批量导入 + 列表选择），两者走 Flutter 引擎 `loadFontFromList` 注册（§4.12）
+- **哔哩哔哩账号登录**（哔哩生态阶段一）：我的→登录，TV 扫码（刷新/保存相册/打开哔哩哔哩自动扫码）
+  + Cookie 导入兜底；凭证加密存储（flutter_secure_storage）+ 登录态自检（nav）+ WBI 签名 + buvid 预取（§4.13）
 
 技术栈：Flutter 3.44+ / Dart 3.12+，依赖见 `pubspec.yaml`。
 
@@ -81,7 +83,8 @@ lib/
 │   ├── network_connection.dart # 网络存储账户模型 + 协议枚举（WebDAV/SMB/FTP）+ 校验纯函数
 │   ├── network_file.dart      # 远程目录/文件条目模型（供网络浏览 UI 展示）
 │   ├── danmaku_auto_match_cache.dart # 弹幕自动匹配缓存模型（番剧 + 集列表，供切集自动匹配）
-│   └── danmaku_font_mode.dart # 弹幕字体三态枚举（跟随系统/跟随App/自定义）+ 解析纯函数
+│   ├── danmaku_font_mode.dart # 弹幕字体三态枚举（跟随系统/跟随App/自定义）+ 解析纯函数
+│   └── bilibili_user.dart      # 哔哩哔哩用户信息模型（nav 接口，mid/昵称/头像/等级/经验/大会员状态/硬币）
 ├── services/                  # 业务逻辑 / 数据层（无 UI）
 │   ├── view_settings.dart     # 排序/字段/视图模式设置（ChangeNotifier + 持久化）
 │   ├── video_scanner.dart     # 扫描 + 建树 + 建文件夹列表
@@ -121,6 +124,13 @@ lib/
 │   │   ├── webdav_client.dart      #   WebDAV 客户端（纯 Dart http：PROPFIND Depth:1 列表 / Range 流式读取 + 自检）
 │   │   ├── ftp_client.dart         #   FTP 客户端（纯 Dart Socket 双连接被动模式 / MLSD→LIST 回退 / REST 偏移）
 │   │   └── smb_client.dart         #   SMB 客户端（纯 Dart smb_connect：4 路并发预读管线 + 管理共享过滤）
+│   ├── bilibili/                  # 哔哩哔哩协议域（§4.13）
+│   │   ├── bili_constants.dart    #   域名 / UA / Referer / TV appkey·appsec / 扫码状态码
+│   │   ├── bili_api.dart          #   端点常量（集中式，对齐 PiliPlus api.dart）
+│   │   ├── bili_credential_store.dart # 凭证加密存储（SESSDATA/bili_jct/DedeUserID + Cookie 解析纯函数）
+│   │   ├── bili_http.dart         #   统一请求：Cookie/UA/Referer/buvid3 注入 + 错误语义化
+│   │   ├── bili_auth_service.dart #   扫码生成/轮询/Cookie导入/nav自检/buvid预取/退出登录
+│   │   └── bili_account.dart      #   登录态/用户信息/WBI密钥/buvid（ChangeNotifier 单例）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -138,6 +148,9 @@ lib/
 │   ├── speed_dial_fab.dart    #   首页右下角悬浮快速拨号（最近播放/打开链接/哔哩番剧/网络存储）
 │   └── marquee_text.dart      #   无缝循环跑马灯
 ├── pages/                     # 页面（每页一个目录）
+│   ├── bilibili/
+│   │   ├── bili_login_page.dart # 哔哩哔哩登录页（TV 扫码登录 + Cookie 导入，§4.13）
+│   │   └── bili_user_page.dart  # 哔哩哔哩账号信息页（头像/等级/经验/硬币/会员 + 退出登录）
 │   ├── home/
 │   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发 + 搜索入口）
 │   │   ├── views/             #   首页专属视图组件
@@ -231,6 +244,8 @@ lib/
     ├── ftp_parser.dart        #   FTP 目录列表解析（RFC3659 MLSD + Unix LIST 回退）
     ├── http_byte_range.dart   #   HTTP Range 头解析（bytes=start-end / start- / -suffix）
     ├── network_path.dart      #   网络路径规范化/校验/子路径拼接
+    ├── bili_wbi.dart          #   WBI 签名纯函数（getMixinKey/encWbi，混淆表 64 项）
+    ├── bili_app_sign.dart     #   TV 端 appSign 纯函数（appkey/appsec MD5 签名）
     └── network_mime_types.dart # 文件名→MIME 类型映射
 ```
 
@@ -577,6 +592,48 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 
 ---
 
+### 4.13 哔哩哔哩账号登录（哔哩生态阶段一）
+
+> 调研方案见 `杂项文件/bili-ecosystem-research/`；接入进度见 `docs/哔哩哔哩生态接入状况.md`。
+
+**分层**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 纯函数 | `utils/bili_wbi.dart` | WBI 签名（`biliGetMixinKey` / `biliEncWbi`），混淆表 64 项（bilibili-API-collect 规范） |
+| 纯函数 | `utils/bili_app_sign.dart` | TV 端 appSign（appkey/appsec MD5，对齐 PiliPlus app_sign.dart） |
+| 模型 | `models/bilibili_user.dart` | nav 接口用户信息（mid/昵称/头像/大会员状态） |
+| 常量/端点 | `services/bilibili/bili_constants.dart` / `bili_api.dart` | 域名/UA/Referer/appkey·appsec/扫码状态码 + 端点常量 |
+| 存储 | `services/bilibili/bili_credential_store.dart` | SESSDATA/bili_jct/DedeUserID/access_token/refresh_token 加密存储（flutter_secure_storage）+ Cookie 串解析 |
+| 传输 | `services/bilibili/bili_http.dart` | 统一请求：Cookie/UA/Referer/buvid3 注入 + UTF-8 解码 + `BiliApiException` |
+| 认证 | `services/bilibili/bili_auth_service.dart` | TV 扫码生成/轮询（android_hd appSign，JSON 返回 token_info+cookie_info）/nav 自检/buvid 预取/退出登录 |
+| 状态 | `services/bilibili/bili_account.dart` | ChangeNotifier 单例：登录态/用户信息/WBI 密钥/buvid；启动 `ensureLoaded` |
+| UI | `pages/bilibili/bili_login_page.dart` | 扫码登录（刷新/保存相册/打开哔哩哔哩）+ Cookie 导入 |
+| 入口 | `pages/settings/settings_page.dart` + `main.dart` | 「我的」页账号卡片 + 启动 `ensureLoaded` |
+| 原生 | `MainActivity.kt` / `AndroidManifest.xml` | `openBilibiliScan`（bilibili:// 深链直接 startActivity）+ `<queries>` 声明 |
+
+**关键决策**：
+- **扫码登录对齐 PiliPlus 的 TV 通道**（`android_hd` + appSign，`auth_code`/`poll` 两接口）：
+  凭证直接 JSON 返回（`token_info.access_token/refresh_token` + `cookie_info.cookies` 的
+  SESSDATA/bili_jct/DedeUserID），**不依赖 Set-Cookie**（Web 扫码的 data.url 通常为空、
+  凭证只在 Set-Cookie 头，易踩坑）。access_token 供阶段三 tv playurl 取更高画质。
+- **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + access_token/refresh_token 走
+  `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
+  永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
+- **登录态自检 + WBI 密钥**都来自 `GET /x/web-interface/nav` 一次请求；Cookie 过期时 nav
+  返回 `isLogin=false`（不报错），据此**静默清凭证回游客态**。
+- **扫码轮询**：1 秒轮询，180 秒倒计时自动刷新（服务端 86038 双保险）；
+  「打开哔哩哔哩」用 `bilibili://browser?url=…` 深链直接 `startActivity`（未装/无处理者抛
+  ActivityNotFoundException → 提示未安装）；「保存相册」用 RepaintBoundary 截图 + `saver_gallery`。
+- **Cookie 导入为逃生门**：文本框粘贴解析 `SESSDATA=..; bili_jct=..; DedeUserID=..`，
+  风控异常时保住可用性。
+- **WBI 混淆表以 64 项为准**：PiliPlus 只保留前 32 项（结果等价）；⚠️ 调研报告 HTML 里的
+  混淆表有误（第 28 位起与官方表不符），**以 bilibili-API-collect / Bili23 的 64 项表为准**。
+- **反爬为精简版**：当前只做 buvid3 预取 + 固定 UA + Referer；Bili23 的 buvid_fp/bili_ticket/
+  ExClimbWuzhi 等完整指纹留待阶段三 playurl 遇 412 风控再补。
+
+---
+
 ## 5. 新增功能指南（按功能类型）
 
 ### 5.1 新增一个页面
@@ -808,3 +865,4 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 面板带背景色 `Container`（`_SettingsGroup`）内放 `ListTile` → 触发「ink 不可见」断言 | ListTile 外包 `Material(type: MaterialType.transparency)`（§4.12 弹幕字体段） |
 | `loadFontFromList` 只对当前进程有效，首帧前未注册回落默认字体 | `main()` 改 async，`runApp` 前 await 注册 App/弹幕自定义字体（§4.12） |
 | `AnimatedDefaultTextStyle` 用默认构造**不 merge** 父级 DefaultTextStyle，导致字体族名丢失（主题色/调色板/胶囊标签不跟随自定义字体） | 显式在 style 里带 `fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily`（§4.12） |
+| 调研报告 HTML 里的 WBI 混淆表有误（第 28 位起与官方 64 项表不符），照抄会导致 playurl 签名集体失败 | WBI 混淆表以 bilibili-API-collect / Bili23 的 64 项表为准（§4.13）；PiliPlus 前 32 项结果等价 |

@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/pages/bilibili/bili_login_page.dart';
+import 'package:moumou/pages/bilibili/bili_user_page.dart';
 import 'package:moumou/pages/settings/about_page.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
 import 'package:moumou/pages/settings/danmaku_server_page.dart';
 import 'package:moumou/pages/settings/media_scan_settings_page.dart';
 import 'package:moumou/pages/settings/player_settings_page.dart';
+import 'package:moumou/services/bilibili/bili_account.dart';
 import 'package:moumou/theme/theme_controller.dart';
 import 'package:moumou/widgets/settings_ui.dart';
 
@@ -32,24 +35,40 @@ class SettingsPage extends StatelessWidget {
             // 底部预留悬浮胶囊空间（系统安全区已由全局 SafeArea 处理）
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
             children: [
-              // ── 账号登录入口（未登录态；登录功能后续接入）──────
-              // 对齐手机系统设置顶部的账号卡片；图标与底部导航
-              // 「我的」占位头像一致，登录后换为用户头像 + 昵称 + 会员状态
-              SettingsCard(
-                child: SettingsTile(
-                  icon: Icons.account_circle_outlined,
-                  title: '登录',
-                  subtitle: const Text('哔哩哔哩账号'),
-                  onTap: () {
-                    ScaffoldMessenger.of(context)
-                      ..hideCurrentSnackBar()
-                      ..showSnackBar(
-                        const SnackBar(
-                          content: Text('「哔哩哔哩账号登录」功能正在开发中，敬请期待'),
+              // ── 账号登录入口（工作.md 阶段一）──────
+              // 未登录显示「登录」入口；登录后显示头像/昵称/等级/会员状态，
+              // 点击进入账号信息页（等级/经验/硬币/会员 + 退出登录）。
+              ListenableBuilder(
+                listenable: BiliAccount.instance,
+                builder: (context, _) {
+                  final account = BiliAccount.instance;
+                  if (account.isLogin) {
+                    final user = account.user;
+                    return SettingsCard(
+                      child: ListTile(
+                        onTap: () => _openUserPage(context),
+                        leading: _accountAvatar(context, account),
+                        title: Text(
+                          user.nickname,
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
-                      );
-                  },
-                ),
+                        subtitle: Text('${user.levelLabel} · ${user.vipLabel}'),
+                        trailing: const Icon(Icons.chevron_right),
+                      ),
+                    );
+                  }
+                  return SettingsCard(
+                    child: SettingsTile(
+                      icon: Icons.account_circle_outlined,
+                      title: '登录',
+                      subtitle: const Text('哔哩哔哩账号'),
+                      onTap: () => _openLogin(context),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 8),
               // ── 第一组：外观 ──────────────────────────────
@@ -152,6 +171,33 @@ class SettingsPage extends StatelessWidget {
           );
         },
       ),
+    );
+  }
+
+  void _openLogin(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BiliLoginPage()),
+    );
+  }
+
+  void _openUserPage(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const BiliUserPage()),
+    );
+  }
+
+  /// 账号头像：有头像 URL 时用网络头像，否则回退到账号图标。
+  Widget _accountAvatar(BuildContext context, BiliAccount account) {
+    final scheme = Theme.of(context).colorScheme;
+    final face = account.user.face;
+    return CircleAvatar(
+      radius: 20,
+      backgroundColor: scheme.primaryContainer,
+      foregroundImage: face.isEmpty ? null : NetworkImage(face),
+      onForegroundImageError: face.isEmpty ? null : (_, _) {},
+      child: face.isEmpty
+          ? Icon(Icons.account_circle, color: scheme.onPrimaryContainer)
+          : null,
     );
   }
 }
