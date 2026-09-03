@@ -138,8 +138,13 @@ lib/
 │   │   ├── bili_video_service.dart   # PGC/UGC playurl（DASH选流+清晰度+WBI签名，§4.15）
 │   │   ├── bili_danmaku_service.dart # B站原声弹幕（seg.so protobuf 解码 + XML 缓存，§4.15）
 │   │   ├── bili_stream_proxy.dart    # 本地 HTTP 代理（绕过 libmpv mbedTLS，§4.15）
+│   │   ├── bili_download_service.dart # 下载解析：链接 → 可下载条目（番剧多集 / 多分 P，§4.16）
 │   │   └── pb/
 │   │       └── pb_reader.dart        # 手写 protobuf wire 解码器（varint+length-delimited，§4.15）
+│   ├── download/                 # 下载域（哔哩生态阶段四，B站是首个用户，§4.16）
+│   │   ├── download_settings.dart # 下载目录设置（ChangeNotifier + 持久化）
+│   │   ├── download_task.dart     # 下载任务状态机 + Range 流式下载 + 合并
+│   │   └── download_manager.dart  # 任务队列 + 并发槽调度（ChangeNotifier）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -157,6 +162,7 @@ lib/
 │   ├── speed_dial_fab.dart    #   首页右下角悬浮快速拨号（最近播放/打开链接/哔哩番剧/网络存储）
 │   ├── bili_cover_card.dart   #   番剧封面卡片（竖版封面 + 右上角标 + 左下角灰标 + 标题/副标题，索引/推荐/时间表共用）
 │   ├── bili_episode_tile.dart #   番剧单集磁贴（集号 + 集名 + 胶囊角标，内联选集/全屏选集页共用）
+│   ├── directory_picker_dialog.dart # 目录选择器弹窗（复用 listDirectory，返回真实路径）
 │   └── marquee_text.dart      #   无缝循环跑马灯
 ├── pages/                     # 页面（每页一个目录）
 │   ├── bilibili/
@@ -167,7 +173,11 @@ lib/
 │   │   ├── bili_season_page.dart # 番剧详情页（封面+信息+简介+多季切换+内联选集+查看全部，§4.14）
 │   │   ├── bili_episode_picker_page.dart # 全屏选集页（30集分段 + 2列网格 + 正倒序，§4.14）
 │   │   ├── bili_play_launcher.dart # 播放启动器（playurl → BiliMedia → PlayerPage，§4.15）
-│   │   └── bili_search_page.dart # 番剧搜索页（media_bangumi 搜索 + 分页，§4.14）
+│   │   ├── bili_search_page.dart # 番剧搜索页（media_bangumi 搜索 + 分页，§4.14）
+│   │   ├── bili_danmaku_download_page.dart # 弹幕下载页（链接解析 + 集数勾选，§4.16）
+│   │   └── bili_video_download_page.dart # 视频下载页（清晰度选择 + 分P勾选，§4.16）
+│   ├── download/
+│   │   └── download_manager_page.dart # 下载管理页（任务列表 + 暂停/恢复/重试/删除，§4.16）
 │   ├── home/
 │   │   ├── home_page.dart     #   首页（权限门禁 + 视图分发 + 搜索入口）
 │   │   ├── views/             #   首页专属视图组件
@@ -757,6 +767,40 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 > 具体改动点：构建脚本里 mpv 的 `--enable-mbedtls` → `--enable-openssl`（或 FFmpeg
 > `--enable-openssl`），并确保 OpenSSL 交叉编译产物被链接；改完用
 > `strings libmpv.so | grep -i mbedtls` 验证 mbedTLS 符号消失。
+
+### 4.16 哔哩弹幕 / 视频下载（哔哩生态阶段四）
+
+> 阶段四打通「弹幕下载 + 视频下载」：链接解析（番剧多集 / 视频多分 P）、弹幕批量
+> 落盘、视频 DASH 下载 + 原生 MediaMuxer 合并。入口在「我的」页「下载」组。
+
+**分层**（自下而上）：
+
+| 层 | 文件 | 职责 |
+|---|---|---|
+| 模型 | `models/bili_dash.dart`（`BiliUgcPage`） | UGC 全部分 P（`pages[]`），老项目只取 `pages[0]`、多 P 视频只下到第一段 |
+| 服务 | `services/bilibili/bili_download_service.dart` | 链接 → 可下载条目（番剧 `fetchSeasonDetail` 全集 / UGC `resolveUgcVideo` 全分 P）+ 画质档 |
+| 服务 | `services/download/download_settings.dart` | 下载目录单例（ChangeNotifier + SharedPreferences） |
+| 服务 | `services/download/download_task.dart` | 任务状态机 + Range 流式下载（进度/速度/续传）+ 弹幕/视频两类执行 |
+| 服务 | `services/download/download_manager.dart` | 任务队列 + 并发上限 1（串行防风控）+ 暂停/恢复/重试/删除 |
+| 原生 | `MainActivity.kt` `mergeM4s` + `services/device_services.dart` | MediaExtractor + MediaMuxer 流直拷合并 video.m4s + audio.m4s → mp4 |
+| UI | `pages/bilibili/bili_danmaku_download_page.dart` | 弹幕下载：链接输入 + 解析 + 集数/分 P 勾选 + 全选 |
+| UI | `pages/bilibili/bili_video_download_page.dart` | 视频下载：清晰度选择 + 同步弹幕开关 + 集数/分 P 勾选 |
+| UI | `pages/download/download_manager_page.dart` | 下载管理页：任务列表（紧凑两行排版 + 进度/速度/暂停/恢复/重试/删除 + 清除二次确认） |
+| 组件 | `widgets/directory_picker_dialog.dart` | 目录选择器（复用 `listDirectory`，返回真实路径，页面只显示文件夹名） |
+| 入口 | `pages/settings/settings_page.dart` | 「我的」页「下载」组（弹幕下载 / 视频下载 / 下载管理） |
+
+**关键决策**：
+- **下载目录用真实路径**：App 持有 MANAGE_EXTERNAL_STORAGE，目录选择器返回真实路径、
+  直接 `dart:io` 写盘，不走 SAF content:// 流转（弹幕/视频都适用）；页面目录栏只显示文件夹名。
+- **视频合并用原生 MediaMuxer**（对齐老项目，不引入 ffmpeg_kit）：MediaExtractor 提流 +
+  MediaMuxer 流直拷（`-c copy` 语义、秒级完成）；AV1/杜比视界受系统 MediaMuxer 支持限制。
+- **弹幕复用 §4.15 的分段 protobuf 服务**：`fetchDanmaku` 已用 varint 读 tag，规避老项目
+  「多字节 tag（field≥16）解析错位 → 时间戳集中到同一秒」的坑（老项目修复见
+  mpv-android-anime4k commit `e3a913b7`）。
+- **并发串行防风控**：下载管理器并发上限 1，全选时按集数顺序一集一集下（FIFO），避免并发视频下载触发风控。
+- **清晰度选择为老项目缺失能力**：下载前按 `accept_quality` 选画质，**横向可滚动单行、默认「高清 1080P」**。
+- **同步下载弹幕开关**：视频下载页让用户自选是否顺带抓同名 XML 弹幕（默认开）。
+- **单连接流式 + Range 续传**：未做调研里的 4–8 路分块并发（吞吐受限）；任务不跨重启持久化。
 
 ---
 

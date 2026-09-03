@@ -294,6 +294,25 @@ class DeviceServices {
     }
   }
 
+  /// 把 B 站 DASH 的 video.m4s + audio.m4s 合并成单个 mp4（原生 MediaMuxer 流直拷，
+  /// 不重编码）。返回是否成功；成功会删除两个临时 m4s。
+  static Future<bool> mergeM4s(
+    String videoPath,
+    String audioPath,
+    String outputPath,
+  ) async {
+    try {
+      return await _channel.invokeMethod<bool>('mergeM4s', {
+            'video': videoPath,
+            'audio': audioPath,
+            'output': outputPath,
+          }) ??
+          false;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 把字体 content:// uri 拷贝到应用私有 fonts/ 目录（libass 需真实路径），
   /// 返回真实绝对路径，失败返回 null。
   static Future<String?> copyFontFromUri(String uri, String name) async {

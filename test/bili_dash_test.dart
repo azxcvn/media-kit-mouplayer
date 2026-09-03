@@ -173,4 +173,24 @@ void main() {
     expect(v.title, '标题');
     expect(v.durationMs, 90000);
   });
+
+  test('BiliUgcVideo 解析全部分 P（多 P 补全）', () {
+    final json = {
+      'aid': 123,
+      'bvid': 'BV1xx411c7mD',
+      'title': '标题',
+      'pages': [
+        {'cid': 456, 'page': 1, 'part': 'P1 片头', 'duration': 90},
+        {'cid': 789, 'page': 2, 'part': 'P2 正片', 'duration': 300},
+      ],
+    };
+    final v = BiliUgcVideo.fromJson(json);
+    expect(v.pages.length, 2);
+    expect(v.pages[0].cid, 456);
+    expect(v.pages[0].part, 'P1 片头');
+    expect(v.pages[1].cid, 789);
+    expect(v.pages[1].durationMs, 300000);
+    // 向后兼容：cid 仍取首分 P
+    expect(v.cid, 456);
+  });
 }

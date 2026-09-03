@@ -243,7 +243,29 @@ class BiliPlayUrlResult {
   }
 }
 
-/// UGC 视频详情（`/x/web-interface/view` 解析结果的最小集：标题 + 首个分P cid）。
+/// UGC 视频单个分 P（`/x/web-interface/view` 的 `pages[]` 条目）。
+class BiliUgcPage {
+  final int cid;
+  final int page; // 分 P 序号（从 1 开始）
+  final String part; // 分 P 标题
+  final int durationMs;
+
+  const BiliUgcPage({
+    required this.cid,
+    required this.page,
+    required this.part,
+    this.durationMs = 0,
+  });
+
+  factory BiliUgcPage.fromJson(Map<String, dynamic> json) => BiliUgcPage(
+        cid: _asInt(json['cid']),
+        page: _asInt(json['page']),
+        part: json['part']?.toString() ?? '',
+        durationMs: _asInt(json['duration']) * 1000,
+      );
+}
+
+/// UGC 视频详情（`/x/web-interface/view` 解析结果的最小集：标题 + 全部分 P）。
 class BiliUgcVideo {
   final int aid;
   final String bvid;
@@ -251,25 +273,32 @@ class BiliUgcVideo {
   final String title;
   final int durationMs;
 
+  /// 全部分 P（老项目只取 `pages[0]`，多 P 视频只能下到第一段——这里补全）。
+  final List<BiliUgcPage> pages;
+
   const BiliUgcVideo({
     required this.aid,
     required this.bvid,
     required this.cid,
     this.title = '',
     this.durationMs = 0,
+    this.pages = const [],
   });
 
   factory BiliUgcVideo.fromJson(Map<String, dynamic> json) {
-    final pages = (json['pages'] as List?) ?? const [];
-    final first = pages.isNotEmpty && pages.first is Map
-        ? (pages.first as Map).cast<String, dynamic>()
-        : const <String, dynamic>{};
+    final pages = (json['pages'] as List?)
+            ?.whereType<Map>()
+            .map((e) => BiliUgcPage.fromJson(e.cast<String, dynamic>()))
+            .toList() ??
+        const [];
+    final first = pages.isNotEmpty ? pages.first : null;
     return BiliUgcVideo(
       aid: _asInt(json['aid']),
       bvid: json['bvid']?.toString() ?? '',
-      cid: _asInt(first['cid']),
+      cid: first?.cid ?? 0,
       title: json['title']?.toString() ?? '',
-      durationMs: _asInt(first['duration'] ?? json['duration']) * 1000,
+      durationMs: first?.durationMs ?? _asInt(json['duration']) * 1000,
+      pages: pages,
     );
   }
 }

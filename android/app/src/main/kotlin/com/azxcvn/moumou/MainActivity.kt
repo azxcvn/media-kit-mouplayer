@@ -381,9 +381,107 @@ class MainActivity : FlutterActivity() {
                         setAutoPipEnabled(enabled)
                         result.success(true)
                     }
+                    // ── B站视频下载：音视频 m4s 合并为 mp4（MediaMuxer 流直拷）────
+                    "mergeM4s" -> {
+                        val video = call.argument<String>("video") ?: ""
+                        val audio = call.argument<String>("audio") ?: ""
+                        val output = call.argument<String>("output") ?: ""
+                        if (video.isEmpty() || audio.isEmpty() || output.isEmpty()) {
+                            result.error("INVALID_ARG", "video/audio/output required", null)
+                        } else {
+                            Thread {
+                                val ok = mergeM4s(video, audio, output)
+                                runOnUiThread { result.success(ok) }
+                            }.start()
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    // ── B站视频下载：MediaExtractor + MediaMuxer 流直拷合并 ──────────
+
+    /**
+     * 把 B 站 DASH 的 video.m4s + audio.m4s 合并成单个 mp4（不重编码，流直拷）。
+     * 对齐老项目（小喵 player）`mergeVideoAudio` 的 MediaMuxer 方案，避免引入
+     * ffmpeg_kit 依赖。合并成功会顺手删除两个临时 m4s 文件。
+     */
+    private fun mergeM4s(videoPath: String, audioPath: String, outputPath: String): Boolean {
+        return try {
+            val muxer = android.media.MediaMuxer(
+                outputPath,
+                android.media.MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4,
+            )
+
+            val videoExtractor = android.media.MediaExtractor()
+            videoExtractor.setDataSource(videoPath)
+            var videoFormat: android.media.MediaFormat? = null
+            for (i in 0 until videoExtractor.trackCount) {
+                val fmt = videoExtractor.getTrackFormat(i)
+                val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("video/")) {
+                    videoFormat = fmt
+                    videoExtractor.selectTrack(i)
+                    break
+                }
+            }
+
+            val audioExtractor = android.media.MediaExtractor()
+            audioExtractor.setDataSource(audioPath)
+            var audioFormat: android.media.MediaFormat? = null
+            for (i in 0 until audioExtractor.trackCount) {
+                val fmt = audioExtractor.getTrackFormat(i)
+                val mime = fmt.getString(android.media.MediaFormat.KEY_MIME) ?: ""
+                if (mime.startsWith("audio/")) {
+                    audioFormat = fmt
+                    audioExtractor.selectTrack(i)
+                    break
+                }
+            }
+
+            if (videoFormat == null || audioFormat == null) {
+                videoExtractor.release()
+                audioExtractor.release()
+                muxer.release()
+                return false
+            }
+
+            val muxVideo = muxer.addTrack(videoFormat)
+            val muxAudio = muxer.addTrack(audioFormat)
+            muxer.start()
+
+            fun copyTrack(
+                extractor: android.media.MediaExtractor,
+                trackIndex: Int,
+            ) {
+                val buffer = java.nio.ByteBuffer.allocate(1024 * 1024)
+                val info = android.media.MediaCodec.BufferInfo()
+                while (true) {
+                    info.size = extractor.readSampleData(buffer, 0)
+                    if (info.size < 0) break
+                    info.presentationTimeUs = extractor.sampleTime
+                    info.flags = extractor.sampleFlags
+                    muxer.writeSampleData(trackIndex, buffer, info)
+                    extractor.advance()
+                }
+            }
+
+            copyTrack(videoExtractor, muxVideo)
+            copyTrack(audioExtractor, muxAudio)
+
+            videoExtractor.release()
+            audioExtractor.release()
+            muxer.stop()
+            muxer.release()
+
+            File(videoPath).delete()
+            File(audioPath).delete()
+            true
+        } catch (e: Exception) {
+            Log.w("MainActivity", "mergeM4s failed: ${e.message}")
+            false
+        }
     }
 
     // ── 错误日志（崩溃日志自动记录）────────────────────────

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:moumou/pages/bilibili/bili_danmaku_download_page.dart';
 import 'package:moumou/pages/bilibili/bili_login_page.dart';
 import 'package:moumou/pages/bilibili/bili_user_page.dart';
+import 'package:moumou/pages/bilibili/bili_video_download_page.dart';
+import 'package:moumou/pages/download/download_manager_page.dart';
 import 'package:moumou/pages/settings/about_page.dart';
 import 'package:moumou/pages/settings/appearance_page.dart';
 import 'package:moumou/pages/settings/danmaku_server_page.dart';
@@ -134,6 +137,52 @@ class SettingsPage extends StatelessWidget {
                       ),
                     );
                   },
+                ),
+              ),
+              // ── 下载（哔哩生态阶段四：弹幕/视频下载）────────
+              const SettingsGroupTitle(title: '下载'),
+              SettingsCard(
+                child: Column(
+                  children: [
+                    SettingsTile(
+                      icon: Icons.subtitles_outlined,
+                      title: '弹幕下载',
+                      subtitle: const Text('B 站弹幕下载'),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const BiliDanmakuDownloadPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    const Divider(height: 1),
+                    SettingsTile(
+                      icon: Icons.download_outlined,
+                      title: '视频下载',
+                      subtitle: const Text('B 站视频下载'),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const BiliVideoDownloadPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    const Divider(height: 1),
+                    SettingsTile(
+                      icon: Icons.list_alt_outlined,
+                      title: '下载管理',
+                      subtitle: const Text('查看下载任务进度'),
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const DownloadManagerPage(),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
                 ),
               ),
               // ── 其他（后续在此追加更多项）──────────────
