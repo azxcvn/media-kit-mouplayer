@@ -63,3 +63,6 @@ app.*.map.json
 
 # WorkBuddy 工作目录（AI 助手本地数据：记忆/身份/技能等，不提交）
 /.workbuddy/
+
+# Trae HTML Share Packages（本地缓存的 HTML 分享包，不提交）
+/.trae-html-share-packages/
