@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -18,6 +20,12 @@ class DownloadSettings extends ChangeNotifier {
   /// 当前下载目录（未设置时为空串）。
   String get directory => _directory;
   bool get hasDirectory => _directory.isNotEmpty;
+
+  /// 目录是否存在（磁盘上的真实路径）。
+  ///
+  /// 用户可能手动删除了先前设置的目录：下载前必须校验，否则写盘直接抛
+  /// `FileSystemException`（工作.md 第 3 点）。
+  bool get directoryExists => _directory.isNotEmpty && Directory(_directory).existsSync();
 
   /// 目录名（去掉父路径，仅展示最后一级文件夹名，避免用户不知道自己在哪）。
   String get directoryName {

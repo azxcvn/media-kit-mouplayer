@@ -313,6 +313,16 @@ class DeviceServices {
     }
   }
 
+  /// 触发系统媒体库扫描单个文件（下载产物写盘后调用，工作.md 第 5 点）。
+  /// 让 MediaStore 立即抽取时长/分辨率，避免列表里 duration=0 导致进度不显示。
+  static Future<void> scanMediaFile(String path) async {
+    try {
+      await _channel.invokeMethod<void>('scanMediaFile', {'path': path});
+    } catch (_) {
+      // 扫描失败不阻断下载流程（getVideos 另有 MediaMetadataRetriever 时长兜底）
+    }
+  }
+
   /// 把字体 content:// uri 拷贝到应用私有 fonts/ 目录（libass 需真实路径），
   /// 返回真实绝对路径，失败返回 null。
   static Future<String?> copyFontFromUri(String uri, String name) async {

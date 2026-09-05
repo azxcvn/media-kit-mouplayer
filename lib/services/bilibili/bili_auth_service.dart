@@ -53,7 +53,14 @@ class BiliNavData {
 /// 哔哩哔哩认证服务：TV 扫码生成/轮询、登录态自检、buvid 预取、退出登录。
 ///
 /// 扫码登录对齐 PiliPlus（`login.dart` getHDcode / codePoll，android_hd 通道 +
-/// appSign）：凭证在 JSON 里直接返回（token_info + cookie_info），不依赖 Set-Cookie。
+/// appSign）：凭证在 poll 响应 JSON 里直接返回（token_info + cookie_info.cookies），
+/// 不依赖 Set-Cookie / 跨域跳转。
+///
+/// ⚠️ 曾按工作.md 第 7 点试改 Web 扫码（`/x/passport-login/web/qrcode/*`），
+/// 真机验证失败后已回滚：Web 通道 poll 成功后返回的 `data.url` 是 ticket 换凭证的
+/// crossDomain 链接，实测（2026-09）对非浏览器 HTTP 客户端**不下发** Set-Cookie
+/// （302 跳转响应头为空），拿不到 SESSDATA；TV 通道凭证直接在 JSON 里，无此问题。
+/// TV 通道已知限制：国际版哔哩哔哩客户端扫码后无法确认登录（轮询停在未确认）。
 class BiliAuthService {
   BiliAuthService({BiliHttp? http}) : http = http ?? BiliHttp();
 
@@ -118,13 +125,20 @@ class BiliAuthService {
     BiliTvLoginData? loginData;
     if (code == 0) {
       final data = resp['data'];
-      if (data is Map) loginData = _parseTvLoginData(data);
+      if (data is Map) {
+        loginData = _parseTvLoginData(data);
+        debugPrint(
+          '[BILI-AUTH] poll 成功: '
+          'hasSESSDATA=${loginData.cookies['SESSDATA']?.isNotEmpty == true} '
+          'hasAccessToken=${loginData.accessToken.isNotEmpty}',
+        );
+      }
     }
     return BiliTvPoll(code: code, message: message, data: loginData);
   }
 
   /// 解析 TV 登录成功数据：token_info 的 access/refresh token + cookie_info 的 cookies。
-  BiliTvLoginData? _parseTvLoginData(Map data) {
+  BiliTvLoginData _parseTvLoginData(Map data) {
     final cookies = <String, String>{};
     final cookieInfo = data['cookie_info'];
     if (cookieInfo is Map) {

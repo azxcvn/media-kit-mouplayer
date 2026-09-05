@@ -82,6 +82,59 @@ class DownloadTask extends ChangeNotifier {
   /// 落盘文件名（去除路径非法字符后的标题）。
   String get _safeTitle => _sanitizeFileName(title);
 
+  /// 序列化（供 [DownloadManager] 跨重启持久化下载记录，工作.md 第 2 点）。
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'title': title,
+        'subtitle': subtitle,
+        'coverUrl': coverUrl,
+        'isVideo': isVideo,
+        'saveDir': saveDir,
+        'aid': aid,
+        'cid': cid,
+        'epId': epId,
+        'seasonId': seasonId,
+        'bvid': bvid,
+        'qn': qn,
+        'withDanmaku': withDanmaku,
+        'status': _status.name,
+        'progress': _progress,
+        'error': _error,
+        'outputPath': _outputPath,
+      };
+
+  /// 从持久化 JSON 恢复任务（未完成的任务由 [DownloadManager] 归位为暂停，
+  /// 不会在重启后自动续跑）。
+  factory DownloadTask.fromJson(Map<String, dynamic> json) {
+    final task = DownloadTask(
+      id: json['id'] as String? ?? '',
+      title: json['title'] as String? ?? '',
+      subtitle: json['subtitle'] as String? ?? '',
+      coverUrl: json['coverUrl'] as String? ?? '',
+      isVideo: json['isVideo'] as bool? ?? true,
+      saveDir: json['saveDir'] as String? ?? '',
+      aid: (json['aid'] as num?)?.toInt() ?? 0,
+      cid: (json['cid'] as num?)?.toInt() ?? 0,
+      epId: (json['epId'] as num?)?.toInt() ?? 0,
+      seasonId: (json['seasonId'] as num?)?.toInt() ?? 0,
+      bvid: json['bvid'] as String? ?? '',
+      qn: (json['qn'] as num?)?.toInt() ?? 0,
+      withDanmaku: json['withDanmaku'] as bool? ?? false,
+    );
+    task._status = _statusFromName(json['status'] as String?);
+    task._progress = ((json['progress'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0);
+    task._error = json['error'] as String?;
+    task._outputPath = json['outputPath'] as String?;
+    return task;
+  }
+
+  static DownloadStatus _statusFromName(String? name) {
+    return DownloadStatus.values.firstWhere(
+      (s) => s.name == name,
+      orElse: () => DownloadStatus.pending,
+    );
+  }
+
   /// 下载是否被暂停（区别于取消/失败）。
   bool get isPaused => _status == DownloadStatus.paused;
 
@@ -104,6 +157,14 @@ class DownloadTask extends ChangeNotifier {
     _paused = false;
     _cancelled = false;
     _setStatus(DownloadStatus.pending);
+  }
+
+  /// 重启恢复持久化任务时调用：把「未完成」的任务标记为暂停，
+  /// 之后仍可由用户手动 `resume` 继续（不自动续跑）。
+  void markPausedForRestore() {
+    _paused = true;
+    _cancelled = false;
+    _setStatus(DownloadStatus.paused);
   }
 
   /// 执行下载（幂等：已完成直接返回）。
@@ -183,6 +244,9 @@ class DownloadTask extends ChangeNotifier {
       throw const BiliApiException('音视频合并失败');
     }
     _outputPath = output.path;
+    // 通知系统媒体库扫描产物，让 MediaStore 立即抽取时长/分辨率
+    // （工作.md 第 5 点：否则列表里 duration=0，进度条/百分比显示「未观看」）。
+    unawaited(DeviceServices.scanMediaFile(output.path));
     _setProgress(1);
     _setStatus(DownloadStatus.completed);
   }

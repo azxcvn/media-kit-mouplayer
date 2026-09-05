@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:moumou/pages/player/player_metrics.dart';
+import 'package:moumou/services/bilibili/bili_stream_proxy.dart';
 import 'package:moumou/services/device_services.dart';
 import 'package:moumou/services/network/network_streaming_proxy.dart';
 import 'package:moumou/services/player_controls_settings.dart';
@@ -127,8 +128,13 @@ class _PlayerStatusBarState extends State<PlayerStatusBar> {
       if (_netSpeedBytesPerSec != 0) setState(() => _netSpeedBytesPerSec = 0);
       return;
     }
+    // 网速来源按代理类型分流（工作.md 第 6 点——之前只读网络存储代理，B 站恒为 0 KB/s）：
+    // - 网络存储播放：streamUrl 就是本地代理 URL，按 URL 匹配查 NetworkStreamingProxy；
+    // - B 站在线播放：streamUrl 是 CDN 原始 URL（本地代理 URL 只在播放器内部使用），
+    //   按匹配查不到，改读 BiliStreamProxy 全部流（video+audio）的聚合速率。
     final speed = NetworkStreamingProxy.instance
-        .recentSpeedBytesPerSec(widget.streamUrl!);
+            .recentSpeedBytesPerSec(widget.streamUrl!) ??
+        BiliStreamProxy.instance.recentTotalSpeedBytesPerSec();
     if (speed == null) return;
     if ((speed - _netSpeedBytesPerSec).abs() > 1.0) {
       setState(() => _netSpeedBytesPerSec = speed);

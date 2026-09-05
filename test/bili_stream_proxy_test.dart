@@ -61,4 +61,33 @@ void main() {
     proxy.stop();
     expect(proxy.isRunning, isFalse);
   });
+
+  test('recentSpeedBytesPerSec：未知 URL 返回 null，已注册 URL 返回速率', () async {
+    final proxy = BiliStreamProxy();
+    expect(proxy.recentSpeedBytesPerSec('http://127.0.0.1:1/unknown'), isNull);
+
+    final reg = await proxy.registerStreams(videoUrl: 'http://127.0.0.1:1/v');
+    expect(reg, isNotNull);
+    // 已注册但尚未传输：速率为 0（非 null），保证 UI 有确定值可显示。
+    expect(proxy.recentSpeedBytesPerSec(reg!.videoUrl), 0.0);
+    proxy.stop();
+  });
+
+  test('recentTotalSpeedBytesPerSec：无流 null / 注册后为聚合速率', () async {
+    final proxy = BiliStreamProxy();
+    expect(proxy.recentTotalSpeedBytesPerSec(), isNull);
+
+    // video + audio 双流注册（B 站 DASH），聚合查询不依赖 URL 匹配
+    final reg = await proxy.registerStreams(
+      videoUrl: 'http://127.0.0.1:1/v',
+      audioUrl: 'http://127.0.0.1:1/a',
+    );
+    expect(reg, isNotNull);
+    // 已注册但尚未传输：聚合速率为 0（非 null）
+    expect(proxy.recentTotalSpeedBytesPerSec(), 0.0);
+
+    // stop 清空注册后回到 null（播放页 dispose 调 stop，状态栏不会读到残留）
+    proxy.stop();
+    expect(proxy.recentTotalSpeedBytesPerSec(), isNull);
+  });
 }

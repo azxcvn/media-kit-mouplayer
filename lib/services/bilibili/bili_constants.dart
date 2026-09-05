@@ -22,12 +22,12 @@ abstract final class BiliConstants {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
       '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-  /// TV 端 appkey / appsec（PiliPlus 公开常量；TV 扫码与 tv playurl 用，
-  /// 属灰色地带，默认不启用）。
+  /// TV 端 appkey / appsec（PiliPlus 公开常量；登录已改 Web 扫码，此常量保留供
+  /// 后续 tv playurl 参考，属灰色地带，默认不启用）。
   static const String tvAppKey = 'dfca71928277209b';
   static const String tvAppSec = 'b5475a8825547a4fc26c7d518eaaa02e';
 
-  /// TV 通道（android_hd）登录/接口用的 BiliDroid UA 与固定 traceId（对齐 PiliPlus）。
+  /// TV 通道（android_hd）接口用的 BiliDroid UA 与固定 traceId（对齐 PiliPlus，供 tv playurl 参考）。
   static const String tvUserAgent =
       'Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android model/android_hd '
       'mobi_app/android_hd build/2001100 channel/master innerVer/2001100 osVer/15 network/2';

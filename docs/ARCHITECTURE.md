@@ -137,14 +137,14 @@ lib/
 │   │   ├── bili_bangumi_service.dart # 番剧索引条件/分页/搜索(WBI)/季详情/时间表（§4.14）
 │   │   ├── bili_video_service.dart   # PGC/UGC playurl（DASH选流+清晰度+WBI签名，§4.15）
 │   │   ├── bili_danmaku_service.dart # B站原声弹幕（seg.so protobuf 解码 + XML 缓存，§4.15）
-│   │   ├── bili_stream_proxy.dart    # 本地 HTTP 代理（绕过 libmpv mbedTLS，§4.15）
-│   │   ├── bili_download_service.dart # 下载解析：链接 → 可下载条目（番剧多集 / 多分 P，§4.16）
+│   │   ├── bili_stream_proxy.dart    # 本地 HTTP 代理（绕过 libmpv mbedTLS + 滑动窗口网速统计，§4.15）
+│   │   ├── bili_download_service.dart # 下载解析：链接 → 可下载条目（番剧多集 / UGC BV·av 多分 P，§4.16）
 │   │   └── pb/
 │   │       └── pb_reader.dart        # 手写 protobuf wire 解码器（varint+length-delimited，§4.15）
 │   ├── download/                 # 下载域（哔哩生态阶段四，B站是首个用户，§4.16）
 │   │   ├── download_settings.dart # 下载目录设置（ChangeNotifier + 持久化）
 │   │   ├── download_task.dart     # 下载任务状态机 + Range 流式下载 + 合并
-│   │   └── download_manager.dart  # 任务队列 + 并发槽调度（ChangeNotifier）
+│   │   └── download_manager.dart  # 任务队列 + 并发槽调度 + 跨重启持久化（ChangeNotifier）
 │   └── ...                    #   ⚠️ 不要在这里加全局 ValueNotifier hack（见 §4.1）
 ├── widgets/                   # 可复用 UI 组件（跨页面）
 │   ├── app_frame.dart         #   ★ 全局框架：安全区 + 播放页全屏检测
@@ -273,7 +273,8 @@ lib/
     ├── network_path.dart      #   网络路径规范化/校验/子路径拼接
     ├── bili_wbi.dart          #   WBI 签名纯函数（getMixinKey/encWbi，混淆表 64 项）
     ├── bili_app_sign.dart     #   TV 端 appSign 纯函数（appkey/appsec MD5 签名）
-    ├── bili_bangumi_url.dart  #   番剧链接解析纯函数（提取 ss/ep/BV 三种令牌）
+    ├── bili_bangumi_url.dart  #   番剧/视频链接解析纯函数（提取 ss/ep/BV/av 令牌）
+    ├── bili_short_link.dart   #   b23.tv 分享短链提取+展开（任意分享文本提取，302 命中令牌即停）
     └── network_mime_types.dart # 文件名→MIME 类型映射
 ```
 
@@ -636,23 +637,43 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 传输 | `services/bilibili/bili_http.dart` | 统一请求：Cookie/UA/Referer/buvid3 注入 + UTF-8 解码 + `BiliApiException` |
 | 认证 | `services/bilibili/bili_auth_service.dart` | TV 扫码生成/轮询（android_hd appSign，JSON 返回 token_info+cookie_info）/nav 自检/buvid 预取/退出登录 |
 | 状态 | `services/bilibili/bili_account.dart` | ChangeNotifier 单例：登录态/用户信息/WBI 密钥/buvid；启动 `ensureLoaded` |
-| UI | `pages/bilibili/bili_login_page.dart` | 扫码登录（刷新/保存相册/打开哔哩哔哩）+ Cookie 导入 |
+| UI | `pages/bilibili/bili_login_page.dart` | 扫码登录（Web 码刷新/保存相册/打开哔哩哔哩）+ Cookie 导入 |
 | 入口 | `pages/settings/settings_page.dart` + `main.dart` | 「我的」页账号卡片 + 启动 `ensureLoaded` |
 | 原生 | `MainActivity.kt` / `AndroidManifest.xml` | `openBilibiliScan`（bilibili:// 深链直接 startActivity）+ `<queries>` 声明 |
 
 **关键决策**：
 - **扫码登录对齐 PiliPlus 的 TV 通道**（`mobi_app=android_hd` + appSign，`auth_code`/`poll` 两接口）：
   凭证直接 JSON 返回（`token_info.access_token/refresh_token` + `cookie_info.cookies` 的
-  SESSDATA/bili_jct/DedeUserID），**不依赖 Set-Cookie**（Web 扫码的 data.url 通常为空、
-  凭证只在 Set-Cookie 头，易踩坑）。access_token 供阶段三 tv playurl 取更高画质。
+  SESSDATA/bili_jct/DedeUserID），**不依赖 Set-Cookie**。access_token 供阶段三 tv playurl 取更高画质。
 - **TV 扫码请求头对齐 PiliPlus `getHDcode`/`codePoll` 实际头**（`AnonymousAccount.headers` =
   `Constants.baseHeaders`）：`app-key: android64` + `x-bili-aurora-zone: sh001` + Referer，
   **不是** `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid`（那是 PiliPlus
   短信/密码登录的 `LoginHttp.headers`，扫码不适用）；发「真 TV 端」头会被风控按真机 TV 链路校验。
 - **已知未解决：国际版扫码登录**：国际版客户端（`com.bilibili.app.in`，`android_i`，走 biliintl
-  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。已尝试对齐 PiliPlus
-  头仍未解决；彻底解法 = 改走 Web 扫码（`/x/passport-login/web/qrcode/*`，老项目小喵 player 方案），
-  代价仅 Web 画质（拿不到 TV access_token）。
+  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。
+- **Web 扫码通道已试过并回滚（2026-09 真机结论）**：Web poll 成功返回的 `data.url` 已是
+  ticket 换凭证的 crossDomain 链接（旧文档「SESSDATA 放 query」格式过时）；实测对非浏览器
+  HTTP 客户端，crossDomain 302 跳转**响应头无 Set-Cookie**（逐跳手动跟随亦然，仅
+  www.bilibili.com 下发 buvid3/b_nut），拿不到 SESSDATA。勿再按旧文档实现 Web 扫码；
+  PiliPlus 同样走 TV 通道。
+- **轮询防冻结护栏**：poll 到 code=0 但凭证缺失（cookie_info 空）时不静默 cancel 定时器，
+  toast「登录凭证获取失败，请重试」并刷新二维码（否则页面冻结无反应）。
+- **为什么选 Web 扫码**：跨客户端通用（国际版客户端也能确认登录），根治原 TV 通道
+  「国际版扫码停在未确认」的坑；代价是拿不到 TV 的 access_token、仅 Web 画质（1080P）。
+- **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + refresh_token 走
+  `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
+  永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
+- **登录态自检 + WBI 密钥**都来自 `GET /x/web-interface/nav` 一次请求；Cookie 过期时 nav
+  返回 `isLogin=false`（不报错），据此**静默清凭证回游客态**。
+- **扫码轮询**：1 秒轮询，180 秒倒计时自动刷新（服务端 86038 双保险）；
+  「打开哔哩哔哩」用 `bilibili://browser?url=…` 深链直接 `startActivity`（未装/无处理者抛
+  ActivityNotFoundException → 提示未安装）；「保存相册」用 RepaintBoundary 截图 + `saver_gallery`。
+- **Cookie 导入为逃生门**：文本框粘贴解析 `SESSDATA=..; bili_jct=..; DedeUserID=..`，
+  风控异常时保住可用性。
+- **WBI 混淆表以 64 项为准**：PiliPlus 只保留前 32 项（结果等价）；⚠️ 调研报告 HTML 里的
+  混淆表有误（第 28 位起与官方表不符），**以 bilibili-API-collect / Bili23 的 64 项表为准**。
+- **反爬为精简版**：当前只做 buvid3 预取 + 固定 UA + Referer；Bili23 的 buvid_fp/bili_ticket/
+  ExClimbWuzhi 等完整指纹留待阶段三 playurl 遇 412 风控再补。
 - **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + access_token/refresh_token 走
   `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
   永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
@@ -781,7 +802,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | 服务 | `services/bilibili/bili_download_service.dart` | 链接 → 可下载条目（番剧 `fetchSeasonDetail` 全集 / UGC `resolveUgcVideo` 全分 P）+ 画质档 |
 | 服务 | `services/download/download_settings.dart` | 下载目录单例（ChangeNotifier + SharedPreferences） |
 | 服务 | `services/download/download_task.dart` | 任务状态机 + Range 流式下载（进度/速度/续传）+ 弹幕/视频两类执行 |
-| 服务 | `services/download/download_manager.dart` | 任务队列 + 并发上限 1（串行防风控）+ 暂停/恢复/重试/删除 |
+| 服务 | `services/download/download_manager.dart` | 任务队列 + 并发上限 1（串行防风控）+ 暂停/恢复/重试/删除 + 跨重启持久化 |
 | 原生 | `MainActivity.kt` `mergeM4s` + `services/device_services.dart` | MediaExtractor + MediaMuxer 流直拷合并 video.m4s + audio.m4s → mp4 |
 | UI | `pages/bilibili/bili_danmaku_download_page.dart` | 弹幕下载：链接输入 + 解析 + 集数/分 P 勾选 + 全选 |
 | UI | `pages/bilibili/bili_video_download_page.dart` | 视频下载：清晰度选择 + 同步弹幕开关 + 集数/分 P 勾选 |
@@ -800,7 +821,22 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 - **并发串行防风控**：下载管理器并发上限 1，全选时按集数顺序一集一集下（FIFO），避免并发视频下载触发风控。
 - **清晰度选择为老项目缺失能力**：下载前按 `accept_quality` 选画质，**横向可滚动单行、默认「高清 1080P」**。
 - **同步下载弹幕开关**：视频下载页让用户自选是否顺带抓同名 XML 弹幕（默认开）。
-- **单连接流式 + Range 续传**：未做调研里的 4–8 路分块并发（吞吐受限）；任务不跨重启持久化。
+- **下载记录跨重启持久化（工作.md 第 2 点）**：`DownloadManager` 把任务列表（状态/进度/产物路径）
+  序列化到 SharedPreferences，`ensureLoaded`（main.dart 启动调用）恢复；重启前 pending/downloading/
+  merging 的任务归位为 paused（不自动续跑），completed/failed 记录保留。进度每 500ms 刷新但只在
+  「状态变化」时落盘（避免高频全量序列化）。
+- **下载前路径校验（工作.md 第 3 点）**：`DownloadSettings.directoryExists` 检查真实路径是否仍在
+  磁盘；弹幕/视频下载页点「下载」时若目录被删，toast 提示并弹出目录选择器，避免「开始下载才失败」。
+- **下载产物媒体扫描（工作.md 第 5 点）**：合并/改名落盘后调用原生 `scanMediaFile`
+  （`MediaScannerConnection.scanFile`），让 MediaStore 立即抽取时长/分辨率；`getVideos` 另对
+  duration==0 的文件用 `MediaMetadataRetriever` 兜底抽时长——否则下载视频在列表里显示「未观看」。
+- **UGC 支持 BV / av / b23.tv 短链（工作.md 第 8 点）**：`parseBiliBangumiUrl` 识别
+  `av(\d+)`，`resolveUgcVideo` 支持 aid 通道（`/x/web-interface/view?aid=`）；分享短链
+  不含令牌，`utils/bili_short_link.dart` 从**任意分享文本**正则提取（App 复制出来是
+  `【标题】 https://b23.tv/xxx`，不能按整串 startsWith 判定；裸短链自动补 https，
+  对齐小喵）再手动跟随 302 展开（命中令牌即停、不下载整页），
+  `BiliDownloadService.resolveRef` 与番剧首页解析弹窗共用；番剧与用户视频均可解析下载。
+- **单连接流式 + Range 续传**：未做调研里的 4–8 路分块并发（吞吐受限）。
 
 ---
 
@@ -930,7 +966,9 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   - `test/bili_pb_test.dart` — protobuf wire 解码器（varint/length-delimited/未知字段跳过）+ 弹幕消息字段号解析（DmWebViewReply.dmSge.total / DanmakuElem）
   - `test/bili_danmaku_service_test.dart` — B 站弹幕服务（MockClient：分段 protobuf 抓取解码/跨分段去重/state==1 关闭/降级旧 XML deflate/XML 缓存回读往返）
   - `test/bili_video_service_test.dart` — 视频服务（MockClient：PGC result.video_info/UGC data/resolveUgcVideo/WBI 签名/错误码友好提示/密钥缺失）
-  - `test/bili_stream_proxy_test.dart` — 本地流代理（转发字节/Range 与响应头透传/未注册 404/start·stop 生命周期）
+  - `test/bili_stream_proxy_test.dart` — 本地流代理（转发字节/Range 与响应头透传/未注册 404/start·stop 生命周期/网速 recentSpeedBytesPerSec）
+  - `test/bili_auth_service_test.dart` — Web 扫码登录服务（generate 解析 url+qrcode_key / poll 成功从 data.url query 解析 Cookie+refresh_token / 86101·86090 状态）
+  - `test/download_manager_test.dart` — 下载记录持久化（DownloadTask toJson/fromJson 往返 / 重启恢复未完成归位暂停·已完成保留 / 损坏数据防御）
 - 改以下代码必须跑对应测试：`AppFrame`、`ViewSettings` 排序、权限流程、`CapsuleNavBar`
 
 ---
@@ -1043,3 +1081,7 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
 | `loadFontFromList` 只对当前进程有效，首帧前未注册回落默认字体 | `main()` 改 async，`runApp` 前 await 注册 App/弹幕自定义字体（§4.12） |
 | `AnimatedDefaultTextStyle` 用默认构造**不 merge** 父级 DefaultTextStyle，导致字体族名丢失（主题色/调色板/胶囊标签不跟随自定义字体） | 显式在 style 里带 `fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily`（§4.12） |
 | 调研报告 HTML 里的 WBI 混淆表有误（第 28 位起与官方 64 项表不符），照抄会导致 playurl 签名集体失败 | WBI 混淆表以 bilibili-API-collect / Bili23 的 64 项表为准（§4.13）；PiliPlus 前 32 项结果等价 |
+| 下载产物（dart:io/MediaMuxer 直写）MediaStore 未及时抽时长 → 列表 duration=0、进度恒「未观看」 | 落盘后 `scanMediaFile`（MediaScannerConnection.scanFile）+ `getVideos` 对 duration==0 用 MediaMetadataRetriever 兜底（§4.16） |
+| B 站在线播放网速恒 0 KB/s | 状态栏拿到的 streamUrl 是 CDN 原始 URL（本地代理 URL 只在播放器内部），按 URL 匹配查不到；网络存储仍按 URL 查 `NetworkStreamingProxy`，B 站读 `BiliStreamProxy.recentTotalSpeedBytesPerSec()`（video+audio 聚合，§4.15/§4.16） |
+| Web 扫码 `data.url` 已是 ticket 换凭证（旧文档 query 带 SESSDATA 的格式过时）；实测 crossDomain 302 对非浏览器客户端**不下发 Set-Cookie**（逐跳跟随亦然） | 登录走 TV 通道（凭证直接在 poll JSON，PiliPlus 同款）；勿再按旧文档实现 Web 扫码（§4.13） |
+| 轮询到 code=0 但凭证缺失时静默 cancel 定时器 → 页面冻结无反应（倒计时卡死） | 成功但凭证为空时 toast+刷新重试，勿静默 cancel（§4.13） |

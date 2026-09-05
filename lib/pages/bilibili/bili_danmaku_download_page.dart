@@ -78,6 +78,12 @@ class _BiliDanmakuDownloadPageState extends State<BiliDanmakuDownloadPage> {
   Future<void> _download() async {
     final target = _target;
     if (target == null || _selected.isEmpty) return;
+    // 下载前校验存储路径真实存在（工作.md 第 3 点）。
+    if (!DownloadSettings.instance.directoryExists) {
+      _toast('下载目录不存在，请重新选择');
+      await _pickDir();
+      if (!DownloadSettings.instance.directoryExists) return;
+    }
     final dir = DownloadSettings.instance.directory;
     var i = 0;
     for (final idx in _selected.toList()..sort()) {
@@ -130,7 +136,7 @@ class _BiliDanmakuDownloadPageState extends State<BiliDanmakuDownloadPage> {
               controller: _urlCtrl,
               onSubmitted: (_) => _parse(),
               decoration: InputDecoration(
-                hintText: '粘贴 B 站视频/番剧链接（BV / ss / ep）',
+                hintText: '粘贴 B 站视频/番剧链接（BV / av / ss / ep / b23.tv）',
                 isDense: true,
                 prefixIcon: const Icon(Icons.link),
                 border: OutlineInputBorder(

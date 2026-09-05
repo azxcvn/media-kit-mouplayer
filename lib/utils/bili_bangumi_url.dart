@@ -8,18 +8,28 @@ library;
 final RegExp _reBv = RegExp(r'BV[0-9A-Za-z]{10}');
 final RegExp _reEp = RegExp(r'[eE][pP](\d+)');
 final RegExp _reSs = RegExp(r'[sS][sS](\d+)');
+final RegExp _reAv = RegExp(r'[aA][vV](\d+)');
 
 /// 解析出的番剧引用（season / episode / UGC 三选一，其余为 0/空）。
+///
+/// UGC 支持 BV 号与 av 号两种形式（老链接、分享短链里 av 号仍常见，工作.md 第 8 点）。
 class BiliBangumiRef {
   final int seasonId;
   final int epId;
   final String bvid;
+  final int aid;
 
-  const BiliBangumiRef({this.seasonId = 0, this.epId = 0, this.bvid = ''});
+  const BiliBangumiRef({
+    this.seasonId = 0,
+    this.epId = 0,
+    this.bvid = '',
+    this.aid = 0,
+  });
 
   bool get hasSeason => seasonId > 0;
   bool get hasEpisode => epId > 0;
-  bool get isUgc => bvid.isNotEmpty;
+  bool get hasAid => aid > 0;
+  bool get isUgc => bvid.isNotEmpty || aid > 0;
 
   /// 是否识别出任何可解析的令牌。
   bool get isValid => hasSeason || hasEpisode || isUgc;
@@ -44,6 +54,11 @@ BiliBangumiRef? parseBiliBangumiUrl(String input) {
   final bv = _reBv.firstMatch(text);
   if (bv != null) {
     return BiliBangumiRef(bvid: bv.group(0)!);
+  }
+
+  final av = _reAv.firstMatch(text);
+  if (av != null) {
+    return BiliBangumiRef(aid: int.parse(av.group(1)!));
   }
 
   return null;

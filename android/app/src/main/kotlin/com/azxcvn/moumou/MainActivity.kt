@@ -9,6 +9,7 @@ import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.AudioManager
 import android.media.MediaMetadataRetriever
+import android.media.MediaScannerConnection
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -395,6 +396,17 @@ class MainActivity : FlutterActivity() {
                             }.start()
                         }
                     }
+                    // 触发系统媒体库扫描单个文件（下载产物写盘后调用，工作.md 第 5 点：
+                    // 让 MediaStore 立即抽取时长/分辨率，避免列表里 duration=0 导致进度不显示）
+                    "scanMediaFile" -> {
+                        val path = call.argument<String>("path") ?: ""
+                        if (path.isEmpty()) {
+                            result.error("INVALID_ARG", "path required", null)
+                        } else {
+                            scanMediaFile(path)
+                            result.success(true)
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -481,6 +493,23 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.w("MainActivity", "mergeM4s failed: ${e.message}")
             false
+        }
+    }
+
+    /**
+     * 触发系统媒体库扫描单个文件（下载产物写盘后调用，工作.md 第 5 点）。
+     * MediaStore 对 dart:io / MediaMuxer 直写的文件不会立即抽取元数据，
+     * 不主动扫描会导致列表里 duration=0（进度条/百分比显示「未观看」）。
+     */
+    private fun scanMediaFile(path: String) {
+        try {
+            MediaScannerConnection.scanFile(
+                this,
+                arrayOf(path),
+                null,
+            ) { _, _ -> }
+        } catch (e: Exception) {
+            Log.w("MainActivity", "scanMediaFile failed: ${e.message}")
         }
     }
 
@@ -1463,12 +1492,17 @@ class MainActivity : FlutterActivity() {
                 val realDateModified = file.lastModified()
                 val normPath = file.absolutePath
 
+                // 工作.md 第 5 点：dart:io / MediaMuxer 直写的下载产物，MediaStore
+                // 可能尚未抽取时长（duration=0），此时列表里进度条/百分比永远显示
+                // 「未观看」。duration==0 时用 MediaMetadataRetriever 兜底抽一次。
+                val finalDuration = if (duration > 0) duration else extractDurationMs(normPath)
+
                 if (visitedPaths.add(normPath)) {
                     videos.add(
                         mapOf(
                             "path" to normPath,
                             "name" to realName,
-                            "durationMs" to duration,
+                            "durationMs" to finalDuration,
                             "size" to realSize,
                             "width" to width,
                             "height" to height,
@@ -1526,5 +1560,19 @@ class MainActivity : FlutterActivity() {
         }
 
         return videos
+    }
+
+    /** MediaStore 时长为 0 时兜底抽取（工作.md 第 5 点：下载产物直写导致元数据缺失）。 */
+    private fun extractDurationMs(path: String): Long {
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(path)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            retriever.release()
+        }
     }
 }

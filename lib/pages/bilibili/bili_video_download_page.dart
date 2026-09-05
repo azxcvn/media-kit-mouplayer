@@ -91,6 +91,13 @@ class _BiliVideoDownloadPageState extends State<BiliVideoDownloadPage> {
   Future<void> _download() async {
     final target = _target;
     if (target == null || _selected.isEmpty) return;
+    // 下载前校验存储路径真实存在（工作.md 第 3 点）：目录被用户删除时
+    // toast 提示并弹出目录选择器，避免「开始下载才失败、用户毫无预知」。
+    if (!DownloadSettings.instance.directoryExists) {
+      _toast('下载目录不存在，请重新选择');
+      await _pickDir();
+      if (!DownloadSettings.instance.directoryExists) return;
+    }
     final dir = DownloadSettings.instance.directory;
     var i = 0;
     for (final idx in _selected.toList()..sort()) {
@@ -143,7 +150,7 @@ class _BiliVideoDownloadPageState extends State<BiliVideoDownloadPage> {
               controller: _urlCtrl,
               onSubmitted: (_) => _parse(),
               decoration: InputDecoration(
-                hintText: '粘贴 B 站视频/番剧链接（BV / ss / ep）',
+                hintText: '粘贴 B 站视频/番剧链接（BV / av / ss / ep / b23.tv）',
                 isDense: true,
                 prefixIcon: const Icon(Icons.link),
                 border: OutlineInputBorder(
@@ -299,7 +306,7 @@ class _BiliVideoDownloadPageState extends State<BiliVideoDownloadPage> {
               style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
             ),
           ),
-          const Text('同步弹幕', style: TextStyle(fontSize: 12)),
+          const Text('同步下载弹幕', style: TextStyle(fontSize: 12)),
           Switch(
             value: _withDanmaku,
             onChanged: (v) => setState(() => _withDanmaku = v),

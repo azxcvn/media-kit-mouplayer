@@ -101,6 +101,12 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
           _pollTimer?.cancel();
           if (poll.data != null) {
             await _onLoginSuccess(poll.data!);
+          } else {
+            // 服务端已确认登录但凭证未解析出来（cookie_info 缺失）：
+            // 不能静默取消轮询冻结页面，给提示并刷新重试。
+            debugPrint('[BILI-LOGIN] poll 成功但 data 为空，刷新重试');
+            _toast('登录凭证获取失败，请重试');
+            await _generate();
           }
           break;
         default:

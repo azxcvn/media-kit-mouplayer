@@ -26,7 +26,35 @@ class _StreamEntry {
   final String url;
   final Map<String, String> headers;
 
-  const _StreamEntry(this.url, this.headers);
+  _StreamEntry(this.url, this.headers);
+
+  /// 累计传输字节 + 最近 1 秒滑动窗口（工作.md 第 6 点：B 站在线播放网速）。
+  int downloadedBytes = 0;
+  final List<_ByteMoment> _moments = [];
+
+  /// 最近 1 秒滑动窗口真实下行速率（字节/秒），对齐网络存储代理的统计口径。
+  double recentSpeedBytesPerSec() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final cutoff = now - 1000;
+    _moments.removeWhere((m) => m.timeMs < cutoff);
+    if (_moments.isEmpty) return 0;
+    var bytes = 0;
+    var earliest = now;
+    for (final m in _moments) {
+      bytes += m.bytes;
+      if (m.timeMs < earliest) earliest = m.timeMs;
+    }
+    final spanMs = now - earliest;
+    if (spanMs <= 0) return 0;
+    return bytes / (spanMs / 1000.0);
+  }
+}
+
+/// 一次数据块的传输记录（毫秒时间戳 + 字节数）。
+class _ByteMoment {
+  final int timeMs;
+  final int bytes;
+  _ByteMoment(this.timeMs, this.bytes);
 }
 
 class BiliStreamProxy {
@@ -44,6 +72,29 @@ class BiliStreamProxy {
   String get _baseUrl => 'http://127.0.0.1:$_port';
 
   bool get isRunning => _server != null;
+
+  /// 返回指定本地代理 URL 对应流「最近 1 秒」的真实下载速率（字节/秒）。
+  /// URL 无法解析或不是本代理注册的流时返回 null（工作.md 第 6 点）。
+  double? recentSpeedBytesPerSec(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+    final key = uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+    return _streams[key]?.recentSpeedBytesPerSec();
+  }
+
+  /// 全部已注册流「最近 1 秒」的**合计**下行速率（字节/秒）；无流返回 null。
+  ///
+  /// 供播放页顶部网速胶囊用：B 站 DASH 双流（video 主流 + audio 外挂轨）同时
+  /// 传输，聚合才是真实下行速率；且播放页拿到的是 CDN 原始 URL（本地代理 URL
+  /// 只在播放器内部使用，不回传 UI），按 URL 匹配查不到，只能走聚合。
+  double? recentTotalSpeedBytesPerSec() {
+    if (_streams.isEmpty) return null;
+    var total = 0.0;
+    for (final entry in _streams.values) {
+      total += entry.recentSpeedBytesPerSec();
+    }
+    return total;
+  }
 
   /// 启动代理（幂等）。返回 base URL；失败返回 null。
   Future<String?> start() async {
@@ -111,7 +162,7 @@ class BiliStreamProxy {
       _copyHeader(upstream, resp, 'content-length');
       _copyHeader(upstream, resp, 'content-range');
       _copyHeader(upstream, resp, 'accept-ranges');
-      await resp.addStream(upstream);
+      await resp.addStream(_countBytes(entry, upstream));
       await resp.close();
     } catch (_) {
       try {
@@ -125,6 +176,17 @@ class BiliStreamProxy {
   void _copyHeader(HttpClientResponse src, HttpResponse dst, String name) {
     final value = src.headers.value(name);
     if (value != null) dst.headers.set(name, value);
+  }
+
+  /// 记录每笔回写给 mpv 的字节与时间戳（累计 + 滑动窗口，供网速统计）。
+  static Stream<List<int>> _countBytes(_StreamEntry entry, Stream<List<int>> source) {
+    return source.map((chunk) {
+      entry.downloadedBytes += chunk.length;
+      entry._moments.add(
+        _ByteMoment(DateTime.now().millisecondsSinceEpoch, chunk.length),
+      );
+      return chunk;
+    });
   }
 
   /// 停止代理并清空注册的流（播放结束 / 退出播放器时调用）。

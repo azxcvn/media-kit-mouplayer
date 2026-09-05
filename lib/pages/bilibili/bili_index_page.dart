@@ -8,6 +8,7 @@ import 'package:moumou/services/bilibili/bili_bangumi_service.dart';
 import 'package:moumou/services/bilibili/bili_http.dart';
 import 'package:moumou/utils/app_dialog.dart';
 import 'package:moumou/utils/bili_bangumi_url.dart';
+import 'package:moumou/utils/bili_short_link.dart';
 import 'package:moumou/widgets/bili_cover_card.dart';
 
 /// 哔哩番剧首页（对齐 PiliPlus `PgcPage`）：顶部「追番时间表」+ 底部「推荐」网格。
@@ -410,6 +411,7 @@ class _LinkParseDialog extends StatefulWidget {
 class _LinkParseDialogState extends State<_LinkParseDialog> {
   final TextEditingController _controller = TextEditingController();
   String? _error;
+  bool _resolving = false;
 
   @override
   void dispose() {
@@ -417,10 +419,27 @@ class _LinkParseDialogState extends State<_LinkParseDialog> {
     super.dispose();
   }
 
-  void _submit() {
-    final ref = parseBiliBangumiUrl(_controller.text);
+  Future<void> _submit() async {
+    if (_resolving) return;
+    final text = _controller.text.trim();
+    if (text.isEmpty) return;
+    var ref = parseBiliBangumiUrl(text);
     if (ref == null) {
-      setState(() => _error = '无法识别该链接（支持 bangumi/play/ss…、ep…、BV 号）');
+      // b23.tv 等分享短链不含令牌，先展开再解析
+      setState(() {
+        _resolving = true;
+        _error = null;
+      });
+      final expanded = await expandBiliShortLink(
+        text,
+        isTarget: (url) => parseBiliBangumiUrl(url) != null,
+      );
+      if (!mounted) return;
+      setState(() => _resolving = false);
+      if (expanded != null) ref = parseBiliBangumiUrl(expanded);
+    }
+    if (!mounted || ref == null || !ref.isValid) {
+      setState(() => _error = '无法识别该链接（支持 ss/ep/BV/av 号与 b23.tv 短链）');
       return;
     }
     Navigator.of(context).pop(ref);
@@ -446,7 +465,7 @@ class _LinkParseDialogState extends State<_LinkParseDialog> {
               controller: _controller,
               autofocus: true,
               decoration: InputDecoration(
-                hintText: '粘贴 bangumi/play/ss… 或 ep… 链接',
+                hintText: '粘贴番剧/视频链接或 b23.tv 短链',
                 errorText: _error,
                 border: const OutlineInputBorder(),
                 isDense: true,
@@ -463,8 +482,14 @@ class _LinkParseDialogState extends State<_LinkParseDialog> {
                 ),
                 const SizedBox(width: 8),
                 FilledButton(
-                  onPressed: _submit,
-                  child: const Text('解析'),
+                  onPressed: _resolving ? null : _submit,
+                  child: _resolving
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('解析'),
                 ),
               ],
             ),

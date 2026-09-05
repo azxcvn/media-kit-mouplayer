@@ -88,9 +88,18 @@ class BiliVideoService {
     return BiliPlayUrlResult.fromJson(_data(resp));
   }
 
-  /// bvid → 视频标题 + 首个分 P 的 cid（`/x/web-interface/view`）。
-  Future<BiliUgcVideo> resolveUgcVideo(String bvid) async {
-    final resp = await _http.getJson(BiliApi.ugcView, query: {'bvid': bvid});
+  /// bvid（或 av 号）→ 视频标题 + 全部分 P（`/x/web-interface/view`）。
+  ///
+  /// 老链接只有 av 号时用 [aid] 走 aid 通道（工作.md 第 8 点）；BV 与 av 二选一，
+  /// 两者都传时以 bvid 为准（服务端优先 bvid）。
+  Future<BiliUgcVideo> resolveUgcVideo(String bvid, {int? aid}) async {
+    final resp = await _http.getJson(
+      BiliApi.ugcView,
+      query: {
+        if (bvid.isNotEmpty) 'bvid': bvid,
+        if (bvid.isEmpty && aid != null && aid > 0) 'aid': '$aid',
+      },
+    );
     _ensureCode(resp);
     return BiliUgcVideo.fromJson(_data(resp));
   }

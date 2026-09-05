@@ -201,6 +201,14 @@ void main() {
       expect(ref.bvid, 'BV1xx411c7mD');
     });
 
+    test('av 号（UGC，工作.md 第 8 点）', () {
+      final ref = parseBiliBangumiUrl('https://www.bilibili.com/video/av170001');
+      expect(ref, isNotNull);
+      expect(ref!.isUgc, isTrue);
+      expect(ref.hasAid, isTrue);
+      expect(ref.aid, 170001);
+    });
+
     test('同时含 ss 与 ep 优先取 ss', () {
       final ref = parseBiliBangumiUrl('xx/ss111/ep222');
       expect(ref, isNotNull);

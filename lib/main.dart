@@ -11,6 +11,7 @@ import 'package:moumou/services/crash_log_service.dart';
 import 'package:moumou/services/danmaku_server_settings.dart';
 import 'package:moumou/services/danmaku_settings.dart';
 import 'package:moumou/services/decode_settings.dart';
+import 'package:moumou/services/download/download_manager.dart';
 import 'package:moumou/services/equalizer_settings.dart';
 import 'package:moumou/services/intro_outro_settings.dart';
 import 'package:moumou/services/media_scan_settings.dart';
@@ -126,6 +127,9 @@ class _MoumouAppState extends State<MoumouApp> {
     // 哔哩哔哩账号（工作.md 阶段一）：启动读凭证 + nav 自检（含 buvid 预取），
     // 异步执行不阻塞首帧；「我的」页监听其 ChangeNotifier 实时刷新登录态
     BiliAccount.instance.ensureLoaded();
+    // 下载管理器（工作.md 第 2 点）：启动恢复持久化的下载记录，下载管理页
+    // 不再「重启即清空」。
+    DownloadManager.instance.ensureLoaded();
   }
 
   @override

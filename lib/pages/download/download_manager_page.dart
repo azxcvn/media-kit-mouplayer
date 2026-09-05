@@ -136,7 +136,11 @@ class _TaskCard extends StatelessWidget {
                           style: TextStyle(fontSize: 11, color: scheme.error),
                         )
                       : LinearProgressIndicator(
-                          value: task.progress > 0 ? task.progress : null,
+                          // 等待中任务进度为 0：用静态空条而非 value=null，
+                          // 避免每张等待卡片的进度条都跑循环动画、闪眼睛（工作.md 第 1 点）。
+                          value: task.status == DownloadStatus.pending
+                              ? 0
+                              : (task.progress > 0 ? task.progress : null),
                           minHeight: 4,
                           borderRadius: BorderRadius.circular(2),
                         ),
