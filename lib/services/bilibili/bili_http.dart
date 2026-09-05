@@ -153,16 +153,17 @@ class BiliHttp {
     return _decode(response);
   }
 
-  /// POST（表单编码，可自定义 header 与 query）请求，返回 UTF-8 解码后的 JSON Map。
+  /// POST（表单编码，query 传参）请求，**不注入 Web UA / Referer / Accept**。
   ///
-  /// 供 TV 通道（android_hd）使用：需 BiliDroid UA / env / app-key 等非 Web 头，
-  /// 且 appSign 参数走 query。
-  Future<Map<String, dynamic>> postFormRaw(
+  /// 对齐 PiliPlus 的 TV 扫码请求（`Request().post(getTVCode, queryParameters:)`）：
+  /// dio 默认 UA 是 `Dart/x (dart:io)`（非浏览器 UA）、无 Referer、只带
+  /// `env/app-key/aurora-zone` 头 + buvid3 Cookie。B 站 TV auth_code 对「浏览器 UA」
+  /// 与「非浏览器 UA」可能返回不同的扫码 URL，国际版客户端确认失败与此相关；
+  /// 这里逐字节对齐 PiliPlus：dart:io 默认 UA + 自定义头 + 指纹 Cookie。
+  Future<Map<String, dynamic>> postFormTv(
     String url, {
     Map<String, String>? query,
-    Map<String, String>? body,
     Map<String, String>? headers,
-    bool withCookie = false,
   }) async {
     var uri = Uri.parse(url);
     if (query != null && query.isNotEmpty) {
@@ -174,11 +175,11 @@ class BiliHttp {
           .post(
             uri,
             headers: {
-              ..._headers(withCookie: withCookie),
               ...?headers,
               'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+              if (extraCookies != null && extraCookies!.isNotEmpty)
+                'Cookie': extraCookies!,
             },
-            body: body,
           )
           .timeout(const Duration(seconds: 30));
     } catch (e) {

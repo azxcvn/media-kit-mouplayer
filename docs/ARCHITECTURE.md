@@ -648,11 +648,17 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   凭证直接 JSON 返回（`token_info.access_token/refresh_token` + `cookie_info.cookies` 的
   SESSDATA/bili_jct/DedeUserID），**不依赖 Set-Cookie**。access_token 供阶段三 tv playurl 取更高画质。
 - **TV 扫码请求头对齐 PiliPlus `getHDcode`/`codePoll` 实际头**（`AnonymousAccount.headers` =
-  `Constants.baseHeaders`）：`app-key: android64` + `x-bili-aurora-zone: sh001` + Referer，
+  `Constants.baseHeaders`）：`app-key: android64` + `x-bili-aurora-zone: sh001`，**无 Referer**、
+  **非浏览器 UA**（dart:io 默认 `Dart/x (dart:io)`，等同 PiliPlus dio 默认），buvid3 走 Cookie；
   **不是** `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid`（那是 PiliPlus
-  短信/密码登录的 `LoginHttp.headers`，扫码不适用）；发「真 TV 端」头会被风控按真机 TV 链路校验。
+  短信/密码登录的 `LoginHttp.headers`，扫码不适用），也**不是浏览器 Chrome UA + Referer**
+  （可能让 auth_code 返回 Web 式扫码 URL，导致国际版客户端无法确认）。
 - **已知未解决：国际版扫码登录**：国际版客户端（`com.bilibili.app.in`，`android_i`，走 biliintl
-  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。
+  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。初步定位为
+  请求头差异：本项目此前 TV 扫码发了 **Chrome UA + Referer**，而 PiliPlus 发的是
+  **非浏览器 UA（`Dart/x (dart:io)`）+ 无 Referer**——auth_code 接口可能据此返回不同的
+  扫码 URL。已改为 `postFormTv` 逐字节对齐 PiliPlus，**待真机验证**（用户实测 PiliPlus 可用
+  国际版扫码，说明 TV 通道本身可行，问题在头部对齐）。
 - **Web 扫码通道已试过并回滚（2026-09 真机结论）**：Web poll 成功返回的 `data.url` 已是
   ticket 换凭证的 crossDomain 链接（旧文档「SESSDATA 放 query」格式过时）；实测对非浏览器
   HTTP 客户端，crossDomain 302 跳转**响应头无 Set-Cookie**（逐跳手动跟随亦然，仅

@@ -69,13 +69,12 @@ class BiliAuthService {
   /// TV 通道登录请求头（对齐 PiliPlus `getHDcode`/`codePoll` 实际发出的头）。
   ///
   /// PiliPlus 的 TV 扫码请求走 `AnonymousAccount.headers`（=`Constants.baseHeaders`），
-  /// 即 `app-key: android64` + `x-bili-aurora-zone: sh001`，**不是** `android_hd`。
+  /// 即 `app-key: android64` + `x-bili-aurora-zone: sh001`，**不是** `android_hd`；
+  /// 且 dio 默认 UA 是 `Dart/x (dart:io)`（非浏览器 UA）、**无 Referer**。
   /// 若改发 `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid` 等
-  /// 「真 TV 端」头，会被风控按真机 TV 链路校验，国际版哔哩哔哩客户端扫码后无法
-  /// 完成确认，轮询一直停在「未确认」导致登录失败。
-  ///
-  /// 其余通用头（Web UA / Referer / buvid3 / Content-Type）由 [BiliHttp.postFormRaw]
-  /// 统一注入，无需在此重复。
+  /// 「真 TV 端」头，会被风控按真机 TV 链路校验；若发浏览器 UA + Referer，可能
+  /// 拿到 Web 式扫码 URL，导致国际版客户端无法确认——故用 [BiliHttp.postFormTv]
+  /// 逐字节对齐 PiliPlus（dart:io 默认 UA + 无 Referer + 指纹 Cookie）。
   Map<String, String> _tvHeaders() => {
         'env': 'prod',
         'app-key': 'android64',
@@ -90,11 +89,10 @@ class BiliAuthService {
       'mobi_app': 'android_hd',
     };
     biliAppSign(params, appKey: BiliConstants.tvAppKey, appSec: BiliConstants.tvAppSec);
-    final resp = await http.postFormRaw(
+    final resp = await http.postFormTv(
       BiliApi.tvQrAuthCode,
       query: params.map((k, v) => MapEntry(k, v.toString())),
       headers: _tvHeaders(),
-      withCookie: false,
     );
     final body = _data(resp);
     final url = body['url'] as String? ?? '';
@@ -109,11 +107,10 @@ class BiliAuthService {
   Future<BiliTvPoll> pollTvQr(String authCode) async {
     final params = <String, dynamic>{'auth_code': authCode, 'local_id': '0'};
     biliAppSign(params, appKey: BiliConstants.tvAppKey, appSec: BiliConstants.tvAppSec);
-    final resp = await http.postFormRaw(
+    final resp = await http.postFormTv(
       BiliApi.tvQrPoll,
       query: params.map((k, v) => MapEntry(k, v.toString())),
       headers: _tvHeaders(),
-      withCookie: false,
     );
     final code = (resp['code'] as num?)?.toInt() ?? -1;
     final message = resp['message'] as String? ?? '';
