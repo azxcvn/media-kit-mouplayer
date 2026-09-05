@@ -127,6 +127,7 @@ class _BiliLoginPageState extends State<BiliLoginPage> {
       _toast('登录成功：${user.nickname}');
       Navigator.of(context).pop(true);
     } catch (e) {
+      debugPrint('[BILI-LOGIN] 登录失败: $e');
       if (!mounted) return;
       setState(() => _busy = false);
       _toast('登录失败，请重试');

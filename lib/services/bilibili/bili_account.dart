@@ -166,16 +166,31 @@ class BiliAccount extends ChangeNotifier {
   Future<BiliUser> _applyCredential(BiliCredential cred) async {
     _credential = cred;
     _http.cookie = cred.cookieString;
-    await _credStore.write(cred);
+    try {
+      await _credStore.write(cred);
+    } catch (e) {
+      debugPrint('[BILI-ACCOUNT] 凭证写盘失败: $e');
+      rethrow;
+    }
+    debugPrint(
+      '[BILI-ACCOUNT] 凭证已落盘，开始 nav 自检 '
+      'hasSESSDATA=${cred.sessData.isNotEmpty} hasJct=${cred.biliJct.isNotEmpty} '
+      'hasDede=${cred.dedeUserId.isNotEmpty}',
+    );
     final BiliNavData nav;
     try {
       nav = await auth.nav();
     } catch (e) {
+      debugPrint('[BILI-ACCOUNT] nav 自检异常: $e');
       // 网络/业务失败：凭证已落盘但无法确认，回滚清空（避免「假登录」）
       await _clearCredential();
       notifyListeners();
       rethrow;
     }
+    debugPrint(
+      '[BILI-ACCOUNT] nav 自检结果: isLogin=${nav.user.isLogin} '
+      'nickname=${nav.user.nickname}',
+    );
     if (!nav.user.isLogin) {
       await _clearCredential();
       notifyListeners();
