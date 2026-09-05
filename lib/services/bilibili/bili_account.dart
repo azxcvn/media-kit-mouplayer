@@ -61,8 +61,9 @@ class BiliAccount extends ChangeNotifier {
   Future<void> load() async {
     try {
       await _loadBuvid();
-      // 完整反爬指纹：注入 buvid → 生成/拉取本地字段 + bili_ticket + 激活 buvid3，
-      // 再把指纹 Cookie 片段挂到共享 HTTP 实例（每个请求自动合并）。
+      // 先挂最小指纹片段（含 buvid3），让 GenWebTicket / ExClimbWuzhi 请求带上
+      // buvid3 Cookie（否则 ticket 拉取报 -400、激活无效）；init 完成后再换成完整片段。
+      _http.extraCookies = _buvid3.isNotEmpty ? 'buvid3=$_buvid3' : null;
       _fingerprint.buvid3 = _buvid3;
       _fingerprint.buvid4 = _buvid4;
       await _fingerprint.ensureInitialized();

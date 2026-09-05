@@ -1,6 +1,28 @@
 /// 哔哩哔哩用户信息模型（nav 接口 `data` 的纯数据映射）。
 library;
 
+/// 数字字段防崩：B 站部分接口把数字字段返回成字符串（对齐 `bili_bangumi.dart` 的约定），
+/// 裸 `as num?` 强转会在字段为字符串时抛「String is not a subtype of num?」。
+int _asInt(Object? v, [int fallback = 0]) {
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v) ?? fallback;
+  return fallback;
+}
+
+double _asDouble(Object? v, [double fallback = 0]) {
+  if (v is num) return v.toDouble();
+  if (v is String) return double.tryParse(v) ?? fallback;
+  return fallback;
+}
+
+bool _asBool(Object? v, [bool fallback = false]) {
+  if (v is bool) return v;
+  if (v is num) return v != 0;
+  if (v is String) return v == 'true' || v == '1';
+  return fallback;
+}
+
 /// 已登录 B 站用户信息（昵称 / 头像 / 等级 / 经验 / 大会员状态 / 硬币）。
 class BiliUser {
   final int mid;
@@ -66,25 +88,25 @@ class BiliUser {
     int currentExp = 0;
     int nextExp = 0;
     if (levelInfo is Map) {
-      level = (levelInfo['current_level'] as num?)?.toInt() ?? 0;
-      currentExp = (levelInfo['current_exp'] as num?)?.toInt() ?? 0;
-      nextExp = (levelInfo['next_exp'] as num?)?.toInt() ?? currentExp;
+      level = _asInt(levelInfo['current_level']);
+      currentExp = _asInt(levelInfo['current_exp']);
+      nextExp = _asInt(levelInfo['next_exp'], currentExp);
     }
     final vipLabel = json['vip_label'];
     final money = json['money'];
     return BiliUser(
-      mid: (json['mid'] as num?)?.toInt() ?? 0,
+      mid: _asInt(json['mid']),
       nickname: json['uname'] as String? ?? '',
       face: json['face'] as String? ?? '',
-      isLogin: json['isLogin'] as bool? ?? false,
-      vipStatus: (json['vipStatus'] as num?)?.toInt() ?? 0,
-      vipType: (json['vipType'] as num?)?.toInt() ?? 0,
+      isLogin: _asBool(json['isLogin']),
+      vipStatus: _asInt(json['vipStatus']),
+      vipType: _asInt(json['vipType']),
       vipLabelText:
           (vipLabel is Map && vipLabel['text'] is String) ? vipLabel['text'] as String : '',
       level: level,
       currentExp: currentExp,
       nextExp: nextExp,
-      money: money is num ? money.toDouble() : 0,
+      money: _asDouble(money),
     );
   }
 }

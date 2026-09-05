@@ -77,4 +77,32 @@ void main() {
     expect(g.levelLabel, 'LV0');
     expect(g.vipLabel, '普通会员');
   });
+
+  test('数字字段以字符串下发也能解析（登录 nav 自检崩溃修复）', () {
+    final user = BiliUser.fromJson({
+      'isLogin': true,
+      'mid': '123456',
+      'uname': '字符串字段用户',
+      'vipStatus': '1',
+      'vipType': '2',
+      'vip_label': {'text': '年度大会员'},
+      'level_info': {
+        'current_level': '5',
+        'current_exp': '18800',
+        'next_exp': '28800',
+      },
+      'money': '88.5',
+    });
+    expect(user.mid, 123456);
+    expect(user.level, 5);
+    expect(user.currentExp, 18800);
+    expect(user.nextExp, 28800);
+    expect(user.money, 88.5);
+    expect(user.vipLabel, '年度大会员');
+  });
+
+  test('isLogin 以 0/1 数字下发也能解析', () {
+    expect(BiliUser.fromJson({'isLogin': 1}).isLogin, isTrue);
+    expect(BiliUser.fromJson({'isLogin': 0}).isLogin, isFalse);
+  });
 }

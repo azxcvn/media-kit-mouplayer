@@ -653,12 +653,11 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   **不是** `app-key: android_hd` + BiliDroid UA + `x-bili-trace-id`/`buvid`（那是 PiliPlus
   短信/密码登录的 `LoginHttp.headers`，扫码不适用），也**不是浏览器 Chrome UA + Referer**
   （可能让 auth_code 返回 Web 式扫码 URL，导致国际版客户端无法确认）。
-- **已知未解决：国际版扫码登录**：国际版客户端（`com.bilibili.app.in`，`android_i`，走 biliintl
-  独立账号体系）扫 TV 码后无法完成确认，轮询停在「未确认」（86090→86039）。初步定位为
-  请求头差异：本项目此前 TV 扫码发了 **Chrome UA + Referer**，而 PiliPlus 发的是
-  **非浏览器 UA（`Dart/x (dart:io)`）+ 无 Referer**——auth_code 接口可能据此返回不同的
-  扫码 URL。已改为 `postFormTv` 逐字节对齐 PiliPlus，**待真机验证**（用户实测 PiliPlus 可用
-  国际版扫码，说明 TV 通道本身可行，问题在头部对齐）。
+- **国际版扫码登录（已修复）**：此前国际版客户端扫 TV 码停在「未确认」，两处根因——
+  ① TV 扫码请求发了 Chrome UA + Referer（PiliPlus 发非浏览器 UA + 无 Referer），改 `postFormTv`
+  逐字节对齐后国际版可确认、poll 拿到 code=0；② 拿凭证后 nav 自检因 `BiliUser.fromJson` 对
+  nav 数字字段用裸 `as num?` 强转（字段偶发为字符串）抛「String is not a subtype of num?」导致
+  登录被回滚，已改为 `_asInt/_asDouble` 防崩（对齐 `bili_bangumi.dart` 约定）。
 - **Web 扫码通道已试过并回滚（2026-09 真机结论）**：Web poll 成功返回的 `data.url` 已是
   ticket 换凭证的 crossDomain 链接（旧文档「SESSDATA 放 query」格式过时）；实测对非浏览器
   HTTP 客户端，crossDomain 302 跳转**响应头无 Set-Cookie**（逐跳手动跟随亦然，仅
