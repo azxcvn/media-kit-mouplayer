@@ -153,6 +153,30 @@ class BiliHttp {
     return _decode(response);
   }
 
+  /// POST（参数走 **URL query**，无 body）请求，带完整默认头（Chrome UA + Referer + Cookie）。
+  ///
+  /// 供 GenWebTicket 使用：B23 用 httpx `client.request(POST, params=...)`，参数在
+  /// query 字符串而非表单 body；放 body 会被服务端判 -400。
+  Future<Map<String, dynamic>> postFormQuery(
+    String url, {
+    Map<String, String>? query,
+    bool withCookie = true,
+  }) async {
+    var uri = Uri.parse(url);
+    if (query != null && query.isNotEmpty) {
+      uri = uri.replace(queryParameters: query);
+    }
+    final http.Response response;
+    try {
+      response = await _client
+          .post(uri, headers: _headers(withCookie: withCookie))
+          .timeout(const Duration(seconds: 30));
+    } catch (e) {
+      throw BiliApiException('网络请求失败: $e');
+    }
+    return _decode(response);
+  }
+
   /// POST（表单编码，query 传参）请求，**不注入 Web UA / Referer / Accept**。
   ///
   /// 对齐 PiliPlus 的 TV 扫码请求（`Request().post(getTVCode, queryParameters:)`）：

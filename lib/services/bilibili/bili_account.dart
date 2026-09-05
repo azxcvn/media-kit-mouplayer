@@ -61,17 +61,20 @@ class BiliAccount extends ChangeNotifier {
   Future<void> load() async {
     try {
       await _loadBuvid();
+      // 先读凭证（登录态）：让指纹的 bili_ticket 请求能带上 csrf（登录态下缺 csrf 会 -400）
+      final cred = await _credStore.read();
+      if (cred.isValid) {
+        _credential = cred;
+        _http.cookie = cred.cookieString;
+      }
       // 先挂最小指纹片段（含 buvid3），让 GenWebTicket / ExClimbWuzhi 请求带上
-      // buvid3 Cookie（否则 ticket 拉取报 -400、激活无效）；init 完成后再换成完整片段。
+      // buvid3 Cookie；init 完成后再换成完整片段。
       _http.extraCookies = _buvid3.isNotEmpty ? 'buvid3=$_buvid3' : null;
       _fingerprint.buvid3 = _buvid3;
       _fingerprint.buvid4 = _buvid4;
       await _fingerprint.ensureInitialized();
       _http.extraCookies = _fingerprint.cookieFragment;
-      final cred = await _credStore.read();
       if (cred.isValid) {
-        _credential = cred;
-        _http.cookie = cred.cookieString;
         final nav = await auth.nav();
         _user = nav.user;
         if (nav.mixinKey.isNotEmpty) _mixinKey = nav.mixinKey;

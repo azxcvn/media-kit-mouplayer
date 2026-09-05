@@ -97,9 +97,9 @@ class BiliFingerprint {
     try {
       final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final csrf = BiliAccount.instance.biliJct;
-      final resp = await _http.postForm(
+      final resp = await _http.postFormQuery(
         BiliApi.genWebTicket,
-        body: {
+        query: {
           'key_id': 'ec02',
           'hexsign': biliTicketHexsign(ts),
           'context[ts]': '$ts',
