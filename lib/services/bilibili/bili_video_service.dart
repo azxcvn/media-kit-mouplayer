@@ -16,6 +16,7 @@ import 'package:moumou/models/bili_dash.dart';
 import 'package:moumou/services/bilibili/bili_account.dart';
 import 'package:moumou/services/bilibili/bili_api.dart';
 import 'package:moumou/services/bilibili/bili_http.dart';
+import 'package:moumou/utils/bili_fingerprint_utils.dart';
 import 'package:moumou/utils/bili_wbi.dart';
 
 class BiliVideoService {
@@ -50,6 +51,7 @@ class BiliVideoService {
       'fnver': 0,
       'fourk': 1,
       'web_location': 1315873, // 对齐 PiliPlus：web 客户端版本号，影响返回字段完整度
+      ..._antiCrawlParams(),
       if (tryLook) 'try_look': 1,
     };
     final resp = await _getSigned(BiliApi.pgcPlayUrl, params);
@@ -82,6 +84,7 @@ class BiliVideoService {
       'fnver': 0,
       'fourk': 1,
       'web_location': 1315873,
+      ..._antiCrawlParams(),
     };
     final resp = await _getSigned(BiliApi.ugcPlayUrl, params);
     _ensureCode(resp);
@@ -104,7 +107,39 @@ class BiliVideoService {
     return BiliUgcVideo.fromJson(_data(resp));
   }
 
+  /// 取 UP 主合集（`type=season`）第一个投稿的 bvid，用于后续借 view API 拿全量合集。
+  /// 列表接口不含分 P 信息，此处仅取任一成员 bvid（`ugc_season` 本身含全量章节+集+分P）。
+  Future<String?> fetchFirstSeasonArchiveBvid({
+    required int mid,
+    required int seasonId,
+  }) async {
+    final resp = await _http.getJson(
+      BiliApi.seasonArchivesList,
+      query: {
+        'mid': '$mid',
+        'season_id': '$seasonId',
+        'sort_reverse': 'false',
+        'page_size': '1',
+        'page_num': '1',
+        'web_location': '333.1387',
+      },
+    );
+    _ensureCode(resp);
+    final data = _data(resp);
+    final archives = (data['archives'] as List?) ?? const [];
+    if (archives.isEmpty) return null;
+    final first = archives.first;
+    return first is Map ? first['bvid'] as String? : null;
+  }
+
   // ── 内部 ──────────────────────────────────────────────────────
+
+  /// playurl 的 dm_img 反爬参数（对齐 PiliPlus：随机 dm_img_str 防 412 风控）。
+  Map<String, Object> _antiCrawlParams() => {
+        ...genDmImgParams(),
+        'gaia_source': 'pre-load',
+        'isGaiaAvoided': 'true',
+      };
 
   /// 取 WBI 密钥并签名，返回完整 URL（`biliEncWbi` 就地改 params）。
   Future<Map<String, dynamic>> _getSigned(

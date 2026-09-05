@@ -10,6 +10,10 @@ final RegExp _reEp = RegExp(r'[eE][pP](\d+)');
 final RegExp _reSs = RegExp(r'[sS][sS](\d+)');
 final RegExp _reAv = RegExp(r'[aA][vV](\d+)');
 
+/// UP 主合集列表链接：`space.bilibili.com/{mid}/lists/{season_id}?type=season`。
+final RegExp _reSeasonList =
+    RegExp(r'space\.bilibili\.com/(\d+)/lists/(\d+)', caseSensitive: false);
+
 /// 解析出的番剧引用（season / episode / UGC 三选一，其余为 0/空）。
 ///
 /// UGC 支持 BV 号与 av 号两种形式（老链接、分享短链里 av 号仍常见，工作.md 第 8 点）。
@@ -62,4 +66,22 @@ BiliBangumiRef? parseBiliBangumiUrl(String input) {
   }
 
   return null;
+}
+
+/// UP 主合集列表引用（`space.bilibili.com/{mid}/lists/{season_id}`）。
+class BiliSeasonListRef {
+  final int mid;
+  final int seasonId;
+
+  const BiliSeasonListRef({required this.mid, required this.seasonId});
+}
+
+/// 解析 UP 主合集列表链接；未识别到返回 null。
+BiliSeasonListRef? parseBiliSeasonListUrl(String input) {
+  final m = _reSeasonList.firstMatch(input);
+  if (m == null) return null;
+  return BiliSeasonListRef(
+    mid: int.parse(m.group(1)!),
+    seasonId: int.parse(m.group(2)!),
+  );
 }

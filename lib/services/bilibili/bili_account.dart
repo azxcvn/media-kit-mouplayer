@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:moumou/models/bilibili_user.dart';
 import 'package:moumou/services/bilibili/bili_auth_service.dart';
 import 'package:moumou/services/bilibili/bili_credential_store.dart';
+import 'package:moumou/services/bilibili/bili_fingerprint.dart';
 import 'package:moumou/services/bilibili/bili_http.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,14 +24,17 @@ class BiliAccount extends ChangeNotifier {
   Future<void> ensureLoaded() => _loadFuture ??= load();
 
   static const _keyBuvid3 = 'bili_buvid3';
+  static const _keyBuvid4 = 'bili_buvid4';
 
   final BiliCredentialStore _credStore = BiliCredentialStore();
   final BiliHttp _http = BiliHttp();
   late final BiliAuthService auth = BiliAuthService(http: _http);
+  final BiliFingerprint _fingerprint = BiliFingerprint.instance;
 
   BiliUser _user = const BiliUser.guest();
   BiliCredential? _credential;
   String _buvid3 = '';
+  String _buvid4 = '';
   String _mixinKey = '';
 
   BiliUser get user => _user;
@@ -46,6 +50,9 @@ class BiliAccount extends ChangeNotifier {
   /// 当前登录 Cookie 串（未登录为空串），供测试/日志读取。
   String get cookieString => _credential?.cookieString ?? '';
 
+  /// 当前登录的 bili_jct（csrf，未登录为空串）。
+  String get biliJct => _credential?.biliJct ?? '';
+
   /// 当前登录凭证（测试/HTTP 层需要时读取）。
   @visibleForTesting
   BiliCredential? get credential => _credential;
@@ -54,6 +61,12 @@ class BiliAccount extends ChangeNotifier {
   Future<void> load() async {
     try {
       await _loadBuvid();
+      // 完整反爬指纹：注入 buvid → 生成/拉取本地字段 + bili_ticket + 激活 buvid3，
+      // 再把指纹 Cookie 片段挂到共享 HTTP 实例（每个请求自动合并）。
+      _fingerprint.buvid3 = _buvid3;
+      _fingerprint.buvid4 = _buvid4;
+      await _fingerprint.ensureInitialized();
+      _http.extraCookies = _fingerprint.cookieFragment;
       final cred = await _credStore.read();
       if (cred.isValid) {
         _credential = cred;
@@ -185,6 +198,7 @@ class BiliAccount extends ChangeNotifier {
   Future<void> _loadBuvid() async {
     final prefs = await SharedPreferences.getInstance();
     var b3 = prefs.getString(_keyBuvid3);
+    var b4 = prefs.getString(_keyBuvid4);
     if (b3 == null || b3.isEmpty) {
       try {
         final r = await auth.fetchBuvid();
@@ -192,12 +206,16 @@ class BiliAccount extends ChangeNotifier {
           b3 = r.buvid3;
           await prefs.setString(_keyBuvid3, b3);
         }
+        if (r.buvid4.isNotEmpty) {
+          b4 = r.buvid4;
+          await prefs.setString(_keyBuvid4, b4);
+        }
       } catch (_) {
         // buvid 失败不阻断登录（仅影响后续 playurl 风控）
       }
     }
     _buvid3 = b3 ?? '';
-    _http.buvid3 = _buvid3;
+    _buvid4 = b4 ?? '';
   }
 
   /// 测试用：恢复默认并清加载标记（单例在测试间共享，避免状态泄漏）。
@@ -207,8 +225,10 @@ class BiliAccount extends ChangeNotifier {
     _user = const BiliUser.guest();
     _credential = null;
     _buvid3 = '';
+    _buvid4 = '';
     _mixinKey = '';
     _http.cookie = null;
-    _http.buvid3 = null;
+    _http.extraCookies = null;
+    _fingerprint.resetForTest();
   }
 }

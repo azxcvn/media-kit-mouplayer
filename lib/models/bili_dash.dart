@@ -276,6 +276,9 @@ class BiliUgcVideo {
   /// 全部分 P（老项目只取 `pages[0]`，多 P 视频只能下到第一段——这里补全）。
   final List<BiliUgcPage> pages;
 
+  /// UP 主合集（`ugc_season`）：视频属于某个合集时返回，含全部章节/集/分P。
+  final BiliUgcSeason? ugcSeason;
+
   const BiliUgcVideo({
     required this.aid,
     required this.bvid,
@@ -283,6 +286,7 @@ class BiliUgcVideo {
     this.title = '',
     this.durationMs = 0,
     this.pages = const [],
+    this.ugcSeason,
   });
 
   factory BiliUgcVideo.fromJson(Map<String, dynamic> json) {
@@ -292,6 +296,7 @@ class BiliUgcVideo {
             .toList() ??
         const [];
     final first = pages.isNotEmpty ? pages.first : null;
+    final ugcSeason = json['ugc_season'];
     return BiliUgcVideo(
       aid: _asInt(json['aid']),
       bvid: json['bvid']?.toString() ?? '',
@@ -299,6 +304,104 @@ class BiliUgcVideo {
       title: json['title']?.toString() ?? '',
       durationMs: first?.durationMs ?? _asInt(json['duration']) * 1000,
       pages: pages,
+      ugcSeason: ugcSeason is Map
+          ? BiliUgcSeason.fromJson(ugcSeason.cast<String, dynamic>())
+          : null,
+    );
+  }
+}
+
+/// UP 主合集（`view` 接口的 `ugc_season`）：标题 + 封面 + 分章节的集列表。
+class BiliUgcSeason {
+  final int seasonId;
+  final String title;
+  final String cover;
+  final List<BiliUgcSeasonSection> sections;
+
+  const BiliUgcSeason({
+    required this.seasonId,
+    this.title = '',
+    this.cover = '',
+    this.sections = const [],
+  });
+
+  factory BiliUgcSeason.fromJson(Map<String, dynamic> json) {
+    final sections = (json['sections'] as List?)
+            ?.whereType<Map>()
+            .map((e) => BiliUgcSeasonSection.fromJson(e.cast<String, dynamic>()))
+            .toList() ??
+        const [];
+    return BiliUgcSeason(
+      seasonId: _asInt(json['id']),
+      title: json['title']?.toString() ?? '',
+      cover: json['cover']?.toString() ?? '',
+      sections: sections,
+    );
+  }
+}
+
+/// 合集章节（`sections[]`）：标题 + 该章节下的集列表。
+class BiliUgcSeasonSection {
+  final int sectionId;
+  final String title;
+  final List<BiliUgcSeasonEpisode> episodes;
+
+  const BiliUgcSeasonSection({
+    required this.sectionId,
+    this.title = '',
+    this.episodes = const [],
+  });
+
+  factory BiliUgcSeasonSection.fromJson(Map<String, dynamic> json) {
+    final episodes = (json['episodes'] as List?)
+            ?.whereType<Map>()
+            .map((e) => BiliUgcSeasonEpisode.fromJson(e.cast<String, dynamic>()))
+            .toList() ??
+        const [];
+    return BiliUgcSeasonSection(
+      sectionId: _asInt(json['id']),
+      title: json['title']?.toString() ?? '',
+      episodes: episodes,
+    );
+  }
+}
+
+/// 合集单集（`episodes[]`）：一个独立 BV，可能自身多分 P（`pages[]`）。
+class BiliUgcSeasonEpisode {
+  final int aid;
+  final String bvid;
+  final int cid;
+  final String title;
+  final List<BiliUgcPage> pages;
+  final String cover;
+  final int durationMs;
+
+  const BiliUgcSeasonEpisode({
+    required this.aid,
+    required this.bvid,
+    required this.cid,
+    this.title = '',
+    this.pages = const [],
+    this.cover = '',
+    this.durationMs = 0,
+  });
+
+  factory BiliUgcSeasonEpisode.fromJson(Map<String, dynamic> json) {
+    final arc = json['arc'];
+    final arcMap = arc is Map ? arc.cast<String, dynamic>() : const <String, dynamic>{};
+    final pages = (json['pages'] as List?)
+            ?.whereType<Map>()
+            .map((e) => BiliUgcPage.fromJson(e.cast<String, dynamic>()))
+            .toList() ??
+        const [];
+    return BiliUgcSeasonEpisode(
+      aid: _asInt(json['aid']),
+      bvid: json['bvid']?.toString() ?? '',
+      cid: _asInt(json['cid']),
+      title: json['title']?.toString() ?? '',
+      pages: pages,
+      cover: arcMap['pic']?.toString() ?? '',
+      durationMs: _asInt(json['duration'] ?? arcMap['duration']) * 1000,
     );
   }
 }

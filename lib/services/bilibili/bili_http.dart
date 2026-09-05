@@ -27,20 +27,24 @@ class BiliHttp {
   /// 当前登录 Cookie 串（`SESSDATA=..; bili_jct=..; DedeUserID=..`）。
   String? cookie;
 
-  /// 设备指纹 buvid3（预取自 `/x/frontend/finger/spi`）。
-  String? buvid3;
+  /// 设备指纹 Cookie 片段（`_uuid/buvid3/b_nut/b_lsid/buvid_fp/bili_ticket...`），
+  /// 由 [BiliAccount] 在指纹初始化后写入，随每个请求合并进 `Cookie` 头。
+  String? extraCookies;
 
   Map<String, String> _headers({
     bool withCookie = true,
     bool withReferer = true,
     bool jsonAccept = true,
   }) {
+    final cookieParts = <String>[
+      if (withCookie && cookie != null && cookie!.isNotEmpty) cookie!,
+      if (extraCookies != null && extraCookies!.isNotEmpty) extraCookies!,
+    ];
     return {
       'User-Agent': BiliConstants.webUserAgent,
       'Accept': jsonAccept ? 'application/json' : '*/*',
       if (withReferer) 'Referer': BiliConstants.referer,
-      if (withCookie && cookie != null && cookie!.isNotEmpty) 'Cookie': cookie!,
-      if (buvid3 != null && buvid3!.isNotEmpty) 'buvid3': buvid3!,
+      if (cookieParts.isNotEmpty) 'Cookie': cookieParts.join('; '),
     };
   }
 
@@ -113,6 +117,32 @@ class BiliHttp {
             headers: {
               ..._headers(withCookie: withCookie, withReferer: withReferer),
               'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+            },
+            body: body,
+          )
+          .timeout(const Duration(seconds: 30));
+    } catch (e) {
+      throw BiliApiException('网络请求失败: $e');
+    }
+    return _decode(response);
+  }
+
+  /// POST（JSON 字符串 body）请求，返回 UTF-8 解码后的 JSON Map。
+  ///
+  /// 供 ExClimbWuzhi 等风控指纹接口使用（Content-Type: application/json）。
+  Future<Map<String, dynamic>> postJson(
+    String url, {
+    required String body,
+    bool withCookie = true,
+  }) async {
+    final http.Response response;
+    try {
+      response = await _client
+          .post(
+            Uri.parse(url),
+            headers: {
+              ..._headers(withCookie: withCookie),
+              'Content-Type': 'application/json; charset=utf-8',
             },
             body: body,
           )

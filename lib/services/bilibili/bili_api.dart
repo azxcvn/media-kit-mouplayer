@@ -46,9 +46,21 @@ abstract final class BiliApi {
   static const String ugcPlayUrl =
       '${BiliConstants.apiBaseUrl}/x/player/wbi/playurl';
 
-  /// UGC 视频详情（bvid → cid/标题/分P，`data.pages[]`）。
+  /// UGC 视频详情（bvid → cid/标题/分P，`data.pages[]`；合集视频另含 `data.ugc_season`）。
   static const String ugcView =
       '${BiliConstants.apiBaseUrl}/x/web-interface/view';
+
+  /// 获取 web 端 bili_ticket（风控凭证，POST `key_id/hexsign/context[ts]/csrf`）。
+  static const String genWebTicket =
+      '${BiliConstants.apiBaseUrl}/bapis/bilibili.api.ticket.v1.Ticket/GenWebTicket';
+
+  /// 激活 buvid3（风控设备指纹，POST JSON payload）。
+  static const String activateBuvid =
+      '${BiliConstants.apiBaseUrl}/x/internal/gaia-gateway/ExClimbWuzhi';
+
+  /// UP 主合集列表（`space.bilibili.com/{mid}/lists/{season_id}?type=season`）。
+  static const String seasonArchivesList =
+      '${BiliConstants.apiBaseUrl}/x/polymer/web-space/seasons_archives_list';
 
   // ── 登录域（passport.bilibili.com）────────────
 

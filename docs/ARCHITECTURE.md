@@ -131,14 +131,15 @@ lib/
 │   │   ├── bili_constants.dart    #   域名 / UA / Referer / TV appkey·appsec / 扫码状态码
 │   │   ├── bili_api.dart          #   端点常量（集中式，对齐 PiliPlus api.dart）
 │   │   ├── bili_credential_store.dart # 凭证加密存储（SESSDATA/bili_jct/DedeUserID + Cookie 解析纯函数）
-│   │   ├── bili_http.dart         #   统一请求：Cookie/UA/Referer/buvid3 注入 + 错误语义化
+│   │   ├── bili_http.dart         #   统一请求：Cookie/UA/Referer/指纹注入 + 错误语义化
 │   │   ├── bili_auth_service.dart #   扫码生成/轮询/Cookie导入/nav自检/buvid预取/退出登录
 │   │   ├── bili_account.dart      #   登录态/用户信息/WBI密钥/buvid（ChangeNotifier 单例）
+│   │   ├── bili_fingerprint.dart  #   反爬指纹：uuid/b_lsid/buvid_fp/bili_ticket + ExClimbWuzhi 激活（§4.13）
 │   │   ├── bili_bangumi_service.dart # 番剧索引条件/分页/搜索(WBI)/季详情/时间表（§4.14）
 │   │   ├── bili_video_service.dart   # PGC/UGC playurl（DASH选流+清晰度+WBI签名，§4.15）
 │   │   ├── bili_danmaku_service.dart # B站原声弹幕（seg.so protobuf 解码 + XML 缓存，§4.15）
 │   │   ├── bili_stream_proxy.dart    # 本地 HTTP 代理（绕过 libmpv mbedTLS + 滑动窗口网速统计，§4.15）
-│   │   ├── bili_download_service.dart # 下载解析：链接 → 可下载条目（番剧多集 / UGC BV·av 多分 P，§4.16）
+│   │   ├── bili_download_service.dart # 下载解析：链接 → 可下载条目（番剧多集 / UGC BV·av·合集，§4.16）
 │   │   └── pb/
 │   │       └── pb_reader.dart        # 手写 protobuf wire 解码器（varint+length-delimited，§4.15）
 │   ├── download/                 # 下载域（哔哩生态阶段四，B站是首个用户，§4.16）
@@ -273,7 +274,8 @@ lib/
     ├── network_path.dart      #   网络路径规范化/校验/子路径拼接
     ├── bili_wbi.dart          #   WBI 签名纯函数（getMixinKey/encWbi，混淆表 64 项）
     ├── bili_app_sign.dart     #   TV 端 appSign 纯函数（appkey/appsec MD5 签名）
-    ├── bili_bangumi_url.dart  #   番剧/视频链接解析纯函数（提取 ss/ep/BV/av 令牌）
+    ├── bili_fingerprint_utils.dart # 反爬指纹纯函数（murmur3×64_128/uuid/b_lsid/bili_ticket hexsign/dm_img）
+    ├── bili_bangumi_url.dart  #   番剧/视频链接解析纯函数（提取 ss/ep/BV/av 令牌 + 合集列表链接）
     ├── bili_short_link.dart   #   b23.tv 分享短链提取+展开（任意分享文本提取，302 命中令牌即停）
     └── network_mime_types.dart # 文件名→MIME 类型映射
 ```
@@ -658,8 +660,6 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   PiliPlus 同样走 TV 通道。
 - **轮询防冻结护栏**：poll 到 code=0 但凭证缺失（cookie_info 空）时不静默 cancel 定时器，
   toast「登录凭证获取失败，请重试」并刷新二维码（否则页面冻结无反应）。
-- **为什么选 Web 扫码**：跨客户端通用（国际版客户端也能确认登录），根治原 TV 通道
-  「国际版扫码停在未确认」的坑；代价是拿不到 TV 的 access_token、仅 Web 画质（1080P）。
 - **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + refresh_token 走
   `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
   永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
@@ -672,22 +672,11 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   风控异常时保住可用性。
 - **WBI 混淆表以 64 项为准**：PiliPlus 只保留前 32 项（结果等价）；⚠️ 调研报告 HTML 里的
   混淆表有误（第 28 位起与官方表不符），**以 bilibili-API-collect / Bili23 的 64 项表为准**。
-- **反爬为精简版**：当前只做 buvid3 预取 + 固定 UA + Referer；Bili23 的 buvid_fp/bili_ticket/
-  ExClimbWuzhi 等完整指纹留待阶段三 playurl 遇 412 风控再补。
-- **凭证加密存储**：SESSDATA/bili_jct/DedeUserID + access_token/refresh_token 走
-  `flutter_secure_storage`（Android = EncryptedSharedPreferences/Keystore，对齐小喵 player），
-  永不明文落盘、不打日志；buvid3（设备指纹，非敏感）存 `shared_preferences`。
-- **登录态自检 + WBI 密钥**都来自 `GET /x/web-interface/nav` 一次请求；Cookie 过期时 nav
-  返回 `isLogin=false`（不报错），据此**静默清凭证回游客态**。
-- **扫码轮询**：1 秒轮询，180 秒倒计时自动刷新（服务端 86038 双保险）；
-  「打开哔哩哔哩」用 `bilibili://browser?url=…` 深链直接 `startActivity`（未装/无处理者抛
-  ActivityNotFoundException → 提示未安装）；「保存相册」用 RepaintBoundary 截图 + `saver_gallery`。
-- **Cookie 导入为逃生门**：文本框粘贴解析 `SESSDATA=..; bili_jct=..; DedeUserID=..`，
-  风控异常时保住可用性。
-- **WBI 混淆表以 64 项为准**：PiliPlus 只保留前 32 项（结果等价）；⚠️ 调研报告 HTML 里的
-  混淆表有误（第 28 位起与官方表不符），**以 bilibili-API-collect / Bili23 的 64 项表为准**。
-- **反爬为精简版**：当前只做 buvid3 预取 + 固定 UA + Referer；Bili23 的 buvid_fp/bili_ticket/
-  ExClimbWuzhi 等完整指纹留待阶段三 playurl 遇 412 风控再补。
+- **反爬指纹完整版（已接入）**：`services/bilibili/bili_fingerprint.dart` 生成/持久化
+  `_uuid`/`b_lsid`/`b_nut`/`buvid_fp`（murmur3×64_128，种子 31），拉 `bili_ticket`
+  （GenWebTicket HMAC-SHA256），并激活 buvid3（ExClimbWuzhi）；`BiliHttp` 把指纹 Cookie
+  片段合并进每个请求的 `Cookie` 头；playurl 额外带 `dm_img_*` 随机参数（对齐 PiliPlus）。
+  全部 best-effort，失败不阻断业务（§4.15）。
 
 ---
 
@@ -836,6 +825,10 @@ push 即 CI 出包）。升级内核：换 jar → 无需改任何 Dart 代码�
   `【标题】 https://b23.tv/xxx`，不能按整串 startsWith 判定；裸短链自动补 https，
   对齐小喵）再手动跟随 302 展开（命中令牌即停、不下载整页），
   `BiliDownloadService.resolveRef` 与番剧首页解析弹窗共用；番剧与用户视频均可解析下载。
+- **UP 主合集（ugc_season）接入**：`BiliUgcVideo` 解析 view 接口的 `ugc_season`
+  （章节→集→分P 全集）；BV 属于合集时下载页展开**整部合集**（多章节标题带 `[章节]` 前缀、
+  多分P集展开到每 P）；合集列表链接 `space.bilibili.com/{mid}/lists/{season_id}` 经
+  `seasons_archives_list` 取任一成员 bvid 后再借 view 接口拿全量（对齐 Bili23）。
 - **单连接流式 + Range 续传**：未做调研里的 4–8 路分块并发（吞吐受限）。
 
 ---
